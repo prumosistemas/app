@@ -63,6 +63,10 @@
     .notice.info { color:var(--accent); background:var(--accent-lt); border-color:#c7d2fe; }
     .notice.ok { color:var(--green); background:#ecfdf3; border-color:#bbf7d0; }
     .notice.err { color:var(--red); background:#fef2f2; border-color:#fecaca; }
+    details summary { cursor:pointer; }
+    .company-name { display:grid; gap:8px; min-width:280px; }
+    .detail-stack { display:grid; gap:8px; margin-top:8px; }
+    .user-details { margin-top:8px; }
     .hidden { display:none !important; }
     @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row { grid-template-columns:1fr; } main { padding:16px; } }
   </style>
@@ -155,11 +159,42 @@ async function loadSession(){
   $("meEmail").textContent=user.email || "-"; $("meCompany").textContent=user.company_name || user.company_id || "-";
   $("sessionCreated").textContent=ts(data.session?.created_at); $("sessionSeen").textContent=ts(data.session?.last_seen_at); $("sessionExpires").textContent=ts(data.session?.absolute_expires_at);
 }
+function roleLabel(role){
+  if(role==="owner") return "Administrador";
+  if(role==="member") return "Colaborador";
+  if(role==="master") return "Master";
+  return role || "-";
+}
+function adminUserStats(stats){
+  if(!stats) return `<span class="small">Sem dados de execução.</span>`;
+  return `<div class="small">Runs: <b>${Number(stats.runs_count||0)}</b> &middot; Retries: <b>${Number(stats.retry_count||0)}</b> &middot; Conjuntos: <b>${Number(stats.datasets_count||0)}</b> &middot; Contas: <b>${Number(stats.accounts_count||0)}</b></div>`;
+}
+function adminLatestRuns(stats){
+  const runs=stats?.latest_runs || [];
+  if(!runs.length) return `<div class="small">Sem runs recentes.</div>`;
+  return `<details><summary class="small">Últimas runs (${runs.length})</summary><div class="detail-stack">${runs.map(run=>`<div class="notice info"><b>${esc(run.dataset_alias||run.run_id||"-")}</b><br><span class="small">Status: ${esc(run.status||"-")} &middot; Tipo: ${esc(run.attempt_type||"manual")} &middot; Total: ${Number(run.total||0)} &middot; OK: ${Number(run.ok||0)} &middot; Erros: ${Number(run.erros||0)}<br>Criada: ${esc(ts(run.created_at))}</span></div>`).join("")}</div></details>`;
+}
+function adminDatasetsAccounts(stats){
+  if(!stats) return "";
+  const datasets=stats.datasets || [];
+  const accounts=stats.accounts || [];
+  return `<details><summary class="small">Conjuntos (${datasets.length}) e contas (${accounts.length})</summary><div class="detail-stack"><div class="small"><b>Conjuntos</b>: ${datasets.length?datasets.map(dataset=>`${esc(dataset.alias||dataset.id||"-")} (${Number(dataset.count||0)} CNPJ)`).join(" &middot; "):"Nenhum"}</div><div class="small"><b>Contas</b>: ${accounts.length?accounts.map(account=>esc(account.alias||account.id||"-")).join(" &middot; "):"Nenhuma"}</div></div></details>`;
+}
+function companyStatsSummary(company){
+  const totals=company.stats?.totals || {};
+  return `<div class="small">Colaboradores: <b>${Number(company.member_count||0)}</b> (${Number(company.active_member_count||0)} ativos, ${Number(company.disabled_member_count||0)} desativados)<br>Runs: <b>${Number(totals.runs||0)}</b> &middot; Retries: <b>${Number(totals.retries||0)}</b> &middot; Conjuntos: <b>${Number(totals.datasets||0)}</b> &middot; Contas: <b>${Number(totals.accounts||0)}</b></div>`;
+}
+function companyUsersDetails(company){
+  const users=company.users || [];
+  const statUsers=new Map((company.stats?.users || []).map(item=>[String(item.user_id),item]));
+  if(!users.length) return `<div class="small">Sem usuários.</div>`;
+  return `<details><summary class="small">Ver usuários (${users.length}) e atividade</summary><div class="table-wrap user-details"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Dados</th><th>Últimas runs</th></tr></thead><tbody>${users.map(user=>{ const stats=statUsers.get(String(user.id)); return `<tr><td>${esc(user.email)}</td><td>${esc(roleLabel(user.role))}</td><td>${Number(user.disabled)===1?`<span class="pill bad">Desativado</span>`:`<span class="pill ok">Ativo</span>`}</td><td>${adminUserStats(stats)}${adminDatasetsAccounts(stats)}</td><td>${adminLatestRuns(stats)}</td></tr>`; }).join("")}</tbody></table></div></details>`;
+}
 async function loadCompanies(){
   try{
     const data=await api("/api/master/companies"); const rows=data.companies || [];
     if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
-    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions">${c.owner_id?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
+    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa e usuários</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><div class="company-name"><strong>${esc(c.name)}</strong>${companyUsersDetails(c)}</div></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions">${c.owner_id?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
     $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
     $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
     $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));
