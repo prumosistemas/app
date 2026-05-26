@@ -51,18 +51,12 @@
       margin-bottom: 18px;
     }
 
-    .brand-icon {
-      width: 46px;
-      height: 46px;
-      border-radius: 14px;
+    .brand-image {
+      width: 84px;
+      height: 64px;
+      object-fit: contain;
       margin: 0 auto 10px;
-      display: grid;
-      place-items: center;
-      color: white;
-      background: linear-gradient(135deg, var(--accent), #818cf8);
-      box-shadow: 0 8px 22px rgba(79, 70, 229, 0.25);
-      font-weight: 800;
-      font-size: 20px;
+      display: block;
     }
 
     h1 {
@@ -229,7 +223,7 @@
 <body>
   <div class="wrap">
     <div class="brand">
-      <div class="brand-icon">P</div>
+      <img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas" />
       <h1>Prumo Sistemas</h1>
       <p>Entre para acessar sua central</p>
     </div>
@@ -359,7 +353,7 @@
 
           setMsg("ok", "Sessão autenticada.");
           if (redirect) {
-            location.href = "index.html?v=prumo";
+            location.href = "index.html";
           }
         }
       } catch (err) {
@@ -407,7 +401,7 @@
         }
 
         setMsg("ok", "Login realizado.");
-        location.href = "index.html?v=prumo";
+        location.href = "index.html";
       } catch (err) {
         setMsg("err", err.message || "Falha no login.");
       } finally {
@@ -446,7 +440,7 @@
 
         setMsg("ok", "Senha alterada. Redirecionando...");
         setTimeout(() => {
-          location.href = "index.html?v=prumo";
+          location.href = "index.html";
         }, 600);
       } catch (err) {
         setMsg("err", err.message || "Falha ao alterar senha.");

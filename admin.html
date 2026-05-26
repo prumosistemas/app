@@ -96,6 +96,7 @@
       flex-shrink: 0;
       box-shadow: 0 2px 8px rgba(99,102,241,0.28);
     }
+    .brand-image { width: 34px; height: 34px; object-fit: contain; flex-shrink: 0; }
     .brand h1 { font-size: 14.5px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
     .brand p  { font-size: 11px; color: var(--text3); margin-left: 42px; }
 
@@ -790,7 +791,7 @@
   <aside>
     <div class="brand">
       <div class="brand-logo">
-        <div class="brand-icon">⚡</div>
+        <img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas" />
         <div>
           <h1>Prumo Sistemas</h1>
         </div>
@@ -815,14 +816,6 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         Visão geral
       </button>
-      <button class="nav-btn hidden" data-role="master" data-section="masterCompaniesSection">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01"/><path d="M9 13v.01"/><path d="M9 17v.01"/></svg>
-        Empresas
-      </button>
-      <button class="nav-btn hidden" data-role="master" data-section="masterLogsSection">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
-        Logs
-      </button>
       <button class="nav-btn hidden" data-role="owner" data-section="usersSection">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Usuários
@@ -839,7 +832,7 @@
       </button>
     </nav>
     <div class="sidebar-footer">
-      <a class="nav-btn" href="index.html?v=prumo">
+      <a class="nav-btn" href="index.html">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5"/>
           <path d="M12 19l-7-7 7-7"/>
@@ -1031,13 +1024,6 @@
             </div>
           </div>
           <div class="card">
-            <div class="card-head"><h3>Login</h3></div>
-            <div class="card-body admin-meta">
-              <p>Login anterior: <code id="adminMeLastLogin">-</code></p>
-              <p>Login atual: <code id="adminMeCurrentLogin">-</code></p>
-            </div>
-          </div>
-          <div class="card">
             <div class="card-head"><h3>Sessão</h3></div>
             <div class="card-body admin-meta">
               <p>Criada em: <code id="adminSessionCreated">-</code></p>
@@ -1048,48 +1034,6 @@
         </div>
         <div id="mustChangeBox" class="notice warn hidden">Esta conta precisa trocar a senha temporária antes de usar o sistema.</div>
         <div id="adminAccessBox" class="notice info hidden"></div>
-      </div>
-    </section>
-
-    <section id="masterCompaniesSection" class="section">
-      <div class="admin-grid">
-        <div class="card">
-          <div class="card-head"><h3>Criar empresa + admin</h3></div>
-          <div class="card-body stack">
-            <div class="small">A API gera a senha temporária automaticamente e retorna uma única vez.</div>
-            <form id="createCompanyForm" class="form-row three">
-              <div>
-                <label>Nome da empresa</label>
-                <input name="company_name" required maxlength="120" placeholder="Empresa Exemplo">
-              </div>
-              <div>
-                <label>Email do admin</label>
-                <input name="owner_email" type="email" required maxlength="254" placeholder="admin@empresa.com">
-              </div>
-              <button type="submit">Criar empresa</button>
-            </form>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-head">
-            <h3>Empresas</h3>
-            <button id="btnReloadCompanies" class="secondary sm" type="button">Recarregar</button>
-          </div>
-          <div class="card-body" id="companiesTable"><div class="empty-state">Carregando empresas...</div></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="masterLogsSection" class="section">
-      <div class="card">
-        <div class="card-head">
-          <h3>Logs recentes</h3>
-          <button id="btnReloadLogs" class="secondary sm" type="button">Recarregar</button>
-        </div>
-        <div class="card-body stack">
-          <div class="small">Retenção automática no Worker: 90 dias.</div>
-          <div id="logsTable"><div class="empty-state">Carregando logs...</div></div>
-        </div>
       </div>
     </section>
 
@@ -1568,7 +1512,7 @@ function applyRoleUI(user) {
   const role = user?.role || "";
   const issAllowed = isIssRole(role);
   const issSections = ["runsSection", "datasetsSection", "accountsSection", "debugSection"];
-  const adminSections = ["adminOverviewSection", "masterCompaniesSection", "masterLogsSection", "usersSection", "billingSection"];
+  const adminSections = ["adminOverviewSection", "usersSection", "billingSection"];
 
   document.querySelectorAll("[data-area='iss']").forEach(el => el.classList.toggle("hidden", !issAllowed));
   document.querySelectorAll("[data-area='admin']").forEach(el => el.classList.toggle("hidden", issAllowed));
@@ -1577,8 +1521,6 @@ function applyRoleUI(user) {
   document.querySelectorAll("[data-role]").forEach(el => {
     el.classList.toggle("hidden", el.getAttribute("data-role") !== role);
   });
-  if($("masterCompaniesSection")) $("masterCompaniesSection").classList.toggle("hidden", role !== "master");
-  if($("masterLogsSection")) $("masterLogsSection").classList.toggle("hidden", role !== "master");
   if($("usersSection")) $("usersSection").classList.toggle("hidden", role !== "owner");
   if($("billingSection")) $("billingSection").classList.toggle("hidden", role !== "owner");
 
@@ -1587,9 +1529,7 @@ function applyRoleUI(user) {
     adminBox.classList.toggle("hidden", issAllowed);
     adminBox.textContent = role === "owner"
       ? "Administrador gerencia colaboradores e pagamento. A área ISS Fortaleza fica disponível para colaboradores."
-      : role === "master"
-        ? "Master gerencia empresas e logs. A área ISS Fortaleza fica disponível para colaboradores."
-        : "";
+      : "";
   }
 }
 
@@ -1600,8 +1540,6 @@ function renderAdminMe(data) {
     ["adminMeEmail", user.email || "-"],
     ["adminMeRole", roleLabel(user.role)],
     ["adminMeCompany", user.company_name || user.company_id || "-"],
-    ["adminMeLastLogin", formatUnixTs(user.last_login_at)],
-    ["adminMeCurrentLogin", formatUnixTs(user.current_login_at)],
     ["adminSessionCreated", formatUnixTs(session.created_at)],
     ["adminSessionSeen", formatUnixTs(session.last_seen_at)],
     ["adminSessionExpires", formatUnixTs(session.absolute_expires_at)],
@@ -1614,7 +1552,7 @@ function redirectToLogin(message){
   if(message){
     toast(message, "err");
   }
-  setTimeout(()=>{ window.location.href = "login.html?v=prumo"; }, 120);
+  setTimeout(()=>{ window.location.href = "login.html"; }, 120);
 }
 
 function methodOf(options){
@@ -1692,15 +1630,11 @@ function switchSection(sectionId){
     datasetsSection:"Conjuntos",
     accountsSection:"Contas",
     adminOverviewSection:"Visão geral",
-    masterCompaniesSection:"Empresas",
-    masterLogsSection:"Logs",
     usersSection:"Usuários",
     billingSection:"Pagamento",
     debugSection:"Debug Log",
     contaSection:"Conta"
   }[sectionId]||"ISS";
-  if(sectionId === "masterCompaniesSection") loadCompanies();
-  if(sectionId === "masterLogsSection") loadLogs();
   if(sectionId === "usersSection") loadUsers();
 }
 document.querySelectorAll(".nav-btn").forEach(btn=>btn.addEventListener("click",()=>switchSection(btn.dataset.section)));
@@ -1852,92 +1786,6 @@ function adminStatusError(data, fallback) {
   return data?.error || data?.detail || data?.message || fallback || "Erro na API.";
 }
 
-async function loadCompanies() {
-  if(currentRole() !== "master" || !$("companiesTable")) return;
-  try {
-    const data = await apiFetch("/api/master/companies");
-    if (!data.ok) {
-      $("companiesTable").innerHTML = `<div class="notice err">${escapeHtml(adminStatusError(data, "Erro ao carregar empresas."))}</div>`;
-      return;
-    }
-    const rows = data.companies || [];
-    if (!rows.length) {
-      $("companiesTable").innerHTML = `<div class="empty-state">Nenhuma empresa encontrada.</div>`;
-      return;
-    }
-    $("companiesTable").innerHTML = `
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Empresa</th><th>Admin</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ação</th></tr></thead>
-          <tbody>
-            ${rows.map(c => `
-              <tr>
-                <td>
-                  <b>${escapeHtml(c.name)}</b>
-                  ${companyUsersDetails(c)}
-                </td>
-                <td>
-                  ${escapeHtml(c.owner_email || "-")}<br>
-                  <span class="small">Anterior: ${formatUnixTs(c.owner_last_login_at)}<br>Atual: ${formatUnixTs(c.owner_current_login_at)}</span>
-                </td>
-                <td>${companyStatsSummary(c)}</td>
-                <td>${Number(c.disabled) === 1 ? `<span class="pill bad">Desativada</span>` : `<span class="pill ok">Ativa</span>`}</td>
-                <td>${formatUnixTs(c.created_at)}</td>
-                <td>
-                  <div class="actions">
-                    ${c.owner_id ? `<button class="sm secondary" onclick="confirmResetOwner('${escapeHtml(c.owner_id)}', '${escapeHtml(c.owner_email || "")}')">Resetar admin</button>` : ""}
-                    ${c.is_master_company ? `<span class="small">Conta master protegida</span>` : `
-                      <button class="sm ${Number(c.disabled) === 1 ? "secondary" : "danger"}" onclick="confirmToggleCompany('${escapeHtml(c.id)}', '${escapeHtml(c.name)}', '${Number(c.disabled) === 1 ? "enable" : "disable"}')">${Number(c.disabled) === 1 ? "Reativar" : "Desativar"}</button>
-                      <button class="sm danger" onclick="confirmDeleteCompany('${escapeHtml(c.id)}', '${escapeHtml(c.name)}')">Apagar</button>
-                    `}
-                  </div>
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>`;
-  } catch(err) {
-    $("companiesTable").innerHTML = `<div class="notice err">${escapeHtml(err.message)}</div>`;
-  }
-}
-
-async function loadLogs() {
-  if(currentRole() !== "master" || !$("logsTable")) return;
-  try {
-    const data = await apiFetch("/api/master/logs");
-    if (!data.ok) {
-      $("logsTable").innerHTML = `<div class="notice err">${escapeHtml(adminStatusError(data, "Erro ao carregar logs."))}</div>`;
-      return;
-    }
-    const logs = data.logs || [];
-    if (!logs.length) {
-      $("logsTable").innerHTML = `<div class="empty-state">Nenhum log encontrado.</div>`;
-      return;
-    }
-    $("logsTable").innerHTML = `
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Data</th><th>Empresa</th><th>Ator</th><th>Ação</th><th>Mensagem</th><th>IP</th></tr></thead>
-          <tbody>
-            ${logs.map(l => `
-              <tr>
-                <td>${formatUnixTs(l.created_at)}</td>
-                <td>${escapeHtml(l.company_name || "-")}</td>
-                <td>${escapeHtml(l.actor_email || "-")} ${l.actor_role ? `(${escapeHtml(roleLabel(l.actor_role))})` : ""}</td>
-                <td><code>${escapeHtml(l.action)}</code></td>
-                <td>${escapeHtml(l.message || "")}</td>
-                <td>${escapeHtml(l.ip || "")}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>`;
-  } catch(err) {
-    $("logsTable").innerHTML = `<div class="notice err">${escapeHtml(err.message)}</div>`;
-  }
-}
-
 async function loadUsers() {
   if(currentRole() !== "owner" || !$("usersTable")) return;
   try {
@@ -1980,54 +1828,6 @@ async function loadUsers() {
   }
 }
 
-async function confirmToggleCompany(companyId, name, intent) {
-  const ok = await customConfirm(
-    intent === "disable" ? `Desativar ${name}? Todos os usuários dessa empresa perderão acesso.` : `Reativar ${name}?`,
-    intent === "disable" ? "Desativar empresa" : "Reativar empresa",
-    intent === "disable" ? "danger" : "success"
-  );
-  if(!ok) return;
-  const data = await apiFetch("/api/master/companies/toggle", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ company_id: companyId, intent, confirm: "yes" }),
-  });
-  if(!data.ok) return showAdminMsg("err", adminStatusError(data, "Erro."));
-  showAdminMsg("ok", intent === "disable" ? "Empresa desativada." : "Empresa reativada.");
-  await loadCompanies();
-}
-
-async function confirmDeleteCompany(companyId, name) {
-  const ok = await customConfirm(
-    `Apagar permanentemente ${name}?\n\nIsso apaga a empresa, o admin e todos os colaboradores no Worker. Esta ação não deve ser usada na conta master.`,
-    "Apagar empresa",
-    "danger"
-  );
-  if(!ok) return;
-  const data = await apiFetch("/api/master/companies/delete", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ company_id: companyId, confirm: "DELETE" }),
-  });
-  if(!data.ok) return showAdminMsg("err", adminStatusError(data, "Erro ao apagar empresa."));
-  showAdminMsg("ok", "Empresa apagada.");
-  await loadCompanies();
-}
-
-async function confirmResetOwner(ownerId, email) {
-  const ok = await customConfirm(`Resetar a senha de ${email}? A senha temporária será exibida uma única vez.`, "Resetar senha do admin", "success");
-  if(!ok) return;
-  const data = await apiFetch("/api/master/owners/reset-password", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ owner_id: ownerId, confirm: "yes" }),
-  });
-  if(!data.ok) return showAdminMsg("err", adminStatusError(data, "Erro."));
-  showAdminMsg("ok", `Senha temporária de ${data.owner.email}:\n${data.owner.temporary_password}`);
-  await showTemporaryPassword("Senha temporária do admin", data.owner.email, data.owner.temporary_password);
-  await loadCompanies();
-}
-
 async function confirmResetUser(userId, email) {
   const ok = await customConfirm(`Resetar a senha de ${email}? A senha temporária será exibida uma única vez.`, "Resetar senha", "success");
   if(!ok) return;
@@ -2064,16 +1864,19 @@ async function startPolling(){
   setLoader(true, "Carregando sessão e dados...");
   try{
     const user = await loadMe();
-    if(isIssRole(user.role)){
-      window.location.href = "index.html?v=prumo";
+    if(user.role === "master"){
+      window.location.href = "master.html";
+      return;
+    }
+    if(user.role !== "owner"){
+      window.location.href = "index.html";
       return;
     }
     if(user.must_change_password){
-      window.location.href = "index.html?v=prumo#account";
+      window.location.href = "index.html#account";
       return;
     }
     switchSection("adminOverviewSection");
-    if(user.role === "master") loadCompanies();
     if(user.role === "owner") loadUsers();
   } catch(err){
     if($("apiDot")) $("apiDot").className="api-dot err";
@@ -3131,34 +2934,13 @@ async function logout() {
   } catch(e) {}
   localStorage.removeItem("csrf");
   sessionStorage.removeItem("csrf");
-  window.location.href = "login.html?v=prumo";
+  window.location.href = "login.html";
 }
 
 if($("btnLogout")) $("btnLogout").addEventListener("click", logout);
 if($("btnLogoutSidebar")) $("btnLogoutSidebar").addEventListener("click", logout);
 
-if($("btnReloadCompanies")) $("btnReloadCompanies").addEventListener("click", loadCompanies);
-if($("btnReloadLogs")) $("btnReloadLogs").addEventListener("click", loadLogs);
 if($("btnReloadUsers")) $("btnReloadUsers").addEventListener("click", loadUsers);
-
-if($("createCompanyForm")) $("createCompanyForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const payload = formToObject(e.target);
-  try {
-    const data = await apiFetch("/api/master/companies", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload),
-    });
-    if (!data.ok) return showAdminMsg("err", adminStatusError(data, "Erro ao criar empresa."));
-    e.target.reset();
-    showAdminMsg("ok", `Empresa criada.\nAdmin: ${data.owner.email}\nSenha temporária: ${data.owner.temporary_password}`);
-    await showTemporaryPassword("Senha temporária do admin", data.owner.email, data.owner.temporary_password);
-    await loadCompanies();
-  } catch(err) {
-    showAdminMsg("err", err.message);
-  }
-});
 
 if($("createUserForm")) $("createUserForm").addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Master | Prumo Sistemas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#f0f2f7; --panel:#fff; --panel2:#f7f8fc; --border:#e4e6ef; --text:#111827; --text2:#4b5563; --text3:#8b95a7; --accent:#4f46e5; --accent-lt:#eef2ff; --green:#15803d; --red:#b91c1c; --amber:#b45309; --font:'Plus Jakarta Sans',system-ui,sans-serif; --mono:'JetBrains Mono',monospace; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { min-height:100vh; background:var(--bg); color:var(--text); font:13.5px/1.5 var(--font); }
+    .app { display:grid; grid-template-columns:232px minmax(0,1fr); min-height:100vh; }
+    aside { height:100vh; position:sticky; top:0; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+    .brand { padding:18px 16px 14px; border-bottom:1px solid var(--border); }
+    .brand-logo { display:flex; gap:10px; align-items:center; }
+    .brand-image { width:34px; height:34px; object-fit:contain; }
+    .brand h1 { font-size:15px; }
+    .brand p { color:var(--text3); font-size:11px; margin:5px 0 0 44px; }
+    nav { flex:1; padding:10px 8px; display:grid; align-content:start; gap:2px; }
+    .nav-label { padding:10px 8px 4px; color:var(--text3); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+    .nav-btn { height:38px; border:0; border-radius:7px; padding:0 10px; display:flex; align-items:center; gap:9px; background:transparent; color:var(--text2); text-decoration:none; font:600 13.5px var(--font); cursor:pointer; }
+    .nav-btn.active,.nav-btn:hover { background:var(--accent-lt); color:var(--accent); }
+    .nav-icon { width:16px; height:16px; }
+    .sidebar-footer { border-top:1px solid var(--border); padding:10px 8px; display:grid; gap:5px; }
+    main { padding:24px 26px; min-width:0; }
+    .topline { margin-bottom:18px; }
+    .topline h2 { font-size:20px; }
+    .topline p { color:var(--text3); margin-top:4px; }
+    .section { display:none; }
+    .section.active { display:block; }
+    .grid { display:grid; gap:16px; max-width:1260px; }
+    .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+    .card-head { padding:13px 15px; border-bottom:1px solid var(--border); background:var(--panel2); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .card-head h3 { font-size:13.5px; }
+    .card-body { padding:15px; }
+    .stack { display:grid; gap:12px; }
+    p.meta { color:var(--text2); margin-bottom:7px; }
+    code { font-family:var(--mono); font-size:12px; }
+    label { display:block; margin-bottom:5px; color:var(--text2); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+    input { width:100%; height:38px; border:1px solid #cdd0df; border-radius:7px; padding:0 10px; font:inherit; }
+    input:focus { outline:2px solid rgba(79,70,229,.18); border-color:var(--accent); }
+    button { height:37px; border:0; border-radius:7px; background:var(--accent); color:#fff; padding:0 13px; font:600 13px var(--font); cursor:pointer; }
+    button.secondary { background:#fff; border:1px solid #cdd0df; color:var(--text); }
+    button.danger { background:var(--red); }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
+    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:7px; }
+    table { width:100%; min-width:700px; border-collapse:collapse; }
+    th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text3); background:var(--panel2); }
+    th,td { padding:10px; border-bottom:1px solid var(--border); vertical-align:top; }
+    tr:last-child td { border-bottom:0; }
+    .actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .actions button { height:30px; font-size:12px; }
+    .pill { display:inline-flex; border-radius:999px; border:1px solid var(--border); padding:2px 8px; font-size:11px; font-weight:700; }
+    .pill.ok { color:var(--green); background:#ecfdf3; }
+    .pill.bad { color:var(--red); background:#fef2f2; }
+    .small { color:var(--text3); font-size:12px; }
+    .notice { padding:10px 12px; border-radius:7px; border:1px solid; white-space:pre-line; }
+    .notice.info { color:var(--accent); background:var(--accent-lt); border-color:#c7d2fe; }
+    .notice.ok { color:var(--green); background:#ecfdf3; border-color:#bbf7d0; }
+    .notice.err { color:var(--red); background:#fef2f2; border-color:#fecaca; }
+    .hidden { display:none !important; }
+    @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row { grid-template-columns:1fr; } main { padding:16px; } }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <div class="brand-logo"><img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas"><h1>Prumo Sistemas</h1></div>
+      <p>Administração master</p>
+    </div>
+    <nav>
+      <div class="nav-label">Gestão</div>
+      <button class="nav-btn active" data-section="overviewSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Visão geral</button>
+      <button class="nav-btn" data-section="companiesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>Empresas</button>
+      <button class="nav-btn" data-section="logsSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Logs</button>
+    </nav>
+    <div class="sidebar-footer">
+      <a class="nav-btn" href="index.html">Voltar</a>
+      <button id="btnLogout" class="nav-btn" type="button">Sair</button>
+    </div>
+  </aside>
+  <main>
+    <div class="topline"><h2 id="pageTitle">Visão geral</h2><p>Controle central da plataforma.</p></div>
+    <div id="globalMsg" class="hidden"></div>
+    <section id="overviewSection" class="section active">
+      <div class="grid two">
+        <div class="card"><div class="card-head"><h3>Conta master</h3></div><div class="card-body">
+          <p class="meta">Email: <code id="meEmail">-</code></p>
+          <p class="meta">Perfil: <code>Master</code></p>
+          <p class="meta">Empresa: <code id="meCompany">-</code></p>
+        </div></div>
+        <div class="card"><div class="card-head"><h3>Sessão</h3></div><div class="card-body">
+          <p class="meta">Criada em: <code id="sessionCreated">-</code></p>
+          <p class="meta">Última atividade: <code id="sessionSeen">-</code></p>
+          <p class="meta">Expira em: <code id="sessionExpires">-</code></p>
+        </div></div>
+      </div>
+    </section>
+    <section id="companiesSection" class="section">
+      <div class="grid stack">
+        <div class="card"><div class="card-head"><h3>Criar empresa e administrador</h3></div><div class="card-body stack">
+          <form id="createCompanyForm" class="form-row">
+            <div><label>Nome da empresa</label><input name="company_name" required maxlength="120"></div>
+            <div><label>Email do administrador</label><input name="owner_email" type="email" required maxlength="254"></div>
+            <button type="submit">Criar</button>
+          </form>
+        </div></div>
+        <div class="card"><div class="card-head"><h3>Empresas</h3><button id="btnReloadCompanies" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="companiesTable"><span class="small">Carregando...</span></div></div>
+      </div>
+    </section>
+    <section id="logsSection" class="section">
+      <div class="card"><div class="card-head"><h3>Logs recentes</h3><button id="btnReloadLogs" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="logsTable"><span class="small">Carregando...</span></div></div>
+    </section>
+  </main>
+</div>
+<script>
+const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+function ts(value){ if(value === null || value === undefined || value === "") return "Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*1000):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
+function message(type,text){ const el=$("globalMsg"); el.className="notice "+type; el.textContent=text; el.classList.remove("hidden"); }
+function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); window.location.replace("login.html"); }
+async function api(path, options={}){
+  const headers = new Headers(options.headers || {});
+  if(options.body && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
+  if(csrf) headers.set("X-CSRF-Token",csrf);
+  let res;
+  try { res = await fetch(API + path,{credentials:"include",...options,headers}); } catch(error) { toLogin(); throw error; }
+  const ct=res.headers.get("content-type") || "";
+  const data=ct.includes("application/json")?await res.json():await res.text();
+  if(data?.csrf){ csrf=data.csrf; sessionStorage.setItem("csrf",csrf); localStorage.setItem("csrf",csrf); }
+  if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
+  if(!res.ok){ const detail=data?.error || data?.detail || data?.message || data; throw new Error(typeof detail==="string"?detail:JSON.stringify(detail)); }
+  return data;
+}
+function switchSection(id){
+  document.querySelectorAll(".section").forEach(el=>el.classList.toggle("active",el.id===id));
+  document.querySelectorAll("[data-section]").forEach(el=>el.classList.toggle("active",el.dataset.section===id));
+  $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",logsSection:"Logs"}[id] || "Master";
+  if(id==="companiesSection") loadCompanies();
+  if(id==="logsSection") loadLogs();
+}
+async function loadSession(){
+  const data=await api("/api/me");
+  if(!data.authenticated){ toLogin(); return; }
+  const user=data.user || {};
+  if(user.role!=="master"){ window.location.replace(user.role==="owner"?"admin.html":user.role==="member"?"iss-fortaleza.html":"index.html"); return; }
+  $("meEmail").textContent=user.email || "-"; $("meCompany").textContent=user.company_name || user.company_id || "-";
+  $("sessionCreated").textContent=ts(data.session?.created_at); $("sessionSeen").textContent=ts(data.session?.last_seen_at); $("sessionExpires").textContent=ts(data.session?.absolute_expires_at);
+}
+async function loadCompanies(){
+  try{
+    const data=await api("/api/master/companies"); const rows=data.companies || [];
+    if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
+    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions">${c.owner_id?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
+    $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
+    $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
+    $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));
+  } catch(err){ message("err",err.message); }
+}
+async function loadLogs(){
+  try{
+    const data=await api("/api/master/logs"); const rows=data.logs || [];
+    if(!rows.length){ $("logsTable").innerHTML="<span class='small'>Nenhum log encontrado.</span>"; return; }
+    $("logsTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Ator</th><th>Ação</th><th>Mensagem</th><th>IP</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(ts(row.created_at))}</td><td>${esc(row.company_name||"-")}</td><td>${esc(row.actor_email||"-")}</td><td><code>${esc(row.action||"")}</code></td><td>${esc(row.message||"")}</td><td>${esc(row.ip||"")}</td></tr>`).join("")}</tbody></table></div>`;
+  } catch(err){ message("err",err.message); }
+}
+async function toggleCompany(id,intent){ if(!confirm(intent==="disable"?"Desativar esta empresa?":"Reativar esta empresa?"))return; await api("/api/master/companies/toggle",{method:"POST",body:JSON.stringify({company_id:id,intent,confirm:"yes"})}); message("ok",intent==="disable"?"Empresa desativada.":"Empresa reativada."); loadCompanies(); }
+async function deleteCompany(id){ if(!confirm("Apagar permanentemente esta empresa e seus usuários?"))return; await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:id,confirm:"DELETE"})}); message("ok","Empresa apagada."); loadCompanies(); }
+async function resetOwner(id,email){ if(!confirm("Resetar a senha de "+email+"?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:id,confirm:"yes"})}); message("ok","Senha temporaria de "+data.owner.email+":\n"+data.owner.temporary_password); }
+document.querySelectorAll("[data-section]").forEach(btn=>btn.onclick=()=>switchSection(btn.dataset.section));
+$("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLogs;
+$("btnLogout").onclick=async()=>{ try{ await api("/api/logout",{method:"POST",body:"{}"}); } catch(error){} toLogin(); };
+$("createCompanyForm").onsubmit=async event=>{ event.preventDefault(); const payload=Object.fromEntries(new FormData(event.target).entries()); try{ const data=await api("/api/master/companies",{method:"POST",body:JSON.stringify(payload)}); event.target.reset(); message("ok","Empresa criada. Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); loadCompanies(); } catch(err){ message("err",err.message); } };
+loadSession().catch(()=>{});
+</script>
+</body>
+</html>

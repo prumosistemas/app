@@ -837,7 +837,7 @@
       </button>
     </nav>
     <div class="sidebar-footer">
-      <a class="nav-btn" href="index.html?v=prumo">
+      <a class="nav-btn" href="index.html">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5"/>
           <path d="M12 19l-7-7 7-7"/>
@@ -1040,13 +1040,6 @@
               <p>Email: <code id="adminMeEmail">-</code></p>
               <p>Tipo: <code id="adminMeRole">-</code></p>
               <p>Empresa: <code id="adminMeCompany">-</code></p>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>Login</h3></div>
-            <div class="card-body admin-meta">
-              <p>Login anterior: <code id="adminMeLastLogin">-</code></p>
-              <p>Login atual: <code id="adminMeCurrentLogin">-</code></p>
             </div>
           </div>
           <div class="card">
@@ -1620,8 +1613,6 @@ function renderAdminMe(data) {
     ["adminMeEmail", user.email || "-"],
     ["adminMeRole", roleLabel(user.role)],
     ["adminMeCompany", user.company_name || user.company_id || "-"],
-    ["adminMeLastLogin", formatUnixTs(user.last_login_at)],
-    ["adminMeCurrentLogin", formatUnixTs(user.current_login_at)],
     ["adminSessionCreated", formatUnixTs(session.created_at)],
     ["adminSessionSeen", formatUnixTs(session.last_seen_at)],
     ["adminSessionExpires", formatUnixTs(session.absolute_expires_at)],
@@ -1634,7 +1625,7 @@ function redirectToLogin(message){
   if(message){
     toast(message, "err");
   }
-  setTimeout(()=>{ window.location.href = "login.html?v=prumo"; }, 120);
+  setTimeout(()=>{ window.location.href = "login.html"; }, 120);
 }
 
 function methodOf(options){
@@ -2111,11 +2102,11 @@ async function startPolling(){
   try{
     const user = await loadMe();
     if(!isIssRole(user.role)){
-      window.location.href = "index.html?v=prumo";
+      window.location.href = "index.html";
       return;
     }
     if(user.must_change_password){
-      window.location.href = "index.html?v=prumo#account";
+      window.location.href = "index.html#account";
       return;
     }
     switchSection("runsSection");
@@ -3413,7 +3404,7 @@ async function logout() {
   } catch(e) {}
   localStorage.removeItem("csrf");
   sessionStorage.removeItem("csrf");
-  window.location.href = "login.html?v=prumo";
+  window.location.href = "login.html";
 }
 
 if($("btnLogout")) $("btnLogout").addEventListener("click", logout);

@@ -68,17 +68,7 @@
       gap: 10px;
     }
 
-    .brand-icon {
-      width: 34px;
-      height: 34px;
-      display: grid;
-      place-items: center;
-      border-radius: 9px;
-      color: #fff;
-      background: linear-gradient(135deg, var(--accent), #818cf8);
-      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
-      font-weight: 800;
-    }
+    .brand-image { width: 34px; height: 34px; object-fit: contain; }
 
     .brand h1 { font-size: 15px; letter-spacing: -0.02em; }
     .brand p { margin: 5px 0 0 44px; color: var(--text3); font-size: 11px; }
@@ -317,7 +307,7 @@
     <aside>
       <div class="brand">
         <div class="brand-logo">
-          <div class="brand-icon">P</div>
+          <img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas" />
           <div><h1>Prumo Sistemas</h1></div>
         </div>
         <p>Central de aplicações</p>
@@ -345,7 +335,6 @@
           <h2 id="pageTitle">Ferramentas</h2>
           <p id="pageSubtitle">Escolha uma aplicação para continuar.</p>
         </div>
-        <div id="roleBadge" class="pill">Carregando</div>
       </div>
 
       <section id="toolsSection" class="section active">
@@ -364,8 +353,6 @@
               <p>Email: <code id="meEmail">-</code></p>
               <p>Perfil: <code id="meRole">-</code></p>
               <p>Empresa: <code id="meCompany">-</code></p>
-              <p>Login atual: <code id="meCurrentLogin">-</code></p>
-              <p>Login anterior: <code id="meLastLogin">-</code></p>
             </div>
           </div>
 
@@ -437,7 +424,7 @@
       if (res.status === 401 || res.status === 403) {
         sessionStorage.removeItem("csrf");
         localStorage.removeItem("csrf");
-        window.location.href = "login.html?v=prumo";
+        window.location.href = "login.html";
         throw new Error("Sessão expirada.");
       }
 
@@ -505,20 +492,22 @@
           desc: role === "master"
             ? "Empresas, administradores, logs e controle de acesso."
             : "Colaboradores, pagamento e controle da empresa.",
-          href: "admin.html",
+          href: role === "master" ? "master.html" : "admin.html",
           cta: "Abrir administração",
           badge: roleLabel(role)
         });
       }
 
-      cards.push({
-        kicker: "Em breve",
-        title: "Novas aplicações",
-        desc: "A central já está preparada para receber outras ferramentas da Prumo Sistemas.",
-        href: "",
-        cta: "Indisponível",
-        badge: "Roadmap"
-      });
+      if (role !== "master") {
+        cards.push({
+          kicker: "Em breve",
+          title: "Novas aplicações",
+          desc: "A central já está preparada para receber outras ferramentas da Prumo Sistemas.",
+          href: "",
+          cta: "Indisponível",
+          badge: "Roadmap"
+        });
+      }
 
       $("toolsGrid").innerHTML = cards.map(card => `
         <div class="card tool-card">
@@ -541,12 +530,9 @@
 
     function renderAccount(data) {
       const user = data.user || {};
-      $("roleBadge").textContent = roleLabel(user.role);
       $("meEmail").textContent = user.email || "-";
       $("meRole").textContent = roleLabel(user.role);
       $("meCompany").textContent = user.company_name || user.company_id || "-";
-      $("meCurrentLogin").textContent = formatTs(user.current_login_at);
-      $("meLastLogin").textContent = formatTs(user.last_login_at);
 
       if (user.must_change_password) {
         $("passwordMsg").innerHTML = msg("warn", "Sua conta precisa trocar a senha temporária antes de continuar.");
@@ -557,7 +543,7 @@
     async function loadMe() {
       const data = await api("/api/me");
       if (!data.authenticated) {
-        window.location.href = "login.html?v=prumo";
+        window.location.href = "login.html";
         return;
       }
       mePayload = data;
@@ -572,7 +558,7 @@
       } catch (err) {}
       sessionStorage.removeItem("csrf");
       localStorage.removeItem("csrf");
-      window.location.href = "login.html?v=prumo";
+      window.location.href = "login.html";
     }
 
     $("changePasswordForm").addEventListener("submit", async event => {
@@ -609,8 +595,10 @@
     });
     $("btnLogout").addEventListener("click", logout);
 
-    loadMe().catch(err => {
-      $("toolsMsg").innerHTML = msg("err", err.message || "Falha ao carregar sessão.");
+    loadMe().catch(() => {
+      sessionStorage.removeItem("csrf");
+      localStorage.removeItem("csrf");
+      window.location.replace("login.html");
     });
   </script>
 </body>
