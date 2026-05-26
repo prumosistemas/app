@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Prumo Sistemas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f0f2f7;
+      --panel: #ffffff;
+      --panel2: #f7f8fc;
+      --border: #e4e6ef;
+      --border2: #cdd0df;
+      --text: #111827;
+      --text2: #4b5563;
+      --text3: #8b95a7;
+      --accent: #4f46e5;
+      --accent2: #6366f1;
+      --accent-lt: #eef2ff;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --radius: 12px;
+      --shadow: 0 1px 4px rgba(0,0,0,0.07), 0 0 0 1px rgba(0,0,0,0.04);
+      --shadow-lg: 0 12px 38px rgba(15, 23, 42, 0.10);
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13.5px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+    }
+
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
+      font-weight: 800;
+    }
+
+    .brand h1 { font-size: 15px; letter-spacing: -0.02em; }
+    .brand p { margin: 5px 0 0 44px; color: var(--text3); font-size: 11px; }
+
+    nav {
+      flex: 1;
+      padding: 10px 8px;
+      display: grid;
+      align-content: start;
+      gap: 2px;
+    }
+
+    .nav-label {
+      padding: 10px 8px 4px;
+      color: var(--text3);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    .nav-btn {
+      height: 36px;
+      width: 100%;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text2);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 10px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .nav-btn:hover,
+    .nav-btn.active {
+      background: var(--accent-lt);
+      color: var(--accent);
+    }
+
+    .nav-icon { width: 15px; height: 15px; flex-shrink: 0; }
+
+    .sidebar-footer {
+      padding: 10px 8px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 7px;
+    }
+
+    main {
+      padding: 24px 26px;
+      min-height: 100vh;
+    }
+
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .topline h2 { font-size: 20px; letter-spacing: -0.03em; }
+    .topline p { margin-top: 4px; color: var(--text3); }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .grid { display: grid; gap: 16px; max-width: 1180px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel2);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-head h3 { font-size: 13.5px; letter-spacing: -0.01em; }
+    .card-body { padding: 16px; }
+    .stack { display: grid; gap: 12px; }
+
+    .tool-card {
+      display: grid;
+      gap: 12px;
+      min-height: 178px;
+    }
+
+    .tool-kicker {
+      color: var(--text3);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .tool-title { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+    .tool-desc { color: var(--text2); max-width: 62ch; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border2);
+      background: var(--panel2);
+      color: var(--text2);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .pill.ok { color: var(--green); background: rgba(22, 163, 74, 0.08); border-color: rgba(22, 163, 74, 0.22); }
+    .pill.warn { color: var(--amber); background: rgba(217, 119, 6, 0.08); border-color: rgba(217, 119, 6, 0.22); }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--text2);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    input {
+      width: 100%;
+      height: 38px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 11px;
+      font: inherit;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--accent2);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.13);
+    }
+
+    button,
+    .button {
+      height: 34px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 0 13px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: fit-content;
+    }
+
+    button:hover,
+    .button:hover { opacity: 0.88; }
+    button.secondary,
+    .button.secondary {
+      background: #fff;
+      color: var(--text2);
+      border-color: var(--border2);
+    }
+    button.danger { background: var(--red); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .notice {
+      border: 1px solid var(--border2);
+      background: var(--panel2);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text2);
+      font-size: 12.5px;
+      white-space: pre-line;
+    }
+    .notice.ok { color: var(--green); background: rgba(22, 163, 74, 0.08); border-color: rgba(22, 163, 74, 0.22); }
+    .notice.err { color: var(--red); background: rgba(220, 38, 38, 0.08); border-color: rgba(220, 38, 38, 0.22); }
+    .notice.warn { color: var(--amber); background: rgba(217, 119, 6, 0.08); border-color: rgba(217, 119, 6, 0.22); }
+
+    .meta {
+      display: grid;
+      gap: 7px;
+      color: var(--text2);
+      font-size: 12.5px;
+    }
+
+    code {
+      color: var(--text);
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      main { padding: 18px; }
+      .grid.two,
+      .grid.three { grid-template-columns: 1fr; }
+      .topline { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <div class="brand-logo">
+          <div class="brand-icon">P</div>
+          <div><h1>Prumo Sistemas</h1></div>
+        </div>
+        <p>Central de aplicações</p>
+      </div>
+
+      <nav>
+        <div class="nav-label">Menu</div>
+        <button class="nav-btn active" data-section="toolsSection" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Ferramentas
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="nav-btn" data-section="accountSection" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Minha conta
+        </button>
+      </div>
+    </aside>
+
+    <main>
+      <div class="topline">
+        <div>
+          <h2 id="pageTitle">Ferramentas</h2>
+          <p id="pageSubtitle">Escolha uma aplicação para continuar.</p>
+        </div>
+        <div id="roleBadge" class="pill">Carregando</div>
+      </div>
+
+      <section id="toolsSection" class="section active">
+        <div id="toolsMsg"></div>
+        <div id="toolsGrid" class="grid two"></div>
+      </section>
+
+      <section id="accountSection" class="section">
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <h3>Dados da conta</h3>
+              <button id="btnLogout" class="danger" type="button">Sair</button>
+            </div>
+            <div class="card-body meta">
+              <p>Email: <code id="meEmail">-</code></p>
+              <p>Perfil: <code id="meRole">-</code></p>
+              <p>Empresa: <code id="meCompany">-</code></p>
+              <p>Login atual: <code id="meCurrentLogin">-</code></p>
+              <p>Login anterior: <code id="meLastLogin">-</code></p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Trocar senha</h3></div>
+            <div class="card-body stack">
+              <div id="passwordMsg"></div>
+              <form id="changePasswordForm" class="stack">
+                <div>
+                  <label>Senha atual</label>
+                  <input name="current_password" type="password" required autocomplete="current-password">
+                </div>
+                <div>
+                  <label>Nova senha</label>
+                  <input name="new_password" type="password" required autocomplete="new-password">
+                </div>
+                <div>
+                  <label>Confirmar nova senha</label>
+                  <input name="confirm_password" type="password" required autocomplete="new-password">
+                </div>
+                <button id="btnChangePassword" type="submit">Salvar nova senha</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
+    let mePayload = null;
+
+    const $ = id => document.getElementById(id);
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function saveCsrf(value) {
+      if (!value) return;
+      csrf = value;
+      sessionStorage.setItem("csrf", value);
+      localStorage.setItem("csrf", value);
+    }
+
+    async function api(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const hasBody = options.body !== undefined && options.body !== null;
+      if (hasBody && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      if (csrf) headers.set("X-CSRF-Token", csrf);
+
+      const res = await fetch(API + path, {
+        credentials: "include",
+        ...options,
+        headers
+      });
+
+      const contentType = res.headers.get("content-type") || "";
+      const data = contentType.includes("application/json") ? await res.json() : await res.text();
+      if (data?.csrf) saveCsrf(data.csrf);
+
+      if (res.status === 401 || res.status === 403) {
+        sessionStorage.removeItem("csrf");
+        localStorage.removeItem("csrf");
+        window.location.href = "login.html?v=prumo";
+        throw new Error("Sessão expirada.");
+      }
+
+      if (!res.ok) {
+        const detail = data?.error || data?.detail || data?.message || data;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+
+      return data;
+    }
+
+    function roleLabel(role) {
+      if (role === "master") return "Master";
+      if (role === "owner") return "Administrador";
+      if (role === "member") return "Colaborador";
+      return role || "-";
+    }
+
+    function formatTs(ts) {
+      if (ts === null || ts === undefined || ts === "") return "Nunca";
+      const n = Number(ts);
+      const date = Number.isFinite(n) ? new Date(n * 1000) : new Date(ts);
+      if (Number.isNaN(date.getTime())) return String(ts);
+      return date.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    }
+
+    function msg(type, text) {
+      return text ? `<div class="notice ${type}">${escapeHtml(text)}</div>` : "";
+    }
+
+    function switchSection(sectionId) {
+      document.querySelectorAll(".section").forEach(section => {
+        section.classList.toggle("active", section.id === sectionId);
+      });
+      document.querySelectorAll(".nav-btn[data-section]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.section === sectionId);
+      });
+      const labels = {
+        toolsSection: ["Ferramentas", "Escolha uma aplicação para continuar."],
+        accountSection: ["Minha conta", "Dados de sessão e segurança."]
+      };
+      $("pageTitle").textContent = labels[sectionId]?.[0] || "Prumo Sistemas";
+      $("pageSubtitle").textContent = labels[sectionId]?.[1] || "";
+    }
+
+    function renderTools(user) {
+      const role = user.role;
+      const cards = [];
+
+      if (role === "member") {
+        cards.push({
+          kicker: "Aplicação fiscal",
+          title: "ISS Fortaleza",
+          desc: "Runs, conjuntos, contas do portal ISS e arquivos de saída.",
+          href: "iss-fortaleza.html",
+          cta: "Abrir ISS Fortaleza",
+          badge: "Disponível"
+        });
+      }
+
+      if (role === "owner" || role === "master") {
+        cards.push({
+          kicker: "Gestão",
+          title: "Painel administrativo",
+          desc: role === "master"
+            ? "Empresas, administradores, logs e controle de acesso."
+            : "Colaboradores, pagamento e controle da empresa.",
+          href: "admin.html",
+          cta: "Abrir administração",
+          badge: roleLabel(role)
+        });
+      }
+
+      cards.push({
+        kicker: "Em breve",
+        title: "Novas aplicações",
+        desc: "A central já está preparada para receber outras ferramentas da Prumo Sistemas.",
+        href: "",
+        cta: "Indisponível",
+        badge: "Roadmap"
+      });
+
+      $("toolsGrid").innerHTML = cards.map(card => `
+        <div class="card tool-card">
+          <div class="card-head">
+            <h3>${escapeHtml(card.kicker)}</h3>
+            <span class="pill ${card.href ? "ok" : "warn"}">${escapeHtml(card.badge)}</span>
+          </div>
+          <div class="card-body stack">
+            <div>
+              <div class="tool-title">${escapeHtml(card.title)}</div>
+              <p class="tool-desc">${escapeHtml(card.desc)}</p>
+            </div>
+            ${card.href
+              ? `<a class="button" href="${escapeHtml(card.href)}">${escapeHtml(card.cta)}</a>`
+              : `<button class="secondary" type="button" disabled>${escapeHtml(card.cta)}</button>`}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderAccount(data) {
+      const user = data.user || {};
+      $("roleBadge").textContent = roleLabel(user.role);
+      $("meEmail").textContent = user.email || "-";
+      $("meRole").textContent = roleLabel(user.role);
+      $("meCompany").textContent = user.company_name || user.company_id || "-";
+      $("meCurrentLogin").textContent = formatTs(user.current_login_at);
+      $("meLastLogin").textContent = formatTs(user.last_login_at);
+
+      if (user.must_change_password) {
+        $("passwordMsg").innerHTML = msg("warn", "Sua conta precisa trocar a senha temporária antes de continuar.");
+        switchSection("accountSection");
+      }
+    }
+
+    async function loadMe() {
+      const data = await api("/api/me");
+      if (!data.authenticated) {
+        window.location.href = "login.html?v=prumo";
+        return;
+      }
+      mePayload = data;
+      renderAccount(data);
+      renderTools(data.user || {});
+      if (window.location.hash === "#account") switchSection("accountSection");
+    }
+
+    async function logout() {
+      try {
+        await api("/api/logout", { method: "POST", body: JSON.stringify({}) });
+      } catch (err) {}
+      sessionStorage.removeItem("csrf");
+      localStorage.removeItem("csrf");
+      window.location.href = "login.html?v=prumo";
+    }
+
+    $("changePasswordForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      $("passwordMsg").innerHTML = "";
+      $("btnChangePassword").disabled = true;
+      const fd = new FormData(event.target);
+      const payload = Object.fromEntries(fd.entries());
+
+      if (payload.new_password !== payload.confirm_password) {
+        $("passwordMsg").innerHTML = msg("err", "As senhas novas não conferem.");
+        $("btnChangePassword").disabled = false;
+        return;
+      }
+
+      try {
+        const data = await api("/api/change-password", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        if (data.ok === false) throw new Error(data.error || "Erro ao trocar senha.");
+        event.target.reset();
+        $("passwordMsg").innerHTML = msg("ok", "Senha alterada com sucesso.");
+        await loadMe();
+      } catch (err) {
+        $("passwordMsg").innerHTML = msg("err", err.message || "Falha ao trocar senha.");
+      } finally {
+        $("btnChangePassword").disabled = false;
+      }
+    });
+
+    document.querySelectorAll(".nav-btn[data-section]").forEach(btn => {
+      btn.addEventListener("click", () => switchSection(btn.dataset.section));
+    });
+    $("btnLogout").addEventListener("click", logout);
+
+    loadMe().catch(err => {
+      $("toolsMsg").innerHTML = msg("err", err.message || "Falha ao carregar sessão.");
+    });
+  </script>
+</body>
+</html>

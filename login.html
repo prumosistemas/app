@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login · Prumo Sistemas</title>
+
+  <style>
+    :root {
+      --bg: #f3f4f8;
+      --card: #ffffff;
+      --border: #e3e6ef;
+      --text: #111827;
+      --muted: #6b7280;
+      --muted2: #9ca3af;
+      --accent: #4f46e5;
+      --accent2: #6366f1;
+      --red: #dc2626;
+      --green: #16a34a;
+      --amber: #d97706;
+      --radius: 14px;
+      --shadow: 0 14px 45px rgba(15, 23, 42, 0.11);
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      background:
+        radial-gradient(circle at top left, rgba(99, 102, 241, 0.16), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(79, 70, 229, 0.12), transparent 32%),
+        var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 22px;
+    }
+
+    .wrap {
+      width: min(420px, 100%);
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 18px;
+    }
+
+    .brand-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 14px;
+      margin: 0 auto 10px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      box-shadow: 0 8px 22px rgba(79, 70, 229, 0.25);
+      font-weight: 800;
+      font-size: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.04em;
+    }
+
+    .brand p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background: #f8f9fd;
+    }
+
+    .card-head strong {
+      font-size: 14px;
+    }
+
+    .card-body {
+      padding: 18px;
+      display: grid;
+      gap: 13px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    input {
+      width: 100%;
+      height: 40px;
+      border: 1px solid #cfd3df;
+      border-radius: 9px;
+      padding: 0 11px;
+      font: inherit;
+      outline: none;
+      background: #fff;
+      color: var(--text);
+    }
+
+    input:focus {
+      border-color: var(--accent2);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.13);
+    }
+
+    button {
+      height: 40px;
+      border: 0;
+      border-radius: 9px;
+      padding: 0 14px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .secondary {
+      background: #fff;
+      border: 1px solid #cfd3df;
+      color: var(--text);
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .row > * {
+      flex: 1;
+    }
+
+    .msg {
+      display: none;
+      border-radius: 9px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-line;
+      border: 1px solid var(--border);
+      background: #f8f9fd;
+      color: var(--muted);
+    }
+
+    .msg.show {
+      display: block;
+    }
+
+    .msg.err {
+      background: rgba(220, 38, 38, 0.08);
+      border-color: rgba(220, 38, 38, 0.2);
+      color: var(--red);
+    }
+
+    .msg.ok {
+      background: rgba(22, 163, 74, 0.08);
+      border-color: rgba(22, 163, 74, 0.2);
+      color: var(--green);
+    }
+
+    .msg.warn {
+      background: rgba(217, 119, 6, 0.08);
+      border-color: rgba(217, 119, 6, 0.22);
+      color: var(--amber);
+    }
+
+    .small {
+      color: var(--muted2);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    pre {
+      margin: 0;
+      max-height: 180px;
+      overflow: auto;
+      border-radius: 9px;
+      background: #f8f9fd;
+      border: 1px solid var(--border);
+      padding: 10px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-icon">P</div>
+      <h1>Prumo Sistemas</h1>
+      <p>Entre para acessar sua central</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <strong id="formTitle">Login</strong>
+      </div>
+
+      <div class="card-body">
+        <div id="loginForm">
+          <div style="margin-bottom:12px;">
+            <label for="email">Email</label>
+            <input id="email" autocomplete="username" placeholder="seu@email.com" />
+          </div>
+
+          <div style="margin-bottom:14px;">
+            <label for="password">Senha</label>
+            <input id="password" type="password" autocomplete="current-password" placeholder="Sua senha" />
+          </div>
+
+          <button id="btnLogin" type="button" style="width:100%;">Entrar</button>
+        </div>
+
+        <div id="changePasswordForm" class="hidden">
+          <div class="msg warn show">
+            Sua conta exige troca de senha antes de continuar.
+          </div>
+
+          <div style="margin-top:12px;">
+            <label for="currentPassword">Senha atual</label>
+            <input id="currentPassword" type="password" autocomplete="current-password" />
+          </div>
+
+          <div>
+            <label for="newPassword">Nova senha</label>
+            <input id="newPassword" type="password" autocomplete="new-password" />
+          </div>
+
+          <div>
+            <label for="confirmPassword">Confirmar nova senha</label>
+            <input id="confirmPassword" type="password" autocomplete="new-password" />
+          </div>
+
+          <button id="btnChangePassword" type="button" style="width:100%;margin-top:4px;">Alterar senha</button>
+        </div>
+
+        <div id="msg" class="msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+
+    let csrf = sessionStorage.getItem("csrf") || "";
+
+    const $ = id => document.getElementById(id);
+
+    function setMsg(type, text) {
+      const el = $("msg");
+      el.className = "msg show " + type;
+      el.textContent = text;
+    }
+
+    function clearMsg() {
+      const el = $("msg");
+      el.className = "msg";
+      el.textContent = "";
+    }
+
+    function saveCsrf(value) {
+      if (!value) return;
+      csrf = value;
+      sessionStorage.setItem("csrf", value);
+    }
+
+    async function api(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const hasBody = options.body !== undefined && options.body !== null;
+
+      if (hasBody && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
+
+      if (csrf) {
+        headers.set("X-CSRF-Token", csrf);
+      }
+
+      const res = await fetch(WORKER_URL + path, {
+        credentials: "include",
+        ...options,
+        headers
+      });
+
+      const contentType = res.headers.get("content-type") || "";
+      let data;
+
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        data = await res.text();
+      }
+
+      if (data && data.csrf) {
+        saveCsrf(data.csrf);
+      }
+
+      if (!res.ok) {
+        const detail = data?.error || data?.detail || data?.message || data;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+
+      return data;
+    }
+
+    async function checkSession({ redirect = false } = {}) {
+      try {
+        const data = await api("/api/me", { method: "GET" });
+
+        if (data.authenticated) {
+          if (data.user?.must_change_password) {
+            showChangePassword();
+            setMsg("warn", "Sessão válida, mas a troca de senha é obrigatória.");
+            return;
+          }
+
+          setMsg("ok", "Sessão autenticada.");
+          if (redirect) {
+            location.href = "index.html?v=prumo";
+          }
+        }
+      } catch (err) {
+        if (!redirect) setMsg("err", err.message || "Não autenticado.");
+      }
+    }
+
+    function showChangePassword() {
+      $("formTitle").textContent = "Trocar senha";
+      $("loginForm").classList.add("hidden");
+      $("changePasswordForm").classList.remove("hidden");
+      $("currentPassword").value = $("password").value || "";
+      $("newPassword").focus();
+    }
+
+    function showLogin() {
+      $("formTitle").textContent = "Login";
+      $("loginForm").classList.remove("hidden");
+      $("changePasswordForm").classList.add("hidden");
+    }
+
+    async function login() {
+      clearMsg();
+
+      const email = $("email").value.trim();
+      const password = $("password").value;
+
+      if (!email || !password) {
+        setMsg("err", "Informe email e senha.");
+        return;
+      }
+
+      $("btnLogin").disabled = true;
+
+      try {
+        const data = await api("/api/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password })
+        });
+
+        if (data.must_change_password) {
+          showChangePassword();
+          setMsg("warn", "Login aceito. Troque a senha para continuar.");
+          return;
+        }
+
+        setMsg("ok", "Login realizado.");
+        location.href = "index.html?v=prumo";
+      } catch (err) {
+        setMsg("err", err.message || "Falha no login.");
+      } finally {
+        $("btnLogin").disabled = false;
+      }
+    }
+
+    async function changePassword() {
+      clearMsg();
+
+      const current_password = $("currentPassword").value;
+      const new_password = $("newPassword").value;
+      const confirm_password = $("confirmPassword").value;
+
+      if (!current_password || !new_password || !confirm_password) {
+        setMsg("err", "Preencha todos os campos.");
+        return;
+      }
+
+      if (new_password !== confirm_password) {
+        setMsg("err", "As senhas novas não conferem.");
+        return;
+      }
+
+      $("btnChangePassword").disabled = true;
+
+      try {
+        await api("/api/change-password", {
+          method: "POST",
+          body: JSON.stringify({
+            current_password,
+            new_password,
+            confirm_password
+          })
+        });
+
+        setMsg("ok", "Senha alterada. Redirecionando...");
+        setTimeout(() => {
+          location.href = "index.html?v=prumo";
+        }, 600);
+      } catch (err) {
+        setMsg("err", err.message || "Falha ao alterar senha.");
+      } finally {
+        $("btnChangePassword").disabled = false;
+      }
+    }
+
+    $("btnLogin").addEventListener("click", login);
+    $("btnChangePassword").addEventListener("click", changePassword);
+
+    $("email").addEventListener("keydown", event => {
+      if (event.key === "Enter") $("password").focus();
+    });
+
+    $("password").addEventListener("keydown", event => {
+      if (event.key === "Enter") login();
+    });
+
+    $("confirmPassword").addEventListener("keydown", event => {
+      if (event.key === "Enter") changePassword();
+    });
+
+    checkSession({ redirect: true });
+  </script>
+</body>
+</html>
