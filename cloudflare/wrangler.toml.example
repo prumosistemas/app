@@ -1,0 +1,23 @@
+name = "prumo-sistema"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "db"
+database_name = "prumo-sistema"
+database_id = "SUBSTITUA_PELO_DATABASE_ID"
+
+[vars]
+PYTHON_API_URL = "https://api.seu-dominio.com"
+FRONTEND_ORIGINS = "https://app.seu-dominio.com"
+COOKIE_MODE = "prod"
+COMPANY_NAME = "Conta Master"
+
+[triggers]
+crons = ["* * * * *"]
+
+# Configurar como secrets, sem versionar valores:
+# npx wrangler secret put ISS_INTERNAL_SECRET
+# npx wrangler secret put SETUP_TOKEN
+# npx wrangler secret put ADMIN_EMAIL
+# npx wrangler secret put ADMIN_PASSWORD

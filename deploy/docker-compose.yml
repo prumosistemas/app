@@ -1,0 +1,36 @@
+services:
+  browserless:
+    image: ${BROWSERLESS_IMAGE:?Defina BROWSERLESS_IMAGE com a tag ou digest testado}
+    container_name: browserless
+    restart: unless-stopped
+    cpus: 8
+    mem_limit: 12g
+    shm_size: 2g
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      TOKEN: ${BROWSERLESS_TOKEN}
+      CONCURRENT: "15"
+      MAX_CONCURRENT_SESSIONS: "15"
+      QUEUED: "30"
+      QUEUE_LENGTH: "30"
+      TIMEOUT: "600000"
+      CONNECTION_TIMEOUT: "600000"
+      DEFAULT_LAUNCH_ARGS: '["--no-sandbox"]'
+    networks: [prumo-net]
+
+  prumo-api:
+    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.0}
+    container_name: prumo-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    volumes:
+      - /opt/prumo/data:/app/output
+    depends_on: [browserless]
+    networks: [prumo-net]
+
+networks:
+  prumo-net:
+    name: prumo-net

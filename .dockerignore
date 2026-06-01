@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+.tools/
+.git/
+.pytest_cache/
+output/
+server/output/
+playwright-report/
+node_modules/
+Nova pasta/
+repos/

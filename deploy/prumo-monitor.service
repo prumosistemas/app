@@ -1,0 +1,16 @@
+[Unit]
+Description=Prumo host and container monitor
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/prumo/app
+EnvironmentFile=/opt/prumo/config/monitor-agent.env
+ExecStart=/usr/bin/python3 /opt/prumo/app/deploy/monitor_agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+# Preferir docker compose --env-file .env up -d.
+# Referência sanitizada para consulta operacional.
+
+docker run -d \
+  --name browserless \
+  --restart unless-stopped \
+  --network prumo-net \
+  --memory=12g \
+  --cpus=8 \
+  --shm-size=2g \
+  -p 127.0.0.1:3000:3000 \
+  -e TOKEN=<BROWSERLESS_TOKEN> \
+  -e CONCURRENT=15 \
+  -e MAX_CONCURRENT_SESSIONS=15 \
+  -e QUEUED=30 \
+  -e QUEUE_LENGTH=30 \
+  -e TIMEOUT=600000 \
+  -e CONNECTION_TIMEOUT=600000 \
+  -e DEFAULT_LAUNCH_ARGS='["--no-sandbox"]' \
+  browserless/chrome@sha256:<DIGEST_TESTADO>
+
+docker run -d \
+  --name prumo-api \
+  --restart unless-stopped \
+  --network prumo-net \
+  -p 127.0.0.1:8000:8000 \
+  --env-file /opt/prumo/config/prumo-api.env \
+  -v /opt/prumo/data:/app/output \
+  ryang20/prumo-api:1.0.0

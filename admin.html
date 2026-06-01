@@ -1510,6 +1510,7 @@ function companyUsersDetails(c) {
 
 function applyRoleUI(user) {
   const role = user?.role || "";
+  const companyDisabled = Boolean(user?.company_disabled);
   const issAllowed = isIssRole(role);
   const issSections = ["runsSection", "datasetsSection", "accountsSection", "debugSection"];
   const adminSections = ["adminOverviewSection", "usersSection", "billingSection"];
@@ -1526,10 +1527,17 @@ function applyRoleUI(user) {
 
   const adminBox = $("adminAccessBox");
   if (adminBox) {
+    adminBox.className = companyDisabled ? "notice warn" : "notice info";
     adminBox.classList.toggle("hidden", issAllowed);
     adminBox.textContent = role === "owner"
-      ? "Administrador gerencia colaboradores e pagamento. A área ISS Fortaleza fica disponível para colaboradores."
+      ? companyDisabled
+        ? "Empresa desativada pelo master. Seu acesso administrativo está em modo somente leitura."
+        : "Administrador gerencia colaboradores e pagamento. A área ISS Fortaleza fica disponível para colaboradores."
       : "";
+  }
+  const createForm = $("createUserForm");
+  if (createForm) {
+    createForm.querySelectorAll("input,button").forEach(el => { el.disabled = companyDisabled; });
   }
 }
 
@@ -1799,6 +1807,7 @@ async function loadUsers() {
       $("usersTable").innerHTML = `<div class="empty-state">Nenhum usuário encontrado.</div>`;
       return;
     }
+    const companyDisabled = Boolean(data.company_disabled);
     $("usersTable").innerHTML = `
       <div class="table-wrap">
         <table>
@@ -1808,14 +1817,15 @@ async function loadUsers() {
               <tr>
                 <td>${escapeHtml(u.email)}</td>
                 <td>${escapeHtml(roleLabel(u.role))}</td>
-                <td>${Number(u.disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
+                <td>${u.deletion_status ? `<span class="pill bad">Exclusão pendente</span>` : u.blocked_by_company ? `<span class="pill bad">Bloqueado pela empresa</span>` : Number(u.disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
                 <td>${adminUserStats(u.stats)}${adminDatasetsAccounts(u.stats)}${adminLatestRuns(u.stats)}</td>
                 <td><span class="small">Anterior: ${formatUnixTs(u.last_login_at)}<br>Atual: ${formatUnixTs(u.current_login_at)}</span></td>
                 <td>
-                  ${u.role === "member" ? `
+                  ${u.role === "member" && !companyDisabled && !u.deletion_status ? `
                     <div class="actions">
                       ${Number(u.disabled) === 0 ? `<button class="sm secondary" onclick="confirmResetUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')">Resetar senha</button>` : ""}
                       <button class="sm ${Number(u.disabled) === 1 ? "secondary" : "danger"}" onclick="confirmToggleUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}', '${Number(u.disabled) === 1 ? "enable" : "disable"}')">${Number(u.disabled) === 1 ? "Reativar" : "Desativar"}</button>
+                      <button class="sm danger" onclick="confirmDeleteUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')">Excluir</button>
                     </div>` : "-"}
                 </td>
               </tr>
@@ -1856,6 +1866,24 @@ async function confirmToggleUser(userId, email, intent) {
   });
   if(!data.ok) return showAdminMsg("err", adminStatusError(data, "Erro."));
   showAdminMsg("ok", intent === "disable" ? "Colaborador desativado." : "Colaborador reativado.");
+  await loadUsers();
+}
+
+async function confirmDeleteUser(userId, email) {
+  const ok = await customConfirm(
+    `Excluir ${email} permanentemente?\n\nO acesso será bloqueado imediatamente. Runs, dados e pasta no servidor serão removidos com sincronização automática.`,
+    "Excluir colaborador",
+    "danger"
+  );
+  if(!ok) return;
+  const data = await apiFetch("/api/users/delete", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ user_id: userId, confirm: "yes" }),
+  });
+  showAdminMsg("ok", data.deletion_status === "completed"
+    ? "Colaborador excluído e dados removidos do servidor."
+    : "Exclusão iniciada. A sincronização será concluída automaticamente.");
   await loadUsers();
 }
 

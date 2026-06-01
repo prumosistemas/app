@@ -46,6 +46,7 @@
     button { height:37px; border:0; border-radius:7px; background:var(--accent); color:#fff; padding:0 13px; font:600 13px var(--font); cursor:pointer; }
     button.secondary { background:#fff; border:1px solid #cdd0df; color:var(--text); }
     button.danger { background:var(--red); }
+    .button-link { min-height:30px; border-radius:7px; padding:5px 10px; display:inline-flex; align-items:center; background:var(--accent); color:#fff; font-size:12px; font-weight:600; text-decoration:none; }
     button:disabled { opacity:.55; cursor:not-allowed; }
     .form-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
     .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:7px; }
@@ -67,8 +68,13 @@
     .company-name { display:grid; gap:8px; min-width:280px; }
     .detail-stack { display:grid; gap:8px; margin-top:8px; }
     .user-details { margin-top:8px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .metric { padding:12px; border:1px solid var(--border); border-radius:7px; background:var(--panel); }
+    .metric span { color:var(--text3); font-size:11px; font-weight:700; text-transform:uppercase; }
+    .metric b { display:block; margin-top:5px; font-size:20px; }
+    .chart-wrap { height:250px; padding:12px; }
     .hidden { display:none !important; }
-    @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row { grid-template-columns:1fr; } main { padding:16px; } }
+    @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row,.metric-grid { grid-template-columns:1fr; } main { padding:16px; } }
   </style>
 </head>
 <body>
@@ -119,13 +125,25 @@
       </div>
     </section>
     <section id="logsSection" class="section">
-      <div class="card"><div class="card-head"><h3>Logs recentes</h3><button id="btnReloadLogs" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="logsTable"><span class="small">Carregando...</span></div></div>
+      <div class="grid stack">
+        <div id="metricsStatus" class="notice info">Carregando métricas do servidor...</div>
+        <div id="metricCards" class="metric-grid"></div>
+        <div class="grid two">
+          <div class="card"><div class="card-head"><h3>CPU e memória</h3></div><div class="chart-wrap"><canvas id="resourcesChart"></canvas></div></div>
+          <div class="card"><div class="card-head"><h3>Navegadores, fila e erros</h3></div><div class="chart-wrap"><canvas id="runtimeChart"></canvas></div></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Logs recentes</h3><button id="btnReloadLogs" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="logsTable"><span class="small">Carregando...</span></div></div>
+      </div>
     </section>
   </main>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
 let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
+let resourcesChart = null;
+let runtimeChart = null;
+let metricsTimer = null;
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 function ts(value){ if(value === null || value === undefined || value === "") return "Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*1000):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
@@ -149,7 +167,8 @@ function switchSection(id){
   document.querySelectorAll("[data-section]").forEach(el=>el.classList.toggle("active",el.dataset.section===id));
   $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",logsSection:"Logs"}[id] || "Master";
   if(id==="companiesSection") loadCompanies();
-  if(id==="logsSection") loadLogs();
+  if(id==="logsSection"){ loadLogs(); loadMetrics(); startMetricsPolling(); }
+  else { stopMetricsPolling(); }
 }
 async function loadSession(){
   const data=await api("/api/me");
@@ -194,7 +213,7 @@ async function loadCompanies(){
   try{
     const data=await api("/api/master/companies"); const rows=data.companies || [];
     if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
-    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa e usuários</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><div class="company-name"><strong>${esc(c.name)}</strong>${companyUsersDetails(c)}</div></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions">${c.owner_id?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
+    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${c.deletion_status?'<span class="pill bad">Exclusão pendente</span>':Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="master-company.html?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
     $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
     $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
     $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));
@@ -207,8 +226,51 @@ async function loadLogs(){
     $("logsTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Ator</th><th>Ação</th><th>Mensagem</th><th>IP</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(ts(row.created_at))}</td><td>${esc(row.company_name||"-")}</td><td>${esc(row.actor_email||"-")}</td><td><code>${esc(row.action||"")}</code></td><td>${esc(row.message||"")}</td><td>${esc(row.ip||"")}</td></tr>`).join("")}</tbody></table></div>`;
   } catch(err){ message("err",err.message); }
 }
+function metricValue(value,suffix=""){ const number=Number(value||0); return `${number.toFixed(number>=10?0:1)}${suffix}`; }
+function renderMetricCards(latest){
+  const host=latest.host || {}; const runtime=latest.runtime || {}; const queue=runtime.queue || {}; const containers=latest.containers || {};
+  const browserless=containers.browserless || {}; const apiContainer=containers["prumo-api"] || {};
+  $("metricCards").innerHTML=[
+    ["CPU do host",metricValue(host.cpu_percent,"%")],
+    ["Memória RAM",metricValue(host.memory_percent,"%")],
+    ["Navegadores ativos",`${Number(queue.workers_busy||0)} / ${Number(queue.workers||0)}`],
+    ["Fila pendente",String(Number(queue.pending_groups||0))],
+    ["Erros de fluxo",String(Number(latest.errors?.flow||0))],
+    ["Browserless",browserless.status||"indisponível"],
+    ["Prumo API",apiContainer.status||"indisponível"],
+    ["Disco usado",metricValue(host.disk_percent,"%")],
+  ].map(([label,value])=>`<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
+}
+function upsertChart(existing,canvasId,labels,datasets){
+  if(existing) existing.destroy();
+  return new Chart($(canvasId),{type:"line",data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},animation:false,scales:{y:{beginAtZero:true}}}});
+}
+function renderMetrics(data){
+  const latest=data.latest || {}; const samples=data.samples || [];
+  renderMetricCards(latest);
+  const labels=samples.map(item=>new Date(Number(item.ts||0)*1000).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}));
+  resourcesChart=upsertChart(resourcesChart,"resourcesChart",labels,[
+    {label:"CPU %",data:samples.map(item=>Number(item.host?.cpu_percent||0)),borderColor:"#4f46e5",backgroundColor:"#4f46e5",tension:.25},
+    {label:"RAM %",data:samples.map(item=>Number(item.host?.memory_percent||0)),borderColor:"#15803d",backgroundColor:"#15803d",tension:.25},
+  ]);
+  runtimeChart=upsertChart(runtimeChart,"runtimeChart",labels,[
+    {label:"Navegadores ativos",data:samples.map(item=>Number(item.runtime?.queue?.workers_busy||0)),borderColor:"#4f46e5",backgroundColor:"#4f46e5",tension:.25},
+    {label:"Fila",data:samples.map(item=>Number(item.runtime?.queue?.pending_groups||0)),borderColor:"#b45309",backgroundColor:"#b45309",tension:.25},
+    {label:"Erros",data:samples.map(item=>Number(item.errors?.total||0)),borderColor:"#b91c1c",backgroundColor:"#b91c1c",tension:.25},
+  ]);
+  $("metricsStatus").className=`notice ${data.agent?.stale?"err":"ok"}`;
+  $("metricsStatus").textContent=data.agent?.available
+    ? data.agent.stale?"Agente de monitoramento sem atualização recente. Verifique o serviço no servidor.":`Monitoramento ativo. Última coleta: ${ts(data.agent.last_seen_at)}`
+    :"Agente de monitoramento ainda não enviou dados.";
+}
+async function loadMetrics(){
+  try{ renderMetrics(await api("/api/master/metrics?range=5d")); }
+  catch(err){ $("metricsStatus").className="notice err"; $("metricsStatus").textContent="Falha ao carregar métricas: "+err.message; }
+}
+function startMetricsPolling(){ stopMetricsPolling(); metricsTimer=setInterval(loadMetrics,15000); }
+function stopMetricsPolling(){ if(metricsTimer){ clearInterval(metricsTimer); metricsTimer=null; } }
 async function toggleCompany(id,intent){ if(!confirm(intent==="disable"?"Desativar esta empresa?":"Reativar esta empresa?"))return; await api("/api/master/companies/toggle",{method:"POST",body:JSON.stringify({company_id:id,intent,confirm:"yes"})}); message("ok",intent==="disable"?"Empresa desativada.":"Empresa reativada."); loadCompanies(); }
-async function deleteCompany(id){ if(!confirm("Apagar permanentemente esta empresa e seus usuários?"))return; await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:id,confirm:"DELETE"})}); message("ok","Empresa apagada."); loadCompanies(); }
+async function deleteCompany(id){ if(!confirm("Apagar permanentemente esta empresa, seus usuários, runs e pastas?"))return; const data=await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:id,confirm:"DELETE"})}); message("ok",data.deletion_status==="completed"?"Empresa apagada e sincronizada.":"Exclusão iniciada. A sincronização será concluída automaticamente."); loadCompanies(); }
 async function resetOwner(id,email){ if(!confirm("Resetar a senha de "+email+"?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:id,confirm:"yes"})}); message("ok","Senha temporaria de "+data.owner.email+":\n"+data.owner.temporary_password); }
 document.querySelectorAll("[data-section]").forEach(btn=>btn.onclick=()=>switchSection(btn.dataset.section));
 $("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLogs;

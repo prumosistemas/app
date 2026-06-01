@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Empresa | Master Prumo Sistemas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#f0f2f7; --panel:#fff; --panel2:#f7f8fc; --border:#e4e6ef; --text:#111827; --text2:#4b5563; --text3:#8b95a7; --accent:#4f46e5; --accent-lt:#eef2ff; --green:#15803d; --red:#b91c1c; --amber:#b45309; --font:'Plus Jakarta Sans',system-ui,sans-serif; --mono:'JetBrains Mono',monospace; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { min-height:100vh; background:var(--bg); color:var(--text); font:13.5px/1.5 var(--font); }
+    header { min-height:64px; padding:12px 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--border); background:var(--panel); }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .brand img { width:34px; height:34px; object-fit:contain; }
+    .brand h1 { font-size:15px; }
+    .brand p,.muted { color:var(--text3); font-size:12px; }
+    main { max-width:1440px; margin:auto; padding:22px 24px 40px; display:grid; gap:16px; }
+    .topline { display:flex; align-items:start; justify-content:space-between; gap:16px; }
+    .topline h2 { font-size:22px; }
+    .actions { display:flex; gap:7px; flex-wrap:wrap; }
+    button,.button-link { min-height:36px; border:0; border-radius:7px; padding:7px 12px; display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font:600 13px var(--font); text-decoration:none; cursor:pointer; }
+    button.secondary,.button-link.secondary { border:1px solid #cdd0df; background:#fff; color:var(--text); }
+    button.danger { background:var(--red); }
+    .grid { display:grid; gap:14px; }
+    .grid.cards { grid-template-columns:repeat(6,minmax(0,1fr)); }
+    .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .card { overflow:hidden; border:1px solid var(--border); border-radius:8px; background:var(--panel); }
+    .card-head { padding:12px 14px; border-bottom:1px solid var(--border); background:var(--panel2); display:flex; justify-content:space-between; gap:10px; }
+    .card-head h3 { font-size:13px; }
+    .card-body { padding:14px; }
+    .metric { padding:12px; border:1px solid var(--border); border-radius:7px; background:var(--panel); }
+    .metric span { display:block; color:var(--text3); font-size:10px; font-weight:700; text-transform:uppercase; }
+    .metric b { display:block; margin-top:5px; font-size:19px; }
+    .notice { padding:10px 12px; border:1px solid; border-radius:7px; white-space:pre-line; }
+    .notice.info { border-color:#c7d2fe; background:var(--accent-lt); color:var(--accent); }
+    .notice.ok { border-color:#bbf7d0; background:#ecfdf3; color:var(--green); }
+    .notice.err { border-color:#fecaca; background:#fef2f2; color:var(--red); }
+    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:7px; }
+    table { width:100%; min-width:860px; border-collapse:collapse; }
+    th { color:var(--text3); background:var(--panel2); font-size:10px; text-align:left; text-transform:uppercase; }
+    th,td { padding:10px; border-bottom:1px solid var(--border); vertical-align:top; }
+    tr:last-child td { border-bottom:0; }
+    .pill { display:inline-flex; border:1px solid var(--border); border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; }
+    .pill.ok { color:var(--green); background:#ecfdf3; }
+    .pill.bad { color:var(--red); background:#fef2f2; }
+    .pill.warn { color:var(--amber); background:#fffbeb; }
+    code { font:12px var(--mono); }
+    .small { color:var(--text3); font-size:12px; }
+    .stack { display:grid; gap:8px; }
+    @media (max-width:1000px) { .grid.cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid.two { grid-template-columns:1fr; } header,.topline { align-items:stretch; flex-direction:column; } main { padding:16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="prumo-logo.png" alt="Prumo Sistemas"><div><h1>Prumo Sistemas</h1><p>Inspeção administrativa da empresa</p></div></div>
+    <a class="button-link secondary" href="master.html">Voltar para empresas</a>
+  </header>
+  <main>
+    <div class="topline">
+      <div><h2 id="companyName">Carregando empresa...</h2><p class="muted" id="companyId">-</p></div>
+      <div class="actions" id="companyActions"></div>
+    </div>
+    <div id="globalMsg" class="notice info">Carregando dados da empresa...</div>
+    <section class="grid cards" id="summaryCards"></section>
+    <section class="grid two">
+      <div class="card"><div class="card-head"><h3>Empresa</h3></div><div class="card-body stack" id="companyMeta"></div></div>
+      <div class="card"><div class="card-head"><h3>Armazenamento no servidor</h3></div><div class="card-body stack" id="storageMeta"></div></div>
+    </section>
+    <section class="card"><div class="card-head"><h3>Usuários da plataforma</h3></div><div class="card-body" id="usersTable"></div></section>
+    <section class="card"><div class="card-head"><h3>Runs recentes</h3></div><div class="card-body" id="runsTable"></div></section>
+  </main>
+  <script>
+    const API="https://morning-credit-8a59.prumo-sistema.workers.dev";
+    let csrf=sessionStorage.getItem("csrf")||localStorage.getItem("csrf")||"";
+    let company=null;
+    const $=id=>document.getElementById(id);
+    const esc=value=>String(value??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+    const companyId=new URLSearchParams(location.search).get("id")||"";
+    function ts(value){ if(value===null||value===undefined||value==="")return"Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*(n<10_000_000_000?1000:1)):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
+    function bytes(value){ const n=Number(value||0); if(n<1024)return n+" B"; if(n<1048576)return(n/1024).toFixed(1)+" KB"; if(n<1073741824)return(n/1048576).toFixed(1)+" MB"; return(n/1073741824).toFixed(1)+" GB"; }
+    function role(role){ return role==="master"?"Master":role==="owner"?"Administrador":"Colaborador"; }
+    function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); location.replace("login.html"); }
+    async function api(path,options={}){ const headers=new Headers(options.headers||{}); if(options.body&&!headers.has("Content-Type"))headers.set("Content-Type","application/json"); if(csrf)headers.set("X-CSRF-Token",csrf); const res=await fetch(API+path,{credentials:"include",...options,headers}); const ct=res.headers.get("content-type")||""; const data=ct.includes("application/json")?await res.json():await res.text(); if(data?.csrf){csrf=data.csrf;sessionStorage.setItem("csrf",csrf);localStorage.setItem("csrf",csrf);} if(res.status===401||res.status===403){toLogin();throw new Error("Sessão expirada.");} if(!res.ok)throw new Error(data?.error||data?.detail||String(data)); return data; }
+    function status(user){
+      if(user.deletion_status)return'<span class="pill bad">Exclusão pendente</span>';
+      if(Number(company.disabled)===1&&user.role==="member")return'<span class="pill bad">Bloqueado pela empresa</span>';
+      if(Number(company.disabled)===1&&user.role==="owner")return'<span class="pill warn">Somente leitura</span>';
+      return Number(user.disabled)===1?'<span class="pill bad">Desativado</span>':'<span class="pill ok">Ativo</span>';
+    }
+    function metric(label,value){return`<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;}
+    function render(){
+      const stats=company.stats||{}; const totals=stats.totals||{}; const storage=stats.storage||{}; const statUsers=new Map((stats.users||[]).map(item=>[String(item.user_id),item]));
+      $("companyName").textContent=company.name||"Empresa"; $("companyId").textContent=company.id||"";
+      $("globalMsg").className=`notice ${company.deletion_status?"err":Number(company.disabled)===1?"info":"ok"}`;
+      $("globalMsg").textContent=company.deletion_status?"Exclusão sincronizada em andamento.":Number(company.disabled)===1?"Empresa desativada. O administrador possui acesso somente leitura.":"Empresa ativa.";
+      $("summaryCards").innerHTML=[
+        ["Usuários",company.users?.length||0],["Colaboradores",company.member_count||0],["CNPJs únicos",totals.cnpjs_unique||0],
+        ["Itens cadastrados",totals.items||0],["Contas ISS",totals.accounts||0],["Runs",totals.runs||0],
+      ].map(item=>metric(item[0],item[1])).join("");
+      $("companyMeta").innerHTML=`<div>Administrador: <code>${esc(company.owner_email||"-")}</code></div><div>Status: ${Number(company.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</div><div>Criada em: <code>${esc(ts(company.created_at))}</code></div><div>Conjuntos: <b>${Number(totals.datasets||0)}</b> · Retries: <b>${Number(totals.retries||0)}</b></div>`;
+      const orphan=(storage.orphan_user_folders||[]);
+      $("storageMeta").innerHTML=`<div>Status: ${storage.healthy===false?'<span class="pill bad">Verificar</span>':'<span class="pill ok">Saudável</span>'}</div><div>Pasta: <code>${esc(storage.path||"-")}</code></div><div>Arquivos: <b>${Number(storage.files||0)}</b> · Pastas: <b>${Number(storage.folders||0)}</b> · Tamanho: <b>${esc(bytes(storage.bytes))}</b></div><div>Última alteração: <code>${esc(ts(storage.last_modified_at))}</code></div>${orphan.length?`<div class="notice err">Pastas órfãs: ${esc(orphan.join(", "))}</div>`:""}`;
+      $("usersTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Dados</th><th>Servidor</th><th>Último login</th></tr></thead><tbody>${(company.users||[]).map(user=>{const userStats=statUsers.get(String(user.id))||{};const folder=userStats.storage||{};return`<tr><td>${esc(user.email)}</td><td>${esc(role(user.role))}</td><td>${status(user)}</td><td>CNPJs únicos: <b>${Number((userStats.cnpjs_unique||[]).length)}</b><br>Itens: <b>${Number(userStats.items_count||0)}</b> · Contas ISS: <b>${Number(userStats.accounts_count||0)}</b><br>Conjuntos: <b>${Number(userStats.datasets_count||0)}</b> · Runs: <b>${Number(userStats.runs_count||0)}</b></td><td>${folder.exists?`<span class="pill ok">Existe</span><br><span class="small">${esc(bytes(folder.bytes))} · ${Number(folder.files||0)} arquivos</span>`:'<span class="pill warn">Sem pasta</span>'}</td><td>${esc(ts(user.current_login_at))}</td></tr>`;}).join("")}</tbody></table></div>`;
+      const runs=stats.latest_runs||[];
+      $("runsTable").innerHTML=runs.length?`<div class="table-wrap"><table><thead><tr><th>Run</th><th>Usuário</th><th>Status</th><th>Tipo</th><th>Resultado</th><th>Criada</th></tr></thead><tbody>${runs.map(run=>`<tr><td><code>${esc(run.dataset_alias||run.run_id||"-")}</code></td><td>${esc(run.user_email||run.user_id||"-")}</td><td>${esc(run.status||"-")}</td><td>${esc(run.attempt_type||"manual")}</td><td>Total: ${Number(run.total||0)} · OK: ${Number(run.ok||0)} · Erros: ${Number(run.erros||0)}</td><td>${esc(ts(run.created_at))}</td></tr>`).join("")}</tbody></table></div>`:'<span class="small">Sem runs recentes.</span>';
+      $("companyActions").innerHTML=company.is_master_company||company.deletion_status?"":`${company.owner_id?`<button class="secondary" data-reset>Resetar senha do admin</button>`:""}<button class="secondary" data-toggle="${Number(company.disabled)===1?"enable":"disable"}">${Number(company.disabled)===1?"Reativar empresa":"Desativar empresa"}</button><button class="danger" data-delete>Excluir empresa</button>`;
+      $("companyActions").querySelector("[data-toggle]")?.addEventListener("click",event=>toggleCompany(event.currentTarget.dataset.toggle));
+      $("companyActions").querySelector("[data-delete]")?.addEventListener("click",deleteCompany);
+      $("companyActions").querySelector("[data-reset]")?.addEventListener("click",resetOwner);
+    }
+    async function load(){ if(!companyId){location.replace("master.html");return;} const data=await api("/api/master/companies/"+encodeURIComponent(companyId)); company=data.company; render(); }
+    async function toggleCompany(intent){ if(!confirm(intent==="disable"?"Desativar esta empresa?":"Reativar esta empresa?"))return; await api("/api/master/companies/toggle",{method:"POST",body:JSON.stringify({company_id:company.id,intent,confirm:"yes"})}); await load(); }
+    async function deleteCompany(){ if(!confirm("Excluir permanentemente esta empresa, seus usuários, runs e pastas?"))return; const data=await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:company.id,confirm:"DELETE"})}); if(data.deletion_status==="completed"){location.replace("master.html");return;} await load(); }
+    async function resetOwner(){ if(!confirm("Resetar a senha do administrador?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:company.owner_id,confirm:"yes"})}); alert("Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); }
+    load().catch(error=>{$("globalMsg").className="notice err";$("globalMsg").textContent=error.message;});
+  </script>
+</body>
+</html>
