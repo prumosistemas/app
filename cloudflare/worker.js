@@ -626,7 +626,8 @@ async function handleMasterMetrics(request, env) {
   const auth = await requireRole(request, env, "master");
   if (auth.response) return auth.response;
   const url = new URL(request.url);
-  const range = url.searchParams.get("range") === "1d" ? "1d" : "5d";
+  const requestedRange = url.searchParams.get("range") || "";
+  const range = ["1h", "6h", "24h", "5d"].includes(requestedRange) ? requestedRange : "6h";
   const metrics = await fetchPythonSystemMetrics(env, auth.user, range);
   if (!metrics.ok) {
     return jsonResponse(request, env, metrics, 502);
@@ -2138,6 +2139,12 @@ async function getCompaniesForMaster(db) {
       u.disabled AS owner_disabled
     FROM companies c
     LEFT JOIN users u ON u.company_id = c.id AND u.role = 'owner'
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM users master_user
+      WHERE master_user.company_id = c.id
+        AND master_user.role = 'master'
+    )
     ORDER BY c.created_at DESC
   `).all();
 

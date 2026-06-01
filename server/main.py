@@ -89,6 +89,7 @@ from domain import (
     save_accounts,
     save_dataset_record,
     save_datasets,
+    should_hide_run_file,
     task_key,
     validate_dataset_items,
     visible_root_runs,
@@ -463,9 +464,44 @@ async def health() -> Dict[str, Any]:
     }
 
 
-def _load_monitor_metrics(range_days: int) -> Dict[str, Any]:
+def _monitor_sample_severity(sample: Dict[str, Any]) -> float:
+    host = sample.get("host") or {}
+    runtime = sample.get("runtime") or {}
+    queue = runtime.get("queue") or {}
+    errors = sample.get("errors") or {}
+    containers = sample.get("containers") or {}
+    oom_penalty = 1000 if any(bool((item or {}).get("oom_killed")) for item in containers.values()) else 0
+    return max(
+        float(host.get("cpu_percent") or 0),
+        float(host.get("memory_percent") or 0),
+        float(queue.get("workers_busy") or 0) * 10,
+        float(queue.get("pending_groups") or 0) * 10,
+        float(errors.get("total") or 0) * 20,
+    ) + oom_penalty
+
+
+def _downsample_monitor_metrics(samples: List[Dict[str, Any]], max_points: int = 900) -> List[Dict[str, Any]]:
+    if len(samples) <= max_points:
+        return samples
+    bucket_size = max(1, (len(samples) + max_points - 1) // max_points)
+    output = []
+    for start in range(0, len(samples), bucket_size):
+        bucket = samples[start:start + bucket_size]
+        output.append(max(bucket, key=_monitor_sample_severity))
+    if samples and output[-1].get("ts") != samples[-1].get("ts"):
+        output.append(samples[-1])
+    return output
+
+
+def _load_monitor_metrics(range_key: str) -> Dict[str, Any]:
     latest: Dict[str, Any] = {}
     samples: List[Dict[str, Any]] = []
+    range_seconds = {
+        "1h": 60 * 60,
+        "6h": 6 * 60 * 60,
+        "24h": 24 * 60 * 60,
+        "5d": 5 * 24 * 60 * 60,
+    }.get(range_key, 6 * 60 * 60)
 
     try:
         with open(MONITOR_LATEST_FILE, "r", encoding="utf-8") as handle:
@@ -474,11 +510,11 @@ def _load_monitor_metrics(range_days: int) -> Dict[str, Any]:
         latest = {}
 
     if os.path.isfile(MONITOR_DB_FILE):
-        cutoff = int(time.time()) - max(1, min(range_days, 5)) * 24 * 60 * 60
+        cutoff = int(time.time()) - range_seconds
         try:
             with closing(sqlite3.connect(MONITOR_DB_FILE)) as conn:
                 rows = conn.execute(
-                    "SELECT ts, payload FROM metrics WHERE ts >= ? ORDER BY ts ASC LIMIT 1600",
+                    "SELECT ts, payload FROM metrics WHERE ts >= ? ORDER BY ts ASC LIMIT 20000",
                     (cutoff,),
                 ).fetchall()
             for ts, payload in rows:
@@ -488,10 +524,15 @@ def _load_monitor_metrics(range_days: int) -> Dict[str, Any]:
         except sqlite3.Error:
             samples = []
 
+    raw_sample_count = len(samples)
+    samples = _downsample_monitor_metrics(samples)
     latest_ts = int(latest.get("ts") or 0)
     return {
         "latest": latest,
         "samples": samples,
+        "range": range_key,
+        "raw_sample_count": raw_sample_count,
+        "resolution_seconds": 30,
         "agent": {
             "available": bool(latest),
             "stale": not latest_ts or int(time.time()) - latest_ts > 45,
@@ -1084,13 +1125,12 @@ async def get_run_logs_tail(
     root_id = root_id_of(run)
 
     logs_by_attempt = logs_by_attempt_for_root(ctx, root_id, limit_chars=max(5_000, min(limit_chars, 200_000)))
-    cnpj_norm = normalize_cnpj(cnpj)
+    cnpj_norm = normalize_cnpj(cnpj) if str(cnpj or "").strip() else ""
     flow_norm = str(flow or "").strip()
     attempt_run_id = str(attempt_run_id or "").strip()
 
     if cnpj_norm:
         filtered_attempts = []
-        fallback_attempts = []
         for attempt in logs_by_attempt:
             if attempt_run_id and attempt.get("run_id") != attempt_run_id:
                 continue
@@ -1106,12 +1146,8 @@ async def get_run_logs_tail(
                 attempt["logs"] = "\n".join(filtered)
                 attempt["log_scope"] = "cnpj_flow"
                 filtered_attempts.append(attempt)
-            elif attempt.get("logs"):
-                fallback = dict(attempt)
-                fallback["log_scope"] = "attempt_full"
-                fallback_attempts.append(fallback)
 
-        logs_by_attempt = filtered_attempts or fallback_attempts
+        logs_by_attempt = filtered_attempts
     elif attempt_run_id:
         logs_by_attempt = [attempt for attempt in logs_by_attempt if attempt.get("run_id") == attempt_run_id]
 
@@ -1471,6 +1507,9 @@ async def download_run_file(
     full_path = os.path.join(run_dir, path)
     full_path = safe_path_inside(run_dir, full_path)
 
+    if should_hide_run_file(os.path.basename(full_path)):
+        raise HTTPException(status_code=404, detail="Arquivo interno não disponível para download.")
+
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
 
@@ -1492,14 +1531,14 @@ async def debug_queue(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[
 
 @app.get("/api/admin/system-metrics")
 async def admin_system_metrics(
-    range: str = Query(default="5d"),
+    range: str = Query(default="6h"),
     ctx: WorkerContext = Depends(get_worker_context),
 ) -> Dict[str, Any]:
     if ctx.user_role != "master":
         raise HTTPException(status_code=403, detail="Permissão negada.")
 
-    range_days = 5 if range == "5d" else 1
-    return {"ok": True, **await asyncio.to_thread(_load_monitor_metrics, range_days)}
+    range_key = range if range in {"1h", "6h", "24h", "5d"} else "6h"
+    return {"ok": True, **await asyncio.to_thread(_load_monitor_metrics, range_key)}
 
 
 @app.get("/api/internal/runtime-metrics")

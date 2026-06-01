@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -23,7 +24,7 @@ API_URL = os.getenv("PRUMO_API_URL", "http://127.0.0.1:8000").rstrip("/")
 INTERNAL_SECRET = os.getenv("ISS_INTERNAL_SECRET", "").strip()
 BROWSERLESS_PRESSURE_URL = os.getenv("BROWSERLESS_PRESSURE_URL", "").strip()
 COLLECT_INTERVAL = max(5, int(os.getenv("MONITOR_COLLECT_INTERVAL", "10")))
-PERSIST_INTERVAL = max(60, int(os.getenv("MONITOR_PERSIST_INTERVAL", "300")))
+PERSIST_INTERVAL = max(10, int(os.getenv("MONITOR_PERSIST_INTERVAL", "30")))
 RETENTION_SECONDS = 5 * 24 * 60 * 60
 CONTAINERS = ("browserless", "prumo-api")
 
@@ -130,6 +131,11 @@ def docker_metrics() -> Dict[str, Any]:
                 "status": state.get("Status") or "unknown",
                 "running": bool(state.get("Running")),
                 "started_at": state.get("StartedAt"),
+                "finished_at": state.get("FinishedAt"),
+                "exit_code": int(state.get("ExitCode") or 0),
+                "oom_killed": bool(state.get("OOMKilled")),
+                "error": state.get("Error") or "",
+                "health": (state.get("Health") or {}).get("Status") or "",
                 "restart_count": int(item.get("RestartCount") or 0),
                 "image": item.get("Config", {}).get("Image") or "",
             })
@@ -162,7 +168,14 @@ def browserless_pressure() -> Optional[Dict[str, Any]]:
         return None
 
 
-def log_errors() -> Dict[str, int]:
+def sanitize_event(line: str) -> str:
+    text = re.sub(r"([?&]token=)[^&\s]+", r"\1<masked>", str(line or ""), flags=re.IGNORECASE)
+    text = re.sub(r"(\btoken\s*=\s*)[^&\s]+", r"\1<masked>", text, flags=re.IGNORECASE)
+    text = re.sub(r"(authorization:\s*)(\S+)", r"\1<masked>", text, flags=re.IGNORECASE)
+    return text.strip()[-700:]
+
+
+def log_errors() -> Dict[str, Any]:
     text = ""
     for container in CONTAINERS:
         try:
@@ -176,10 +189,45 @@ def log_errors() -> Dict[str, int]:
             text += completed.stdout + completed.stderr
         except subprocess.SubprocessError:
             continue
+    try:
+        text += run(["journalctl", "-k", "--since", "5 minutes ago", "--no-pager", "-n", "500"], timeout=10)
+    except (RuntimeError, subprocess.SubprocessError):
+        pass
+
+    lower = text.lower()
     flow = text.count("[ITEM_ERROR]")
     queue = text.count("[QUEUE_WORKER_FAILED]") + text.count("[queue] worker=")
-    browser = text.lower().count("falha ao criar browser/context") + text.lower().count("429 too many requests")
-    return {"flow": flow, "queue": queue, "browser_connect": browser, "total": flow + queue + browser}
+    browser = lower.count("falha ao criar browser/context") + lower.count("429 too many requests")
+    oom = lower.count("out of memory") + lower.count("oomkilled") + lower.count("oom-kill")
+    killed = lower.count("killed process") + lower.count("sigkill")
+    timeout = lower.count("timeout") + lower.count("timed out") + lower.count("tempo excedido")
+    alert_terms = (
+        "[item_error]",
+        "[queue_worker_failed]",
+        "429 too many requests",
+        "out of memory",
+        "oomkilled",
+        "oom-kill",
+        "killed process",
+        "sigkill",
+        "no space left",
+        "traceback",
+        "fatal",
+    )
+    recent_events = []
+    for line in text.splitlines():
+        if any(term in line.lower() for term in alert_terms):
+            recent_events.append(sanitize_event(line))
+    return {
+        "flow": flow,
+        "queue": queue,
+        "browser_connect": browser,
+        "oom": oom,
+        "killed": killed,
+        "timeout": timeout,
+        "total": flow + queue + browser + oom + killed + timeout,
+        "recent_events": recent_events[-30:],
+    }
 
 
 def init_db() -> None:
@@ -220,16 +268,34 @@ def collect() -> Dict[str, Any]:
     }
 
 
+def sample_severity(payload: Dict[str, Any]) -> tuple:
+    host = payload.get("host") or {}
+    errors = payload.get("errors") or {}
+    pressure = payload.get("browserless_pressure") or {}
+    return (
+        int(errors.get("oom") or 0),
+        int(errors.get("killed") or 0),
+        int(errors.get("total") or 0),
+        float(pressure.get("queued") or 0),
+        float(host.get("memory_percent") or 0),
+        float(host.get("cpu_percent") or 0),
+    )
+
+
 def main() -> None:
     init_db()
     last_persist = 0
+    pending_peak = None
     while True:
         started = time.time()
         try:
             payload = collect()
             save_latest(payload)
+            if pending_peak is None or sample_severity(payload) > sample_severity(pending_peak):
+                pending_peak = payload
             if started - last_persist >= PERSIST_INTERVAL:
-                persist(payload)
+                persist(pending_peak or payload)
+                pending_peak = None
                 last_persist = started
         except Exception as exc:  # noqa: BLE001 - o serviço deve continuar coletando
             save_latest({"ts": int(time.time()), "error": f"{type(exc).__name__}: {exc}"})

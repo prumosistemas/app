@@ -162,7 +162,7 @@ def classify_exception(exc: Exception) -> ErrorSpec:
     return ErrorSpec(
         code="UNEXPECTED",
         short_message="Erro inesperado durante a execução do fluxo.",
-        action="Consultar logs detalhados da run e a imagem de erro do CNPJ.",
+        action="Consultar os logs detalhados da run.",
         retryable=False,
     )
 

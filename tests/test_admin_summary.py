@@ -57,6 +57,18 @@ class AdminSummaryTests(unittest.TestCase):
             self.assertTrue(summary["storage"]["healthy"])
             self.assertEqual(summary["storage"]["files"], 1)
 
+    def test_monitor_downsample_preserves_peak(self):
+        samples = [
+            {"ts": index, "host": {"cpu_percent": 10}, "runtime": {"queue": {}}, "errors": {}, "containers": {}}
+            for index in range(100)
+        ]
+        samples[47]["host"]["cpu_percent"] = 99
+
+        reduced = main._downsample_monitor_metrics(samples, max_points=10)
+
+        self.assertLessEqual(len(reduced), 11)
+        self.assertIn(99, [item["host"]["cpu_percent"] for item in reduced])
+
 
 if __name__ == "__main__":
     unittest.main()

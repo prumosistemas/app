@@ -916,10 +916,7 @@ def list_run_files(run_dir: str, run_id: str) -> List[Dict[str, Any]]:
         for filename in filenames:
             filename_low = filename.lower()
 
-            if filename_low.endswith(".zip"):
-                continue
-
-            if filename_low in {"logs.txt", "summary.json", "cnpjs_com_erro.txt"}:
+            if should_hide_run_file(filename):
                 continue
 
             full_path = os.path.join(root, filename)
@@ -950,8 +947,22 @@ def files_for_result(all_files: List[Dict[str, Any]], result: Dict[str, Any]) ->
         return []
 
     prefix = f"{flow}/{cnpj}"
+    direct = [f for f in all_files if str(f.get("relative_path", "")).startswith(prefix)]
 
-    return [f for f in all_files if str(f.get("relative_path", "")).startswith(prefix)]
+    if direct or flow != "notas":
+        return direct
+
+    codigo = str(result.get("codigo_dominio") or "").strip().lower()
+    empresa = str(result.get("empresa") or result.get("nome_empresa") or "").strip().lower()
+    return [
+        item
+        for item in all_files
+        if str(item.get("relative_path", "")).lower().startswith("notas/")
+        and (
+            (codigo and codigo in str(item.get("relative_path", "")).lower())
+            or (empresa and empresa in str(item.get("relative_path", "")).lower())
+        )
+    ]
 
 
 def read_run_logs(run_dir: str, limit_chars: int = 80_000) -> str:
@@ -1540,7 +1551,7 @@ def build_tasks_from_dataset(
                     "account_id": item.get("account_id", ""),
                     "flow_mode": flow,
                     "flow_label": FLOW_LABELS.get(flow, flow),
-                    "usar_codigo_dominio": bool(usar_codigo_dominio),
+                    "usar_codigo_dominio": bool(usar_codigo_dominio and item.get("codigo_dominio")) if flow == "notas" else bool(usar_codigo_dominio),
                     "reabrir_escrituracao_fechada": bool(reabrir_escrituracao_fechada),
                 }
             )
@@ -1636,7 +1647,7 @@ def delete_run_from_memory_and_db(ctx: WorkerContext, root_id: str) -> Dict[str,
     }
 
 
-def should_skip_zip_file(filename: str) -> bool:
+def should_hide_run_file(filename: str) -> bool:
     filename_low = filename.lower()
 
     if filename_low.endswith(".zip"):
@@ -1645,12 +1656,20 @@ def should_skip_zip_file(filename: str) -> bool:
     if filename_low in {"logs.txt", "summary.json", "cnpjs_com_erro.txt"}:
         return True
 
+    if filename_low.startswith("erro_") and filename_low.endswith(".png"):
+        return True
+
     return False
 
 
-def collect_unified_zip_entries(ctx: WorkerContext, root_id: str) -> Dict[str, str]:
+def should_skip_zip_file(filename: str) -> bool:
+    return should_hide_run_file(filename)
+
+
+def collect_unified_zip_entries(ctx: WorkerContext, root_id: str, cnpj: str = "") -> Dict[str, str]:
     entries: Dict[str, str] = {}
     attempts = attempts_for_root_raw(ctx, root_id)
+    cnpj_digits = normalize_cnpj(cnpj) if str(cnpj or "").strip() else ""
 
     if not attempts:
         raise HTTPException(status_code=404, detail="Run não encontrada.")
@@ -1663,23 +1682,20 @@ def collect_unified_zip_entries(ctx: WorkerContext, root_id: str) -> Dict[str, s
 
         attempt_dir_path = safe_path_inside(member_runs_root(ctx), attempt_dir_path)
 
-        for root, _, filenames in os.walk(attempt_dir_path):
-            for filename in filenames:
-                if should_skip_zip_file(filename):
-                    continue
+        all_files = list_run_files(attempt_dir_path, attempt.get("run_id", ""))
+        successful_results = [
+            result
+            for result in attempt.get("results", [])
+            if result.get("status") == "ok"
+            and (not cnpj_digits or normalize_cnpj(result.get("cnpj", "")) == cnpj_digits)
+        ]
 
-                full_path = os.path.join(root, filename)
-
-                if not is_valid_nonempty_file(full_path):
-                    continue
-
-                full_path = safe_path_inside(attempt_dir_path, full_path)
-                rel = os.path.relpath(full_path, attempt_dir_path).replace("\\", "/")
-
-                if rel.startswith("../") or rel == "..":
-                    continue
-
-                entries[rel] = full_path
+        for result in successful_results:
+            for item in files_for_result(all_files, result):
+                rel = str(item.get("relative_path", ""))
+                full_path = safe_path_inside(attempt_dir_path, os.path.join(attempt_dir_path, rel))
+                if rel and is_valid_nonempty_file(full_path):
+                    entries[rel] = full_path
 
     return entries
 
@@ -1701,6 +1717,8 @@ def create_root_zip(ctx: WorkerContext, root_id: str) -> str:
         os.remove(zip_path)
 
     entries = collect_unified_zip_entries(ctx, root_id)
+    if not entries:
+        raise HTTPException(status_code=404, detail="Nenhum arquivo de execução bem-sucedida encontrado nesta run.")
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel, full_path in sorted(entries.items(), key=lambda x: x[0].lower()):
@@ -1743,12 +1761,7 @@ def create_cnpj_zip(ctx: WorkerContext, root_id: str, cnpj: str) -> str:
     if root_has_active_attempt(ctx, root_id):
         raise HTTPException(status_code=409, detail="Não é possível baixar o ZIP enquanto a run está em execução ou na fila.")
 
-    all_entries = collect_unified_zip_entries(ctx, root_id)
-    entries = {
-        rel: full_path
-        for rel, full_path in all_entries.items()
-        if cnpj_digits in normalize_cnpj(rel)
-    }
+    entries = collect_unified_zip_entries(ctx, root_id, cnpj_digits)
 
     if not entries:
         raise HTTPException(status_code=404, detail="Nenhum arquivo encontrado para este CNPJ.")

@@ -72,7 +72,11 @@
     .metric { padding:12px; border:1px solid var(--border); border-radius:7px; background:var(--panel); }
     .metric span { color:var(--text3); font-size:11px; font-weight:700; text-transform:uppercase; }
     .metric b { display:block; margin-top:5px; font-size:20px; }
-    .chart-wrap { height:250px; padding:12px; }
+    .chart-wrap { height:390px; padding:12px; }
+    .metrics-toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .metrics-toolbar select { width:auto; min-width:160px; }
+    .infra-events { display:grid; gap:7px; max-height:280px; overflow:auto; }
+    .infra-event { padding:8px 10px; border-left:3px solid var(--red); background:#fff7f7; color:#7f1d1d; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
     .hidden { display:none !important; }
     @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row,.metric-grid { grid-template-columns:1fr; } main { padding:16px; } }
   </style>
@@ -92,7 +96,6 @@
     </nav>
     <div class="sidebar-footer">
       <a class="nav-btn" href="index.html">Voltar</a>
-      <button id="btnLogout" class="nav-btn" type="button">Sair</button>
     </div>
   </aside>
   <main>
@@ -103,7 +106,6 @@
         <div class="card"><div class="card-head"><h3>Conta master</h3></div><div class="card-body">
           <p class="meta">Email: <code id="meEmail">-</code></p>
           <p class="meta">Perfil: <code>Master</code></p>
-          <p class="meta">Empresa: <code id="meCompany">-</code></p>
         </div></div>
         <div class="card"><div class="card-head"><h3>Sessão</h3></div><div class="card-body">
           <p class="meta">Criada em: <code id="sessionCreated">-</code></p>
@@ -127,11 +129,23 @@
     <section id="logsSection" class="section">
       <div class="grid stack">
         <div id="metricsStatus" class="notice info">Carregando métricas do servidor...</div>
+        <div class="metrics-toolbar">
+          <div class="small" id="metricsResolution">Carregando resolução...</div>
+          <label>Período
+            <select id="metricsRange">
+              <option value="1h">Última hora</option>
+              <option value="6h" selected>Últimas 6 horas</option>
+              <option value="24h">Últimas 24 horas</option>
+              <option value="5d">Últimos 5 dias</option>
+            </select>
+          </label>
+        </div>
         <div id="metricCards" class="metric-grid"></div>
         <div class="grid two">
           <div class="card"><div class="card-head"><h3>CPU e memória</h3></div><div class="chart-wrap"><canvas id="resourcesChart"></canvas></div></div>
           <div class="card"><div class="card-head"><h3>Navegadores, fila e erros</h3></div><div class="chart-wrap"><canvas id="runtimeChart"></canvas></div></div>
         </div>
+        <div class="card"><div class="card-head"><h3>Alertas de infraestrutura</h3></div><div class="card-body" id="infraEvents"><span class="small">Nenhum alerta carregado.</span></div></div>
         <div class="card"><div class="card-head"><h3>Logs recentes</h3><button id="btnReloadLogs" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="logsTable"><span class="small">Carregando...</span></div></div>
       </div>
     </section>
@@ -175,7 +189,7 @@ async function loadSession(){
   if(!data.authenticated){ toLogin(); return; }
   const user=data.user || {};
   if(user.role!=="master"){ window.location.replace(user.role==="owner"?"admin.html":user.role==="member"?"iss-fortaleza.html":"index.html"); return; }
-  $("meEmail").textContent=user.email || "-"; $("meCompany").textContent=user.company_name || user.company_id || "-";
+  $("meEmail").textContent=user.email || "-";
   $("sessionCreated").textContent=ts(data.session?.created_at); $("sessionSeen").textContent=ts(data.session?.last_seen_at); $("sessionExpires").textContent=ts(data.session?.absolute_expires_at);
 }
 function roleLabel(role){
@@ -236,6 +250,9 @@ function renderMetricCards(latest){
     ["Navegadores ativos",`${Number(queue.workers_busy||0)} / ${Number(queue.workers||0)}`],
     ["Fila pendente",String(Number(queue.pending_groups||0))],
     ["Erros de fluxo",String(Number(latest.errors?.flow||0))],
+    ["OOM / memória",String(Number(latest.errors?.oom||0))],
+    ["Processos mortos",String(Number(latest.errors?.killed||0))],
+    ["Timeouts",String(Number(latest.errors?.timeout||0))],
     ["Browserless",browserless.status||"indisponível"],
     ["Prumo API",apiContainer.status||"indisponível"],
     ["Disco usado",metricValue(host.disk_percent,"%")],
@@ -248,7 +265,7 @@ function upsertChart(existing,canvasId,labels,datasets){
 function renderMetrics(data){
   const latest=data.latest || {}; const samples=data.samples || [];
   renderMetricCards(latest);
-  const labels=samples.map(item=>new Date(Number(item.ts||0)*1000).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}));
+  const labels=samples.map(item=>new Date(Number(item.ts||0)*1000).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}));
   resourcesChart=upsertChart(resourcesChart,"resourcesChart",labels,[
     {label:"CPU %",data:samples.map(item=>Number(item.host?.cpu_percent||0)),borderColor:"#4f46e5",backgroundColor:"#4f46e5",tension:.25},
     {label:"RAM %",data:samples.map(item=>Number(item.host?.memory_percent||0)),borderColor:"#15803d",backgroundColor:"#15803d",tension:.25},
@@ -258,13 +275,24 @@ function renderMetrics(data){
     {label:"Fila",data:samples.map(item=>Number(item.runtime?.queue?.pending_groups||0)),borderColor:"#b45309",backgroundColor:"#b45309",tension:.25},
     {label:"Erros",data:samples.map(item=>Number(item.errors?.total||0)),borderColor:"#b91c1c",backgroundColor:"#b91c1c",tension:.25},
   ]);
+  const containers=latest.containers||{};
+  const events=[...(latest.errors?.recent_events||[])];
+  Object.entries(containers).forEach(([name,item])=>{
+    if(item?.oom_killed) events.unshift(`${name}: container encerrado por falta de memória (OOMKilled).`);
+    if(item?.error) events.unshift(`${name}: ${item.error}`);
+    if(Number(item?.exit_code||0)!==0) events.unshift(`${name}: código de saída ${item.exit_code}.`);
+  });
+  $("infraEvents").innerHTML=events.length
+    ? `<div class="infra-events">${events.slice(0,40).map(item=>`<div class="infra-event">${esc(item)}</div>`).join("")}</div>`
+    : `<span class="small">Nenhum alerta crítico detectado na coleta recente.</span>`;
+  $("metricsResolution").textContent=`${Number(data.raw_sample_count||0)} amostras no período · ${samples.length} pontos exibidos · coleta persistida a cada ${Number(data.resolution_seconds||30)}s`;
   $("metricsStatus").className=`notice ${data.agent?.stale?"err":"ok"}`;
   $("metricsStatus").textContent=data.agent?.available
     ? data.agent.stale?"Agente de monitoramento sem atualização recente. Verifique o serviço no servidor.":`Monitoramento ativo. Última coleta: ${ts(data.agent.last_seen_at)}`
     :"Agente de monitoramento ainda não enviou dados.";
 }
 async function loadMetrics(){
-  try{ renderMetrics(await api("/api/master/metrics?range=5d")); }
+  try{ renderMetrics(await api("/api/master/metrics?range="+encodeURIComponent($("metricsRange").value))); }
   catch(err){ $("metricsStatus").className="notice err"; $("metricsStatus").textContent="Falha ao carregar métricas: "+err.message; }
 }
 function startMetricsPolling(){ stopMetricsPolling(); metricsTimer=setInterval(loadMetrics,15000); }
@@ -274,7 +302,7 @@ async function deleteCompany(id){ if(!confirm("Apagar permanentemente esta empre
 async function resetOwner(id,email){ if(!confirm("Resetar a senha de "+email+"?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:id,confirm:"yes"})}); message("ok","Senha temporaria de "+data.owner.email+":\n"+data.owner.temporary_password); }
 document.querySelectorAll("[data-section]").forEach(btn=>btn.onclick=()=>switchSection(btn.dataset.section));
 $("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLogs;
-$("btnLogout").onclick=async()=>{ try{ await api("/api/logout",{method:"POST",body:"{}"}); } catch(error){} toLogin(); };
+$("metricsRange").onchange=loadMetrics;
 $("createCompanyForm").onsubmit=async event=>{ event.preventDefault(); const payload=Object.fromEntries(new FormData(event.target).entries()); try{ const data=await api("/api/master/companies",{method:"POST",body:JSON.stringify(payload)}); event.target.reset(); message("ok","Empresa criada. Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); loadCompanies(); } catch(err){ message("err",err.message); } };
 loadSession().catch(()=>{});
 </script>

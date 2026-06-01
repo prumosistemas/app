@@ -118,7 +118,7 @@ sudo systemctl enable --now prumo-monitor
 sudo systemctl status prumo-monitor
 ```
 
-O agente coleta ao vivo a cada 10 segundos e persiste uma amostra a cada 5 minutos. A retenção é de cinco dias.
+O agente coleta ao vivo a cada 10 segundos e persiste uma amostra a cada 30 segundos. A retenção é de cinco dias; o painel reduz os pontos mais antigos preservando picos para continuar leve.
 
 ## Netlify
 
