@@ -32,6 +32,7 @@ from flow_core import (
     resilient_goto,
     run_step,
     somente_digitos,
+    submit_portal_login,
 )
 from flow_errors import (
     CnpjInexistenteError,
@@ -89,15 +90,7 @@ async def _verificar_mensagem_na_tela(page) -> None:
 
 
 async def login(page, usuario: str, senha: str, config: FlowConfig) -> None:
-    await resilient_goto(
-        page,
-        "https://iss.fortaleza.ce.gov.br/grpfor/oauth2/login",
-        config=config,
-    )
-    await page.fill("#username", usuario)
-    await page.fill("#password", senha)
-    await page.click("#botao-entrar")
-    await page.wait_for_load_state("networkidle")
+    await submit_portal_login(page, usuario, senha, config)
 
     erro_login = await page.query_selector(".login-error-pg .login-error-msg")
     if erro_login:

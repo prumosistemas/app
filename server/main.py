@@ -76,6 +76,7 @@ from domain import (
     load_datasets,
     local_run_key,
     logs_by_attempt_for_root,
+    logs_by_attempt_for_root_filtered,
     model_to_dict,
     new_account_id,
     normalize_cnpj,
@@ -1124,32 +1125,24 @@ async def get_run_logs_tail(
 
     root_id = root_id_of(run)
 
-    logs_by_attempt = logs_by_attempt_for_root(ctx, root_id, limit_chars=max(5_000, min(limit_chars, 200_000)))
     cnpj_norm = normalize_cnpj(cnpj) if str(cnpj or "").strip() else ""
     flow_norm = str(flow or "").strip()
     attempt_run_id = str(attempt_run_id or "").strip()
+    log_limit = max(5_000, min(limit_chars, 200_000))
 
     if cnpj_norm:
-        filtered_attempts = []
-        for attempt in logs_by_attempt:
-            if attempt_run_id and attempt.get("run_id") != attempt_run_id:
-                continue
-
-            lines = str(attempt.get("logs") or "").splitlines()
-            filtered = [
-                line
-                for line in lines
-                if cnpj_norm in line and (not flow_norm or f"flow={flow_norm}" in line or f"flow_mode={flow_norm}" in line)
-            ]
-
-            if filtered:
-                attempt["logs"] = "\n".join(filtered)
-                attempt["log_scope"] = "cnpj_flow"
-                filtered_attempts.append(attempt)
-
-        logs_by_attempt = filtered_attempts
-    elif attempt_run_id:
-        logs_by_attempt = [attempt for attempt in logs_by_attempt if attempt.get("run_id") == attempt_run_id]
+        logs_by_attempt = logs_by_attempt_for_root_filtered(
+            ctx,
+            root_id,
+            cnpj=cnpj_norm,
+            flow=flow_norm,
+            attempt_run_id=attempt_run_id,
+            limit_chars=log_limit,
+        )
+    else:
+        logs_by_attempt = logs_by_attempt_for_root(ctx, root_id, limit_chars=log_limit)
+        if attempt_run_id:
+            logs_by_attempt = [attempt for attempt in logs_by_attempt if attempt.get("run_id") == attempt_run_id]
 
     return {
         "run_id": root_id,

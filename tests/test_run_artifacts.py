@@ -63,7 +63,8 @@ class RunArtifactTests(unittest.TestCase):
             run_dir.mkdir()
             (run_dir / "logs.txt").write_text(
                 "[ITEM_START] flow=certidao cnpj=12345678000190 conta=a\n"
-                "[ITEM_OK] flow=certidao cnpj=12345678000190 conta=a\n",
+                "[ITEM_OK] flow=certidao cnpj=12345678000190 conta=a\n"
+                + ("[NOISE] flow=dam cnpj=99999999000199 detalhe=x\n" * 6000),
                 encoding="utf-8",
             )
             domain.RUNS["company:user:attempt_1"] = self._run("attempt_1", "root_1", run_dir, "ok")
@@ -87,6 +88,37 @@ class RunArtifactTests(unittest.TestCase):
         self.assertEqual(certidao["logs_by_attempt"][0]["log_scope"], "cnpj_flow")
         self.assertEqual(dam["logs_by_attempt"], [])
 
+    def test_logs_tail_without_attempt_returns_latest_matching_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ctx = self._ctx()
+            first_dir = root / "tentativa_1"
+            second_dir = root / "tentativa_2"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            (first_dir / "logs.txt").write_text(
+                "[ITEM_ERROR] flow=certidao cnpj=12345678000190 conta=a\n",
+                encoding="utf-8",
+            )
+            (second_dir / "logs.txt").write_text(
+                "[ITEM_OK] flow=certidao cnpj=12345678000190 conta=a\n",
+                encoding="utf-8",
+            )
+            domain.RUNS["company:user:attempt_1"] = self._run("attempt_1", "root_1", first_dir, "erro")
+            domain.RUNS["company:user:attempt_2"] = self._run("attempt_2", "root_1", second_dir, "ok")
+
+            payload = asyncio.run(main.get_run_logs_tail(
+                "root_1",
+                cnpj="12345678000190",
+                flow="certidao",
+                attempt_run_id="",
+                ctx=ctx,
+            ))
+
+        self.assertEqual(len(payload["logs_by_attempt"]), 1)
+        self.assertEqual(payload["logs_by_attempt"][0]["run_id"], "attempt_2")
+        self.assertIn("[ITEM_OK]", payload["logs_by_attempt"][0]["logs"])
+
     def test_notas_without_codigo_dominio_uses_company_folder_even_when_option_is_enabled(self):
         validation = {
             "valid": True,
@@ -105,6 +137,28 @@ class RunArtifactTests(unittest.TestCase):
 
         self.assertFalse(tasks[0]["usar_codigo_dominio"])
         self.assertTrue(tasks[1]["usar_codigo_dominio"])
+
+    def test_escrituracao_reopen_option_is_preserved_in_tasks(self):
+        validation = {
+            "valid": True,
+            "items": [
+                {"valid": True, "cnpj": "12.345.678/0001-90", "cnpj_digits": "12345678000190", "nome_empresa": "Empresa", "account_id": "a"},
+            ],
+        }
+        flow_selection = {
+            "12345678000190": {"escrituracao": True},
+        }
+        with patch.object(domain, "validate_dataset_items", return_value=validation), \
+             patch.object(domain, "hydrate_tasks_with_current_accounts", side_effect=lambda _ctx, tasks: tasks):
+            tasks = domain.build_tasks_from_dataset(
+                self._ctx(),
+                {"items": []},
+                flow_selection,
+                reabrir_escrituracao_fechada=False,
+            )
+
+        self.assertEqual(len(tasks), 1)
+        self.assertFalse(tasks[0]["reabrir_escrituracao_fechada"])
 
     @staticmethod
     def _ctx():

@@ -1710,6 +1710,15 @@ function sanitizeDisplayText(value){
     .replace(/[A-Za-z]:\\[^\r\n]*/g, "[caminho interno]");
 }
 
+function cleanErroAction(value){
+  const text = sanitizeDisplayText(value).trim();
+  if(!text) return "";
+  if(/consultar\s+(os\s+)?logs\s+detalhados\s+da\s+run\s+e\s+a\s+imagem\s+de\s+erro\s+do\s+CNPJ\.?/i.test(text)){
+    return "Consultar os logs detalhados desta tentativa.";
+  }
+  return text.replace(/\s+e\s+a\s+imagem\s+de\s+erro\s+do\s+CNPJ\.?/i, ".").replace(/\.\.+/g, ".").trim();
+}
+
 function fileDisplayName(relativePath){
   return decodeURIComponent(String(relativePath||"").replaceAll("\\","/").split("/").pop() || "arquivo");
 }
@@ -2715,7 +2724,7 @@ async function refreshLogsTail(){
   if(!selectedRunId||!$("cnpjModal").classList.contains("open"))return;
   try{
     const params = new URLSearchParams({
-      limit_chars: "60000",
+      limit_chars: "120000",
       cnpj: selectedModalCnpj || "",
       flow: selectedModalFlow || "",
     });
@@ -2769,8 +2778,20 @@ function logsForModal(cnpjKey,flow){
     }).join("");
   });
   if(html)return html;
-  if(modalLogsCache[cacheKey]) return "<div class='small' style='padding:8px;'>Nenhum log registrado para este CNPJ e fluxo nesta tentativa.</div>";
+  if(modalLogsCache[cacheKey]) return "<div class='small' style='padding:8px;'>Nenhum log retornado para esta tentativa. Recarregue a run se isso persistir.</div>";
   return "<div class='small' style='padding:8px;'>Carregando logs...</div>";
+}
+
+function modalStatusMessage(result, files, flow){
+  if(result.status==="ok"){
+    if(files.length) return "Arquivos gerados com sucesso.";
+    if(flow==="notas") return "Consulta concluída sem XML gerado. O portal não retornou registros para este CNPJ/competência.";
+    if(flow==="dam") return "Fluxo concluído sem DAM disponível para baixar.";
+    return "Fluxo concluído sem arquivo gerado.";
+  }
+  if(result.status==="running") return "Rodando agora. Ao parar, o item em execução será concluído.";
+  const action = cleanErroAction(result.erro_action);
+  return "["+(result.erro_code||"STATUS")+"] "+sanitizeDisplayText(result.erro||"Sem mensagem.")+(action?"\nAção: "+action:"");
 }
 
 function renderCnpjModal(){
@@ -2794,7 +2815,7 @@ function renderCnpjModal(){
       "\nTentativa: "+(result.attempt_number||"—")+
       "\nEmpresa: "+(result.empresa||result.nome_empresa||"—")+
       (selectedModalFlow==="notas"?"\nModo: "+(result.usar_codigo_dominio===false?"CNPJ + Empresa":"Código Domínio"):"")+"\n"+
-      (result.status==="ok"?"Arquivos gerados com sucesso.":result.status==="running"?"Rodando agora. Ao parar, o item em execução será concluído.":"["+(result.erro_code||"STATUS")+"] "+sanitizeDisplayText(result.erro||"Sem mensagem.")+(result.erro_action?"\nAção: "+sanitizeDisplayText(result.erro_action):""));
+      modalStatusMessage(result, files, selectedModalFlow);
   }
   if(!files.length){
     $("modalFilesBox").innerHTML=`<div class="small" style="padding:6px;">Nenhum arquivo encontrado.</div>`;

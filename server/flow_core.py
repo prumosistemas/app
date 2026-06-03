@@ -279,6 +279,47 @@ async def resilient_goto(page: Page, url: str, *, config: FlowConfig) -> Any:
     raise last or RuntimeError("resilient_goto falhou")
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+async def submit_portal_login(page: Page, usuario: str, senha: str, config: FlowConfig) -> None:
+    url = "https://iss.fortaleza.ce.gov.br/grpfor/oauth2/login"
+    attempts = max(1, min(_env_int("PORTAL_LOGIN_ATTEMPTS", 2), 4))
+    nav_timeout = max(10_000, min(_env_int("PORTAL_LOGIN_NAV_TIMEOUT_MS", 45_000), config.nav_timeout_ms))
+    idle_timeout = max(1_000, min(_env_int("PORTAL_LOGIN_IDLE_TIMEOUT_MS", 8_000), 20_000))
+    last: Optional[BaseException] = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
+            await page.wait_for_selector("#username", state="visible", timeout=config.selector_timeout_ms)
+            await page.fill("#username", usuario)
+            await page.fill("#password", senha)
+            await page.wait_for_selector("#botao-entrar", state="visible", timeout=config.selector_timeout_ms)
+            await page.click("#botao-entrar", timeout=config.selector_timeout_ms)
+
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+            except PWTimeoutError:
+                pass
+            try:
+                await page.wait_for_load_state("networkidle", timeout=idle_timeout)
+            except PWTimeoutError:
+                pass
+            return
+        except Exception as e:
+            last = e
+            logger.warning(f"[login] falhou {attempt}/{attempts}: {e}")
+            if attempt < attempts:
+                await asyncio.sleep(min(3.0, 0.8 * attempt))
+
+    raise last or RuntimeError("Falha no login do portal")
+
+
 async def run_step(ctx: FlowContext, name: str, coro: Awaitable[Any]) -> Any:
     mark_step(ctx, name)
     await log_flow(ctx, f"Step: {name}", event="STEP")

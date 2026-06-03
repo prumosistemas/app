@@ -980,6 +980,89 @@ def read_run_logs(run_dir: str, limit_chars: int = 80_000) -> str:
     return data
 
 
+def read_run_logs_filtered(
+    run_dir: str,
+    *,
+    cnpj: str = "",
+    flow: str = "",
+    limit_chars: int = 80_000,
+) -> str:
+    log_file = os.path.join(run_dir, "logs.txt")
+
+    if not os.path.exists(log_file):
+        return ""
+
+    cnpj_norm = normalize_cnpj(cnpj) if str(cnpj or "").strip() else ""
+    flow_norm = str(flow or "").strip()
+    max_chars = max(5_000, int(limit_chars or 80_000))
+    lines: List[str] = []
+    total_chars = 0
+
+    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+        for raw_line in f:
+            line = raw_line.rstrip("\n")
+            if cnpj_norm and cnpj_norm not in line:
+                continue
+            if flow_norm and f"flow={flow_norm}" not in line and f"flow_mode={flow_norm}" not in line:
+                continue
+
+            lines.append(line)
+            total_chars += len(line) + 1
+
+            while lines and total_chars > max_chars:
+                removed = lines.pop(0)
+                total_chars -= len(removed) + 1
+
+    return "\n".join(lines)
+
+
+def logs_by_attempt_for_root_filtered(
+    ctx: WorkerContext,
+    root_id: str,
+    *,
+    cnpj: str = "",
+    flow: str = "",
+    attempt_run_id: str = "",
+    limit_chars: int = 80_000,
+) -> List[Dict[str, Any]]:
+    attempts = [run for run in runs_for_member(ctx) if root_id_of(run) == root_id]
+    attempts.sort(key=lambda r: r.get("created_at", 0))
+
+    output: List[Dict[str, Any]] = []
+    wanted_attempt = str(attempt_run_id or "").strip()
+
+    for run in attempts:
+        if wanted_attempt and run.get("run_id") != wanted_attempt:
+            continue
+
+        run_dir = run.get("run_dir", "")
+        logs = read_run_logs_filtered(
+            run_dir,
+            cnpj=cnpj,
+            flow=flow,
+            limit_chars=limit_chars,
+        ) if run_dir else ""
+
+        if not logs:
+            continue
+
+        output.append(
+            {
+                "run_id": run.get("run_id"),
+                "attempt_number": run.get("attempt_number"),
+                "attempt_type": run.get("attempt_type"),
+                "status": run.get("status"),
+                "logs": logs,
+                "log_scope": "cnpj_flow",
+            }
+        )
+
+    if wanted_attempt:
+        return output
+
+    return output[-1:] if output else []
+
+
 def runs_for_member(ctx: WorkerContext) -> List[Dict[str, Any]]:
     ensure_member_runs_loaded(ctx)
     return [r for r in RUNS.values() if r.get("scope_id") == scope_id(ctx)]
