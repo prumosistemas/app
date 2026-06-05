@@ -226,7 +226,7 @@ async def baixar_dam_pdf_com_fallback(
     except Exception as e1:
         await log_flow(
             ctx,
-            f"Browser fetch DAM falhou ({type(e1).__name__}), tentando save_as...",
+            f"Browser fetch DAM falhou ({type(e1).__name__}: {e1}), tentando save_as...",
             event="WARN",
         )
 
@@ -248,14 +248,30 @@ async def baixar_dam_pdf_com_fallback(
             return
 
         _remover_arquivo_invalido(caminho)
-        raise Exception(f"save_as() gerou DAM inválido: {msg_validacao}")
+        await log_flow(
+            ctx,
+            f"save_as DAM gerou arquivo inválido ({msg_validacao}); tentando salvar modal PIX como PDF...",
+            event="WARN",
+        )
+        await salvar_dam_pix_como_pdf(page, caminho, ctx, tipo=tipo)
+        return
 
     except Exception as e2:
         await log_flow(
             ctx,
-            f"save_as DAM também falhou: {type(e2).__name__}: {e2}",
-            event="ERROR",
+            f"save_as/download DAM falhou ({type(e2).__name__}: {e2}); tentando salvar modal PIX como PDF...",
+            event="WARN",
         )
+
+        try:
+            await salvar_dam_pix_como_pdf(page, caminho, ctx, tipo=tipo)
+            return
+        except Exception as e3:
+            await log_flow(
+                ctx,
+                f"modal PIX DAM também falhou: {type(e3).__name__}: {e3}",
+                event="ERROR",
+            )
 
     raise FlowError(
         "DAM_DOWNLOAD_FAILED",
@@ -264,6 +280,51 @@ async def baixar_dam_pdf_com_fallback(
         action="Executar retry; se persistir, verificar mudança no portal ISS.",
         retryable=True,
     )
+
+
+async def salvar_dam_pix_como_pdf(page, caminho: str, ctx: FlowContext, *, tipo: str) -> None:
+    try:
+        await page.wait_for_selector("text=PAGAR COM PIX VIA QR CODE", timeout=8_000)
+    except Exception:
+        try:
+            body_text = await page.inner_text("body", timeout=3_000)
+        except Exception:
+            body_text = ""
+
+        if "PAGAR COM PIX VIA QR CODE" not in body_text and "Copiar Qr Code" not in body_text:
+            raise FlowError(
+                "DAM_PIX_MODAL_NOT_FOUND",
+                f"Modal PIX não localizado para o DAM tipo={tipo}",
+                short_message="O portal não abriu o PDF nem o modal PIX do DAM.",
+                action="Verificar mudança no portal ISS e executar retry.",
+                retryable=True,
+            )
+
+    ensure_dir(os.path.dirname(caminho))
+    try:
+        await page.emulate_media(media="screen")
+    except Exception:
+        pass
+
+    await page.pdf(
+        path=caminho,
+        format="A4",
+        print_background=True,
+        margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+    )
+
+    valido, msg_validacao = _validar_pdf_salvo(caminho)
+    if not valido:
+        _remover_arquivo_invalido(caminho)
+        raise FlowError(
+            "DAM_PIX_PDF_INVALID",
+            f"PDF gerado a partir do modal PIX do DAM tipo={tipo} é inválido: {msg_validacao}",
+            short_message="O modal PIX apareceu, mas o PDF gerado ficou inválido.",
+            action="Executar retry; se persistir, revisar geração de PDF da tela PIX.",
+            retryable=True,
+        )
+
+    await log_flow(ctx, f"DAM PIX salvo como PDF: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
 
 
 async def fechar_confirmacao_dam(page) -> None:

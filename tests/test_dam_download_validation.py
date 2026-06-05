@@ -115,23 +115,22 @@ class DamDownloadValidationTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "DAM_FETCH_NOT_PDF")
         self.assertTrue(caught.exception.retryable)
 
-    def test_download_fallback_rejects_zero_byte_save_as(self):
+    def test_download_fallback_saves_pix_modal_when_save_as_is_zero_byte(self):
         page = FakePage(fetch_result={"error": "fetch unavailable"}, download_bytes=b"")
 
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "DAM_tipo_1.pdf"
-            with self.assertRaises(FlowError) as caught:
-                asyncio.run(flow_dam.baixar_dam_pdf_com_fallback(
-                    page,
-                    "input#btnConfirma",
-                    str(path),
-                    self._ctx(),
-                    tipo="1",
-                ))
+            asyncio.run(flow_dam.baixar_dam_pdf_com_fallback(
+                page,
+                "input#btnConfirma",
+                str(path),
+                self._ctx(),
+                tipo="1",
+            ))
 
-            self.assertFalse(path.exists())
+            data = path.read_bytes()
 
-        self.assertEqual(caught.exception.code, "DAM_DOWNLOAD_FAILED")
+        self.assertTrue(data.startswith(b"%PDF-"))
         self.assertGreaterEqual(page.clicked, 1)
 
     @staticmethod
@@ -157,6 +156,7 @@ class FakePage:
         self.download_bytes = download_bytes
         self.evaluated_selector = None
         self.clicked = 0
+        self.keyboard = FakeKeyboard()
 
     async def wait_for_selector(self, *_args, **_kwargs):
         return None
@@ -167,6 +167,26 @@ class FakePage:
 
     async def click(self, *_args, **_kwargs):
         self.clicked += 1
+
+    async def wait_for_selector(self, selector, *_args, **_kwargs):
+        if selector == "text=PAGAR COM PIX VIA QR CODE":
+            return object()
+        return None
+
+    async def inner_text(self, *_args, **_kwargs):
+        return "PAGAR COM PIX VIA QR CODE Copiar Qr Code"
+
+    async def emulate_media(self, *_args, **_kwargs):
+        return None
+
+    async def pdf(self, path, **_kwargs):
+        Path(path).write_bytes(b"%PDF-1.4\n" + (b"pix" * 80))
+
+    async def is_visible(self, *_args, **_kwargs):
+        return False
+
+    async def query_selector(self, *_args, **_kwargs):
+        return None
 
     def expect_download(self, *_args, **_kwargs):
         return FakeDownloadContext(self.download_bytes if self.download_bytes is not None else b"")
@@ -196,6 +216,11 @@ class FakeDownload:
 
     async def save_as(self, path):
         Path(path).write_bytes(self.data)
+
+
+class FakeKeyboard:
+    async def press(self, *_args, **_kwargs):
+        return None
 
 
 if __name__ == "__main__":
