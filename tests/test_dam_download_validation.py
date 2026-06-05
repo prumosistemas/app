@@ -67,7 +67,7 @@ class DamDownloadValidationTests(unittest.TestCase):
 
         self.assertEqual(result, {"0": False, "1": True, "2": False})
 
-    def test_browser_fetch_saves_valid_pdf(self):
+    def test_link_imprimir_fetch_saves_valid_pdf(self):
         pdf = b"%PDF-1.4\n" + (b"x" * 160)
         page = FakePage(fetch_result={
             "base64": base64.b64encode(pdf).decode("ascii"),
@@ -78,9 +78,8 @@ class DamDownloadValidationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "DAM_tipo_1.pdf"
-            asyncio.run(flow_dam.baixar_dam_pdf_via_browser_fetch(
+            asyncio.run(flow_dam.baixar_dam_pdf_via_link_imprimir(
                 page,
-                "input#btnConfirma",
                 str(path),
                 self._ctx(),
                 tipo="1",
@@ -89,9 +88,9 @@ class DamDownloadValidationTests(unittest.TestCase):
             data = path.read_bytes()
 
         self.assertTrue(data.startswith(b"%PDF-"))
-        self.assertEqual(page.evaluated_selector, "input#btnConfirma")
+        self.assertTrue(page.used_print_link)
 
-    def test_browser_fetch_rejects_zero_byte_pdf(self):
+    def test_link_imprimir_fetch_rejects_zero_byte_pdf(self):
         page = FakePage(fetch_result={
             "base64": base64.b64encode(b"").decode("ascii"),
             "contentType": "application/pdf",
@@ -102,9 +101,8 @@ class DamDownloadValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "DAM_tipo_1.pdf"
             with self.assertRaises(FlowError) as caught:
-                asyncio.run(flow_dam.baixar_dam_pdf_via_browser_fetch(
+                asyncio.run(flow_dam.baixar_dam_pdf_via_link_imprimir(
                     page,
-                    "input#btnConfirma",
                     str(path),
                     self._ctx(),
                     tipo="1",
@@ -112,25 +110,25 @@ class DamDownloadValidationTests(unittest.TestCase):
 
             self.assertFalse(path.exists())
 
-        self.assertEqual(caught.exception.code, "DAM_FETCH_NOT_PDF")
+        self.assertEqual(caught.exception.code, "DAM_PRINT_LINK_NOT_PDF")
         self.assertTrue(caught.exception.retryable)
 
-    def test_download_fallback_saves_pix_modal_when_save_as_is_zero_byte(self):
+    def test_download_fallback_rejects_zero_byte_link_click(self):
         page = FakePage(fetch_result={"error": "fetch unavailable"}, download_bytes=b"")
 
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "DAM_tipo_1.pdf"
-            asyncio.run(flow_dam.baixar_dam_pdf_com_fallback(
-                page,
-                "input#btnConfirma",
-                str(path),
-                self._ctx(),
-                tipo="1",
-            ))
+            with self.assertRaises(FlowError) as caught:
+                asyncio.run(flow_dam.baixar_dam_pdf_com_fallback(
+                    page,
+                    str(path),
+                    self._ctx(),
+                    tipo="1",
+                ))
 
-            data = path.read_bytes()
+            self.assertFalse(path.exists())
 
-        self.assertTrue(data.startswith(b"%PDF-"))
+        self.assertEqual(caught.exception.code, "DAM_DOWNLOAD_FAILED")
         self.assertGreaterEqual(page.clicked, 1)
 
     @staticmethod
@@ -155,22 +153,20 @@ class FakePage:
         self.fetch_result = fetch_result
         self.download_bytes = download_bytes
         self.evaluated_selector = None
+        self.used_print_link = False
         self.clicked = 0
         self.keyboard = FakeKeyboard()
 
-    async def wait_for_selector(self, *_args, **_kwargs):
-        return None
-
-    async def evaluate(self, _script, selector):
+    async def evaluate(self, script, selector=None):
         self.evaluated_selector = selector
+        if "link-imprimir-dam" in str(script):
+            self.used_print_link = True
         return self.fetch_result or {"error": "not configured"}
 
     async def click(self, *_args, **_kwargs):
         self.clicked += 1
 
-    async def wait_for_selector(self, selector, *_args, **_kwargs):
-        if selector == "text=PAGAR COM PIX VIA QR CODE":
-            return object()
+    async def wait_for_selector(self, *_args, **_kwargs):
         return None
 
     async def inner_text(self, *_args, **_kwargs):

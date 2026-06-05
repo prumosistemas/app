@@ -94,6 +94,59 @@ async (selector) => {
 """
 
 
+_JS_FETCH_DAM_PRINT_LINK = """
+async () => {
+    try {
+        const form =
+            document.querySelector('form#formEmitirDam') ||
+            document.querySelector('form[name="formEmitirDam"]');
+        if (!form) return { error: 'Form formEmitirDam não encontrado' };
+
+        const fd = new FormData(form);
+        fd.set('formEmitirDam', 'formEmitirDam');
+        fd.set('formEmitirDam:j_idcl', 'link-imprimir-dam');
+
+        if (!fd.has('comboTipoDam')) {
+            fd.set('comboTipoDam', '1');
+        }
+        if (!fd.has('comboOutroFiltroSelecionado')) {
+            fd.set('comboOutroFiltroSelecionado', '');
+        }
+
+        const url = form.action || window.location.href;
+
+        const resp = await fetch(url, {
+            method: 'POST',
+            body: new URLSearchParams(fd),
+        });
+
+        const ct  = resp.headers.get('content-type') || '';
+        const cd  = resp.headers.get('content-disposition') || '';
+        const buf = await resp.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+
+        let binary = '';
+        const CHUNK = 8192;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length));
+            binary += String.fromCharCode.apply(null, slice);
+        }
+
+        return {
+            base64: btoa(binary),
+            contentType: ct,
+            contentDisposition: cd,
+            status: resp.status,
+            size: bytes.length,
+            url,
+        };
+    } catch (e) {
+        return { error: e.message || String(e) };
+    }
+}
+"""
+
+
 def _validar_pdf_salvo(caminho: str) -> Tuple[bool, str]:
     if not os.path.exists(caminho):
         return False, "Arquivo não existe no disco"
@@ -204,9 +257,8 @@ async def baixar_dam_pdf_via_browser_fetch(
     await log_flow(ctx, f"DAM salvo via fetch: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
 
 
-async def baixar_dam_pdf_com_fallback(
+async def baixar_dam_pdf_via_link_imprimir(
     page,
-    click_selector: str,
     caminho: str,
     ctx: FlowContext,
     *,
@@ -214,9 +266,128 @@ async def baixar_dam_pdf_com_fallback(
     timeout_sec: float = 60,
 ) -> None:
     try:
-        await baixar_dam_pdf_via_browser_fetch(
+        result = await asyncio.wait_for(
+            page.evaluate(_JS_FETCH_DAM_PRINT_LINK),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        raise FlowError(
+            "DAM_PRINT_LINK_TIMEOUT",
+            f"Timeout ({timeout_sec}s) ao baixar PDF real do DAM tipo={tipo} via link-imprimir-dam",
+            short_message="Timeout no download do PDF real do DAM.",
+            action="Verificar se o portal ISS está respondendo e executar retry.",
+            retryable=True,
+        )
+    except Exception as e:
+        raise FlowError(
+            "DAM_PRINT_LINK_EVALUATE_ERROR",
+            f"page.evaluate falhou no link-imprimir-dam tipo={tipo}: {type(e).__name__}: {e}",
+            short_message="Erro ao executar download real do DAM.",
+            action="Verificar estado da página e conexão CDP.",
+            retryable=True,
+        )
+
+    if not result:
+        raise FlowError(
+            "DAM_PRINT_LINK_EMPTY",
+            f"link-imprimir-dam do DAM tipo={tipo} retornou vazio",
+            short_message="Download real do DAM retornou vazio.",
+            action="Verificar formEmitirDam e executar retry.",
+            retryable=True,
+        )
+
+    if "error" in result:
+        raise FlowError(
+            "DAM_PRINT_LINK_JS_ERROR",
+            f"Fetch JS error no link-imprimir-dam tipo={tipo}: {result['error']}",
+            short_message=f"Erro no download real do DAM: {result['error']}",
+            action="Verificar formEmitirDam e link-imprimir-dam.",
+            retryable=True,
+        )
+
+    try:
+        pdf_bytes = base64.b64decode(result["base64"])
+    except Exception as e:
+        raise FlowError(
+            "DAM_PRINT_LINK_DECODE_ERROR",
+            f"Erro ao decodificar base64 do link-imprimir-dam tipo={tipo}: {e}",
+            short_message="Erro na decodificação do PDF real do DAM.",
+            action="Verificar integridade da resposta do portal.",
+            retryable=True,
+        )
+
+    valido, msg_validacao = _validar_pdf_bytes(pdf_bytes)
+    if not valido:
+        ct = result.get("contentType", "")
+        status = result.get("status", 0)
+        size = result.get("size", 0)
+        raise FlowError(
+            "DAM_PRINT_LINK_NOT_PDF",
+            f"link-imprimir-dam tipo={tipo} retornou conteúdo inválido: {msg_validacao} "
+            f"(content-type={ct}, HTTP {status}, size={size})",
+            short_message="O portal não retornou o PDF real do DAM.",
+            action="Verificar se a seleção do DAM foi aplicada e executar retry.",
+            retryable=True,
+        )
+
+    ensure_dir(os.path.dirname(caminho))
+    with open(caminho, "wb") as f:
+        f.write(pdf_bytes)
+
+    await log_flow(ctx, f"DAM PDF real salvo via link-imprimir-dam: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
+
+
+async def baixar_dam_pdf_via_link_click(
+    page,
+    caminho: str,
+    ctx: FlowContext,
+    *,
+    tipo: str,
+    timeout_sec: float = 60,
+) -> None:
+    click_selector = "a#link-imprimir-dam, input#link-imprimir-dam, a[id$='link-imprimir-dam'], input[id$='link-imprimir-dam']"
+    async with page.expect_download(timeout=int(timeout_sec * 1000)) as dl:
+        await page.click(click_selector, timeout=10_000)
+    download = await dl.value
+
+    dl_failure = await download.failure()
+    if dl_failure:
+        raise FlowError(
+            "DAM_PRINT_LINK_CLICK_FAILED",
+            f"Browser reportou falha no clique do link-imprimir-dam tipo={tipo}: {dl_failure}",
+            short_message="O download real do DAM falhou no navegador.",
+            action="Executar retry; se persistir, verificar o portal ISS.",
+            retryable=True,
+        )
+
+    ensure_dir(os.path.dirname(caminho))
+    await download.save_as(caminho)
+
+    valido, msg_validacao = _validar_pdf_salvo(caminho)
+    if not valido:
+        _remover_arquivo_invalido(caminho)
+        raise FlowError(
+            "DAM_PRINT_LINK_CLICK_INVALID",
+            f"link-imprimir-dam via clique gerou arquivo inválido tipo={tipo}: {msg_validacao}",
+            short_message="O download real do DAM veio vazio ou inválido.",
+            action="Executar retry; se persistir, verificar mudança no portal ISS.",
+            retryable=True,
+        )
+
+    await log_flow(ctx, f"DAM PDF real salvo via clique: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
+
+
+async def baixar_dam_pdf_com_fallback(
+    page,
+    caminho: str,
+    ctx: FlowContext,
+    *,
+    tipo: str,
+    timeout_sec: float = 60,
+) -> None:
+    try:
+        await baixar_dam_pdf_via_link_imprimir(
             page,
-            click_selector,
             caminho,
             ctx,
             tipo=tipo,
@@ -226,105 +397,34 @@ async def baixar_dam_pdf_com_fallback(
     except Exception as e1:
         await log_flow(
             ctx,
-            f"Browser fetch DAM falhou ({type(e1).__name__}: {e1}), tentando save_as...",
+            f"link-imprimir-dam via fetch falhou ({type(e1).__name__}: {e1}), tentando clique direto...",
             event="WARN",
         )
 
     try:
-        async with page.expect_download(timeout=int(timeout_sec * 1000)) as dl:
-            await page.click(click_selector)
-        download = await dl.value
-
-        dl_failure = await download.failure()
-        if dl_failure:
-            raise Exception(f"Browser reportou falha: {dl_failure}")
-
-        ensure_dir(os.path.dirname(caminho))
-        await download.save_as(caminho)
-
-        valido, msg_validacao = _validar_pdf_salvo(caminho)
-        if valido:
-            await log_flow(ctx, f"DAM salvo via save_as: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
-            return
-
-        _remover_arquivo_invalido(caminho)
-        await log_flow(
+        await baixar_dam_pdf_via_link_click(
+            page,
+            caminho,
             ctx,
-            f"save_as DAM gerou arquivo inválido ({msg_validacao}); tentando salvar modal PIX como PDF...",
-            event="WARN",
+            tipo=tipo,
+            timeout_sec=timeout_sec,
         )
-        await salvar_dam_pix_como_pdf(page, caminho, ctx, tipo=tipo)
         return
 
     except Exception as e2:
         await log_flow(
             ctx,
-            f"save_as/download DAM falhou ({type(e2).__name__}: {e2}); tentando salvar modal PIX como PDF...",
-            event="WARN",
+            f"link-imprimir-dam via clique também falhou: {type(e2).__name__}: {e2}",
+            event="ERROR",
         )
-
-        try:
-            await salvar_dam_pix_como_pdf(page, caminho, ctx, tipo=tipo)
-            return
-        except Exception as e3:
-            await log_flow(
-                ctx,
-                f"modal PIX DAM também falhou: {type(e3).__name__}: {e3}",
-                event="ERROR",
-            )
 
     raise FlowError(
         "DAM_DOWNLOAD_FAILED",
-        f"Nenhuma estratégia de download funcionou para o DAM tipo={tipo}",
-        short_message="Não foi possível salvar um PDF válido do DAM.",
-        action="Executar retry; se persistir, verificar mudança no portal ISS.",
+        f"Nenhuma estratégia baixou o PDF real do DAM tipo={tipo}",
+        short_message="Não foi possível salvar o PDF real do DAM.",
+        action="Executar retry; se persistir, verificar formEmitirDam/link-imprimir-dam.",
         retryable=True,
     )
-
-
-async def salvar_dam_pix_como_pdf(page, caminho: str, ctx: FlowContext, *, tipo: str) -> None:
-    try:
-        await page.wait_for_selector("text=PAGAR COM PIX VIA QR CODE", timeout=8_000)
-    except Exception:
-        try:
-            body_text = await page.inner_text("body", timeout=3_000)
-        except Exception:
-            body_text = ""
-
-        if "PAGAR COM PIX VIA QR CODE" not in body_text and "Copiar Qr Code" not in body_text:
-            raise FlowError(
-                "DAM_PIX_MODAL_NOT_FOUND",
-                f"Modal PIX não localizado para o DAM tipo={tipo}",
-                short_message="O portal não abriu o PDF nem o modal PIX do DAM.",
-                action="Verificar mudança no portal ISS e executar retry.",
-                retryable=True,
-            )
-
-    ensure_dir(os.path.dirname(caminho))
-    try:
-        await page.emulate_media(media="screen")
-    except Exception:
-        pass
-
-    await page.pdf(
-        path=caminho,
-        format="A4",
-        print_background=True,
-        margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
-    )
-
-    valido, msg_validacao = _validar_pdf_salvo(caminho)
-    if not valido:
-        _remover_arquivo_invalido(caminho)
-        raise FlowError(
-            "DAM_PIX_PDF_INVALID",
-            f"PDF gerado a partir do modal PIX do DAM tipo={tipo} é inválido: {msg_validacao}",
-            short_message="O modal PIX apareceu, mas o PDF gerado ficou inválido.",
-            action="Executar retry; se persistir, revisar geração de PDF da tela PIX.",
-            retryable=True,
-        )
-
-    await log_flow(ctx, f"DAM PIX salvo como PDF: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
 
 
 async def fechar_confirmacao_dam(page) -> None:
@@ -708,7 +808,7 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
     nome = f"DAM_tipo_{tipo}_{stamp}.pdf"
     caminho = os.path.join(pasta_destino, nome)
 
-    await baixar_dam_pdf_com_fallback(page, "input#btnConfirma", caminho, ctx, tipo=tipo)
+    await baixar_dam_pdf_com_fallback(page, caminho, ctx, tipo=tipo)
 
     await fechar_confirmacao_dam(page)
 
