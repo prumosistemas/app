@@ -46,6 +46,27 @@ from flow_errors import (
 logger = logging.getLogger("iss.dam")
 
 
+def _validar_pdf_salvo(caminho: str) -> Tuple[bool, str]:
+    if not os.path.exists(caminho):
+        return False, "Arquivo não existe no disco"
+    size = os.path.getsize(caminho)
+    if size < 100:
+        return False, f"Muito pequeno ({size} bytes)"
+    with open(caminho, "rb") as f:
+        header = f.read(5)
+    if header != b"%PDF-":
+        return False, f"Header inválido (esperado %PDF-, obteve {header!r})"
+    return True, f"OK ({size} bytes)"
+
+
+def _remover_arquivo_invalido(caminho: str) -> None:
+    try:
+        if os.path.exists(caminho):
+            os.remove(caminho)
+    except OSError:
+        pass
+
+
 def _safe_text(s: str) -> str:
     s = (s or "").strip()
     s = re.sub(r"\s+", " ", s)
@@ -356,12 +377,33 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
         await page.click("input#btnConfirma")
     download = await dl.value
 
+    dl_failure = await download.failure()
+    if dl_failure:
+        raise FlowError(
+            "DAM_DOWNLOAD_FAILED",
+            f"Browser reportou falha no download do DAM tipo={tipo}: {dl_failure}",
+            short_message="O portal iniciou o download do DAM, mas o navegador reportou falha.",
+            action="Executar retry; se persistir, verificar indisponibilidade do portal ISS.",
+            retryable=True,
+        )
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     nome = f"DAM_tipo_{tipo}_{stamp}.pdf"
     caminho = os.path.join(pasta_destino, nome)
     await download.save_as(caminho)
 
-    await log_flow(ctx, f"DAM baixado: {nome}", event="INFO")
+    valido, msg_validacao = _validar_pdf_salvo(caminho)
+    if not valido:
+        _remover_arquivo_invalido(caminho)
+        raise FlowError(
+            "DAM_DOWNLOAD_INVALID",
+            f"DAM tipo={tipo} inválido após save_as: {msg_validacao}",
+            short_message="O DAM baixado veio vazio ou não é um PDF válido.",
+            action="Executar retry; se repetir, verificar instabilidade do portal ISS.",
+            retryable=True,
+        )
+
+    await log_flow(ctx, f"DAM salvo: {nome} — {msg_validacao}", event="INFO")
 
     try:
         if await page.is_visible("a#j_id401"):
@@ -377,11 +419,13 @@ async def emitir_dams(page, pasta_destino: str, ctx: FlowContext) -> Dict[str, b
     await page.wait_for_selector("select#comboImposto", timeout=20_000)
 
     resultados: Dict[str, bool] = {}
+    falhas: Dict[str, str] = {}
     for tipo in ("0", "1", "2"):
         try:
             resultados[tipo] = await _emitir_dam_tipo(page, tipo, pasta_destino, ctx)
         except Exception as e:
             resultados[tipo] = False
+            falhas[tipo] = f"{type(e).__name__}: {e}"
             await log_flow(
                 ctx,
                 f"Falha no DAM tipo={tipo}: {type(e).__name__}: {e}",
@@ -389,6 +433,16 @@ async def emitir_dams(page, pasta_destino: str, ctx: FlowContext) -> Dict[str, b
                 level=logging.WARNING,
                 code="DAM_TIPO_FAIL",
             )
+
+    if not any(resultados.values()) and falhas:
+        detalhes = "; ".join(f"tipo {tipo}: {msg}" for tipo, msg in falhas.items())
+        raise FlowError(
+            "DAM_EMITIR_FAILED",
+            f"Nenhum DAM válido foi baixado. Falhas: {detalhes}",
+            short_message="Nenhum DAM válido foi baixado.",
+            action="Executar retry; se repetir, verificar indisponibilidade ou mudança no portal ISS.",
+            retryable=True,
+        )
 
     return resultados
 
