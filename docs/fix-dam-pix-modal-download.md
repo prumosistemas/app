@@ -73,11 +73,12 @@ Esse e o caminho que retorna o PDF real do DAM.
 
 ## Correcao aplicada no codigo
 
-O fluxo DAM agora tem tres estrategias:
+O fluxo DAM agora tem quatro estrategias:
 
-1. Fetch interno do `formEmitirDam` usando `formEmitirDam:j_idcl=link-imprimir-dam`.
-2. Fallback por clique direto no `link-imprimir-dam`, com `expect_download + save_as`.
-3. Qualquer retorno HTML, PIX, vazio ou sem header `%PDF-` vira erro, nao arquivo final.
+1. Confirmar a emissao no `btnConfirma`.
+2. Esperar o botao `btn_imprimir` (`Impressao DAM`) e baixar o PDF real pelo POST desse botao.
+3. Fallback pelo `link-imprimir-dam`, caso o portal volte a expor o fluxo antigo.
+4. Qualquer retorno HTML, PIX, vazio ou sem header `%PDF-` vira erro, nao arquivo final.
 
 O arquivo do DAM real e validado:
 
@@ -100,7 +101,25 @@ DAM(s) baixado(s): 1
 === FIM (DAM OK) ===
 ```
 
-Esse resultado provou que o modal PIX era a causa, mas nao era o documento correto. A versao final `v1.0.7` substitui essa abordagem pelo POST real `link-imprimir-dam`.
+Esse resultado provou que o modal PIX era a causa, mas nao era o documento correto. A versao `v1.0.7` substituiu essa abordagem pelo POST real `link-imprimir-dam`, mas a validacao em producao mostrou que o portal retornava HTML no fetch manual e que o link real era invisivel para clique comum.
+
+A versao `v1.0.8` tentou chamar o submit JSF do proprio portal, que e o comportamento equivalente ao `onclick` do link invisivel:
+
+```text
+_JSFFormSubmit('link-imprimir-dam', 'formEmitirDam', null, {'formEmitirDam:j_idcl':'link-imprimir-dam'})
+```
+
+Tambem fecha o modal `mensagem_confirmar_emissao_dam_modal_panel` depois de falhas, evitando que um tipo de DAM bloqueie o proximo.
+
+A validacao seguinte mostrou que o PDF real surge depois de confirmar a emissao: o portal renderiza o modal PIX, mas tambem adiciona o botao visivel `btn_imprimir` com valor `Impressao DAM`. O clique visual nesse botao e bloqueado pelo overlay `panelQrdCode`, mas o POST do proprio botao retorna:
+
+```text
+content-type=application/pdf
+content-disposition=attachment; filename="DamISS.pdf"
+header=%PDF-
+```
+
+Por isso a versao `v1.0.9` usa o `btn_imprimir` como caminho principal.
 
 Arquivo da tentativa intermediaria:
 
@@ -115,6 +134,8 @@ header=%PDF-
 - `v1.0.5`: adicionou geracao de PDF a partir do modal PIX.
 - `v1.0.6`: reforcou o fechamento do modal RichFaces para nao bloquear tentativas seguintes.
 - `v1.0.7`: removeu a solucao de PDF da tela PIX e passou a baixar o PDF real via `formEmitirDam:j_idcl=link-imprimir-dam`.
+- `v1.0.8`: usa o submit JSF real do `link-imprimir-dam` e limpa o modal de confirmacao quando uma tentativa falha.
+- `v1.0.9`: confirma a emissao e baixa o PDF real via POST do botao `btn_imprimir` (`Impressao DAM`).
 
 ## Observacao
 

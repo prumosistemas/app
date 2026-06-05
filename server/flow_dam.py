@@ -95,7 +95,7 @@ async (selector) => {
 
 
 _JS_FETCH_DAM_PRINT_LINK = """
-async () => {
+async (tipo) => {
     try {
         const form =
             document.querySelector('form#formEmitirDam') ||
@@ -105,10 +105,7 @@ async () => {
         const fd = new FormData(form);
         fd.set('formEmitirDam', 'formEmitirDam');
         fd.set('formEmitirDam:j_idcl', 'link-imprimir-dam');
-
-        if (!fd.has('comboTipoDam')) {
-            fd.set('comboTipoDam', '1');
-        }
+        fd.set('comboTipoDam', String(tipo || '1'));
         if (!fd.has('comboOutroFiltroSelecionado')) {
             fd.set('comboOutroFiltroSelecionado', '');
         }
@@ -143,6 +140,38 @@ async () => {
     } catch (e) {
         return { error: e.message || String(e) };
     }
+}
+"""
+
+
+_JS_SUBMIT_DAM_PRINT_LINK = """
+(tipo) => {
+    const form =
+        document.querySelector('form#formEmitirDam') ||
+        document.querySelector('form[name="formEmitirDam"]');
+    if (!form) throw new Error('Form formEmitirDam não encontrado');
+
+    const comboTipoDam = form.querySelector('[name="comboTipoDam"]');
+    if (comboTipoDam) comboTipoDam.value = String(tipo || '1');
+
+    const otherFilter = form.querySelector('[name="comboOutroFiltroSelecionado"]');
+    if (otherFilter && otherFilter.value == null) otherFilter.value = '';
+
+    if (typeof window._JSFFormSubmit === 'function') {
+        return window._JSFFormSubmit(
+            'link-imprimir-dam',
+            'formEmitirDam',
+            null,
+            {'formEmitirDam:j_idcl': 'link-imprimir-dam'}
+        );
+    }
+
+    const link = document.querySelector('#link-imprimir-dam');
+    if (link && typeof link.onclick === 'function') {
+        return link.onclick();
+    }
+
+    throw new Error('_JSFFormSubmit/link-imprimir-dam indisponível');
 }
 """
 
@@ -267,7 +296,7 @@ async def baixar_dam_pdf_via_link_imprimir(
 ) -> None:
     try:
         result = await asyncio.wait_for(
-            page.evaluate(_JS_FETCH_DAM_PRINT_LINK),
+            page.evaluate(_JS_FETCH_DAM_PRINT_LINK, tipo),
             timeout=timeout_sec,
         )
     except asyncio.TimeoutError:
@@ -337,6 +366,54 @@ async def baixar_dam_pdf_via_link_imprimir(
     await log_flow(ctx, f"DAM PDF real salvo via link-imprimir-dam: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
 
 
+async def baixar_dam_pdf_via_jsf_submit(
+    page,
+    caminho: str,
+    ctx: FlowContext,
+    *,
+    tipo: str,
+    timeout_sec: float = 60,
+) -> None:
+    try:
+        async with page.expect_download(timeout=int(timeout_sec * 1000)) as dl:
+            await page.evaluate(_JS_SUBMIT_DAM_PRINT_LINK, tipo)
+        download = await dl.value
+    except Exception as e:
+        raise FlowError(
+            "DAM_PRINT_LINK_SUBMIT_FAILED",
+            f"Submit JSF do link-imprimir-dam falhou tipo={tipo}: {type(e).__name__}: {e}",
+            short_message="O submit real do DAM falhou no navegador.",
+            action="Executar retry; se persistir, verificar o portal ISS.",
+            retryable=True,
+        )
+
+    dl_failure = await download.failure()
+    if dl_failure:
+        raise FlowError(
+            "DAM_PRINT_LINK_SUBMIT_DOWNLOAD_FAILED",
+            f"Browser reportou falha no submit JSF do link-imprimir-dam tipo={tipo}: {dl_failure}",
+            short_message="O download real do DAM falhou no navegador.",
+            action="Executar retry; se persistir, verificar o portal ISS.",
+            retryable=True,
+        )
+
+    ensure_dir(os.path.dirname(caminho))
+    await download.save_as(caminho)
+
+    valido, msg_validacao = _validar_pdf_salvo(caminho)
+    if not valido:
+        _remover_arquivo_invalido(caminho)
+        raise FlowError(
+            "DAM_PRINT_LINK_SUBMIT_INVALID",
+            f"Submit JSF do link-imprimir-dam gerou arquivo inválido tipo={tipo}: {msg_validacao}",
+            short_message="O download real do DAM veio vazio ou inválido.",
+            action="Executar retry; se persistir, verificar mudança no portal ISS.",
+            retryable=True,
+        )
+
+    await log_flow(ctx, f"DAM PDF real salvo via submit JSF: {os.path.basename(caminho)} — {msg_validacao}", event="INFO")
+
+
 async def baixar_dam_pdf_via_link_click(
     page,
     caminho: str,
@@ -386,6 +463,22 @@ async def baixar_dam_pdf_com_fallback(
     timeout_sec: float = 60,
 ) -> None:
     try:
+        await baixar_dam_pdf_via_jsf_submit(
+            page,
+            caminho,
+            ctx,
+            tipo=tipo,
+            timeout_sec=timeout_sec,
+        )
+        return
+    except Exception as e0:
+        await log_flow(
+            ctx,
+            f"link-imprimir-dam via submit JSF falhou ({type(e0).__name__}: {e0}), tentando fetch direto...",
+            event="WARN",
+        )
+
+    try:
         await baixar_dam_pdf_via_link_imprimir(
             page,
             caminho,
@@ -427,6 +520,26 @@ async def baixar_dam_pdf_com_fallback(
     )
 
 
+async def baixar_dam_pdf_via_botao_impressao(
+    page,
+    caminho: str,
+    ctx: FlowContext,
+    *,
+    tipo: str,
+    timeout_sec: float = 60,
+) -> None:
+    await page.wait_for_selector("input#btn_imprimir", timeout=30_000)
+    await baixar_dam_pdf_via_browser_fetch(
+        page,
+        "input#btn_imprimir",
+        caminho,
+        ctx,
+        tipo=tipo,
+        timeout_sec=timeout_sec,
+    )
+    await log_flow(ctx, f"DAM PDF real baixado pelo botão Impressão DAM: {os.path.basename(caminho)}", event="INFO")
+
+
 async def fechar_confirmacao_dam(page) -> None:
     try:
         closed = await page.evaluate(
@@ -434,6 +547,7 @@ async def fechar_confirmacao_dam(page) -> None:
                 try {
                     if (window.Richfaces && typeof window.Richfaces.hideModalPanel === 'function') {
                         window.Richfaces.hideModalPanel('panelQrdCode');
+                        window.Richfaces.hideModalPanel('mensagem_confirmar_emissao_dam_modal_panel');
                     }
                 } catch (e) {}
 
@@ -442,7 +556,12 @@ async def fechar_confirmacao_dam(page) -> None:
                     'panelQrdCodeDiv',
                     'panelQrdCodeCursorDiv',
                     'panelQrdCodeShadowDiv',
-                    'panelQrdCodeCDiv'
+                    'panelQrdCodeCDiv',
+                    'mensagem_confirmar_emissao_dam_modal_panelContainer',
+                    'mensagem_confirmar_emissao_dam_modal_panelDiv',
+                    'mensagem_confirmar_emissao_dam_modal_panelCursorDiv',
+                    'mensagem_confirmar_emissao_dam_modal_panelShadowDiv',
+                    'mensagem_confirmar_emissao_dam_modal_panelCDiv'
                 ];
                 let touched = false;
                 for (const id of ids) {
@@ -455,7 +574,8 @@ async def fechar_confirmacao_dam(page) -> None:
                     }
                 }
                 document.querySelectorAll('.rich-mpnl-mask-div, .rich-mpnl-panel').forEach((el) => {
-                    if ((el.id || '').includes('panelQrdCode')) {
+                    const id = el.id || '';
+                    if (id.includes('panelQrdCode') || id.includes('mensagem_confirmar_emissao_dam_modal_panel')) {
                         el.style.display = 'none';
                         el.style.visibility = 'hidden';
                         el.style.pointerEvents = 'none';
@@ -801,6 +921,8 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
     await asyncio.sleep(0.5)
 
     await page.wait_for_selector("input#btnConfirma", timeout=20_000)
+    await page.click("input#btnConfirma")
+    await asyncio.sleep(1.0)
 
     ensure_dir(pasta_destino)
 
@@ -808,7 +930,15 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
     nome = f"DAM_tipo_{tipo}_{stamp}.pdf"
     caminho = os.path.join(pasta_destino, nome)
 
-    await baixar_dam_pdf_com_fallback(page, caminho, ctx, tipo=tipo)
+    try:
+        await baixar_dam_pdf_via_botao_impressao(page, caminho, ctx, tipo=tipo)
+    except Exception as e:
+        await log_flow(
+            ctx,
+            f"Botão Impressão DAM falhou ({type(e).__name__}: {e}), tentando link-imprimir-dam...",
+            event="WARN",
+        )
+        await baixar_dam_pdf_com_fallback(page, caminho, ctx, tipo=tipo)
 
     await fechar_confirmacao_dam(page)
 
@@ -824,6 +954,10 @@ async def emitir_dams(page, pasta_destino: str, ctx: FlowContext) -> Dict[str, b
         try:
             resultados[tipo] = await _emitir_dam_tipo(page, tipo, pasta_destino, ctx)
         except Exception as e:
+            try:
+                await fechar_confirmacao_dam(page)
+            except Exception:
+                pass
             resultados[tipo] = False
             falhas[tipo] = f"{type(e).__name__}: {e}"
             await log_flow(
