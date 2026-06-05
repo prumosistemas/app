@@ -328,6 +328,49 @@ async def salvar_dam_pix_como_pdf(page, caminho: str, ctx: FlowContext, *, tipo:
 
 
 async def fechar_confirmacao_dam(page) -> None:
+    try:
+        closed = await page.evaluate(
+            """() => {
+                try {
+                    if (window.Richfaces && typeof window.Richfaces.hideModalPanel === 'function') {
+                        window.Richfaces.hideModalPanel('panelQrdCode');
+                    }
+                } catch (e) {}
+
+                const ids = [
+                    'panelQrdCodeContainer',
+                    'panelQrdCodeDiv',
+                    'panelQrdCodeCursorDiv',
+                    'panelQrdCodeShadowDiv',
+                    'panelQrdCodeCDiv'
+                ];
+                let touched = false;
+                for (const id of ids) {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.pointerEvents = 'none';
+                        touched = true;
+                    }
+                }
+                document.querySelectorAll('.rich-mpnl-mask-div, .rich-mpnl-panel').forEach((el) => {
+                    if ((el.id || '').includes('panelQrdCode')) {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        el.style.pointerEvents = 'none';
+                        touched = true;
+                    }
+                });
+                return touched;
+            }"""
+        )
+        if closed:
+            await asyncio.sleep(0.4)
+            return
+    except Exception:
+        pass
+
     seletores = [
         "a#j_id401",
         "input#btnVoltar",
