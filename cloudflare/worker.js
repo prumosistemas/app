@@ -55,6 +55,8 @@ export default {
         return jsonResponse(request, env, { ok: false, error: "Binding D1 'db' não configurado." }, 500);
       }
 
+      await migrate(env.db);
+
       if (hasRequestBody(request.method)) {
         const maxBytes = getMaxPostBytes(url.pathname);
 
@@ -117,6 +119,22 @@ export default {
 
       if (url.pathname === "/api/master/metrics" && request.method === "GET") {
         return handleMasterMetrics(request, env);
+      }
+
+      if (url.pathname === "/api/billing" && request.method === "GET") {
+        return handleBilling(request, env);
+      }
+
+      if (url.pathname === "/api/master/billing" && request.method === "GET") {
+        return handleMasterBilling(request, env);
+      }
+
+      if (url.pathname === "/api/master/billing/settings" && request.method === "POST") {
+        return handleMasterBillingSettings(request, env);
+      }
+
+      if (url.pathname === "/api/master/billing/payments" && request.method === "POST") {
+        return handleMasterBillingPaymentCreate(request, env);
       }
 
       if (url.pathname === "/api/users" && request.method === "GET") {
@@ -382,6 +400,7 @@ async function handleLoginPost(request, env) {
       must_change_password: Number(user.must_change_password) === 1,
       company_disabled: Number(user.company_disabled) === 1,
       csrf,
+      session_token: session.rawToken,
       user: {
         id: user.id,
         email: user.email,
@@ -633,6 +652,146 @@ async function handleMasterMetrics(request, env) {
     return jsonResponse(request, env, metrics, 502);
   }
   return jsonResponse(request, env, metrics);
+}
+
+async function handleBilling(request, env) {
+  const auth = await requireRole(request, env, "owner");
+  if (auth.response) return auth.response;
+
+  const settings = await getBillingSettings(env.db);
+  const payments = await getBillingPayments(env.db, { companyId: auth.user.company_id, limit: 80 });
+  return jsonResponse(request, env, {
+    ok: true,
+    settings,
+    summary: summarizeBilling(payments),
+    payments,
+  });
+}
+
+async function handleMasterBilling(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+
+  const url = new URL(request.url);
+  const companyId = String(url.searchParams.get("company_id") || "").trim();
+  const settings = await getBillingSettings(env.db);
+  const payments = await getBillingPayments(env.db, { companyId: companyId || null, limit: 200 });
+
+  return jsonResponse(request, env, {
+    ok: true,
+    settings,
+    summary: summarizeBilling(payments),
+    payments,
+  });
+}
+
+async function handleMasterBillingSettings(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+
+  const csrfOk = await verifyRequestCsrf(request, auth.session.csrf_hash);
+  if (!csrfOk) return jsonResponse(request, env, { ok: false, error: "CSRF inválido." }, 403);
+
+  const body = await readBody(request);
+  const settings = {
+    pix_key: String(body.pix_key || "").trim().slice(0, 500),
+    pix_copy_paste: String(body.pix_copy_paste || "").trim().slice(0, 6000),
+    qr_code_url: String(body.qr_code_url || "").trim().slice(0, 6000),
+    monthly_amount: String(body.monthly_amount || "").trim().slice(0, 80),
+  };
+  const ts = now();
+
+  await env.db.batch(Object.entries(settings).map(([key, value]) => (
+    env.db.prepare(`
+      INSERT INTO billing_settings (key, value, updated_at, updated_by_user_id)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at,
+        updated_by_user_id = excluded.updated_by_user_id
+    `).bind(key, value, ts, auth.user.id)
+  )));
+
+  await logEvent(env, request, {
+    actor: auth.user,
+    companyId: auth.user.company_id,
+    action: "billing_settings_updated",
+    targetType: "billing",
+    targetId: "settings",
+    message: "Configurações PIX atualizadas.",
+  });
+
+  return jsonResponse(request, env, { ok: true, settings: await getBillingSettings(env.db) });
+}
+
+async function handleMasterBillingPaymentCreate(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+
+  const csrfOk = await verifyRequestCsrf(request, auth.session.csrf_hash);
+  if (!csrfOk) return jsonResponse(request, env, { ok: false, error: "CSRF inválido." }, 403);
+
+  const body = await readBody(request);
+  const companyId = String(body.company_id || "").trim();
+  const userId = String(body.user_id || "").trim();
+  const userEmail = normalizeEmail(body.user_email || "");
+  const periodStart = normalizeBillingMonth(body.period_start || body.month || "");
+  const months = Math.max(1, Math.min(36, Number.parseInt(String(body.months || "1"), 10) || 1));
+
+  if (!isSafeId(companyId)) return jsonResponse(request, env, { ok: false, error: "Empresa inválida." }, 400);
+  if (!periodStart) return jsonResponse(request, env, { ok: false, error: "Mês inicial inválido. Use AAAA-MM." }, 400);
+
+  const company = await env.db.prepare("SELECT id, name FROM companies WHERE id = ? LIMIT 1").bind(companyId).first();
+  if (!company) return jsonResponse(request, env, { ok: false, error: "Empresa não encontrada." }, 404);
+
+  let finalUserEmail = userEmail;
+  if (userId) {
+    const user = await env.db.prepare("SELECT id, email FROM users WHERE id = ? AND company_id = ? LIMIT 1").bind(userId, companyId).first();
+    if (!user) return jsonResponse(request, env, { ok: false, error: "Usuário não pertence à empresa." }, 400);
+    finalUserEmail = user.email;
+  }
+
+  const activeUntil = normalizeBillingActiveUntil(body.active_until || "", periodStart, months);
+  const amountCents = parseAmountCents(body.amount || body.amount_cents || "");
+  const payment = {
+    id: randomId(),
+    company_id: companyId,
+    user_id: userId || null,
+    user_email: finalUserEmail || null,
+    period_start: periodStart,
+    months,
+    active_until: activeUntil,
+    amount_cents: amountCents,
+    description: String(body.description || "").trim().slice(0, 300),
+    note: String(body.note || "").trim().slice(0, 1000),
+    status: "paid",
+    paid_at: parseUnixDate(body.paid_at || "") || now(),
+    created_at: now(),
+    created_by_user_id: auth.user.id,
+  };
+
+  await env.db.prepare(`
+    INSERT INTO payments (
+      id, company_id, user_id, user_email, period_start, months, active_until,
+      amount_cents, description, note, status, paid_at, created_at, created_by_user_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    payment.id, payment.company_id, payment.user_id, payment.user_email, payment.period_start,
+    payment.months, payment.active_until, payment.amount_cents, payment.description, payment.note,
+    payment.status, payment.paid_at, payment.created_at, payment.created_by_user_id
+  ).run();
+
+  await logEvent(env, request, {
+    actor: auth.user,
+    companyId,
+    action: "billing_payment_marked",
+    targetType: "payment",
+    targetId: payment.id,
+    message: `Pagamento marcado: ${company.name} ${periodStart} (${months} mês(es)).`,
+  });
+
+  return jsonResponse(request, env, { ok: true, payment, summary: summarizeBilling(await getBillingPayments(env.db, { companyId, limit: 200 })) });
 }
 
 async function handleMasterCreateCompany(request, env) {
@@ -1889,7 +2048,9 @@ async function getAuth(request, env) {
 
   const cookieHeader = request.headers.get("Cookie") || "";
   const cookies = parseCookies(cookieHeader);
-  const rawToken = cookies[SESSION_COOKIE];
+  const authHeader = request.headers.get("Authorization") || "";
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  const rawToken = cookies[SESSION_COOKIE] || (bearerMatch ? bearerMatch[1].trim() : "");
 
   if (!rawToken) {
     return { ok: false, clearCookie: false };
@@ -2196,6 +2357,95 @@ async function getActiveDeletionJobs(db) {
   return jobs;
 }
 
+async function getBillingSettings(db) {
+  const defaults = {
+    pix_key: "",
+    pix_copy_paste: "",
+    qr_code_url: "",
+    monthly_amount: "",
+  };
+  const result = await db.prepare("SELECT key, value, updated_at FROM billing_settings").all();
+  for (const row of result.results || []) {
+    if (Object.prototype.hasOwnProperty.call(defaults, row.key)) {
+      defaults[row.key] = row.value || "";
+      defaults[`${row.key}_updated_at`] = row.updated_at || null;
+    }
+  }
+  return defaults;
+}
+
+async function getBillingPayments(db, { companyId = null, limit = 100 } = {}) {
+  const safeLimit = Math.max(1, Math.min(300, Number(limit) || 100));
+  const sql = `
+    SELECT
+      p.*,
+      c.name AS company_name,
+      u.email AS current_user_email
+    FROM payments p
+    LEFT JOIN companies c ON c.id = p.company_id
+    LEFT JOIN users u ON u.id = p.user_id
+    ${companyId ? "WHERE p.company_id = ?" : ""}
+    ORDER BY p.active_until DESC, p.paid_at DESC, p.created_at DESC
+    LIMIT ?
+  `;
+  const stmt = db.prepare(sql);
+  const result = companyId
+    ? await stmt.bind(companyId, safeLimit).all()
+    : await stmt.bind(safeLimit).all();
+  return (result.results || []).map((row) => ({
+    ...row,
+    user_email: row.user_email || row.current_user_email || "",
+  }));
+}
+
+function summarizeBilling(payments) {
+  const paid = (payments || []).filter((item) => item.status === "paid");
+  const activeUntil = paid.reduce((max, item) => Math.max(max, Number(item.active_until || 0)), 0);
+  return {
+    active_until: activeUntil || null,
+    active: activeUntil ? activeUntil >= now() : false,
+    payments_count: paid.length,
+    latest_payment: paid[0] || null,
+  };
+}
+
+function normalizeBillingMonth(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return "";
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return "";
+  return `${match[1]}-${match[2]}`;
+}
+
+function normalizeBillingActiveUntil(value, periodStart, months) {
+  const explicit = parseUnixDate(value);
+  if (explicit) return explicit;
+  const [year, month] = periodStart.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + months, 0, 23, 59, 59));
+  return Math.floor(date.getTime() / 1000);
+}
+
+function parseUnixDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  if (/^\d+$/.test(text)) {
+    const n = Number(text);
+    return n > 10_000_000_000 ? Math.floor(n / 1000) : n;
+  }
+  const parsed = Date.parse(text.length === 10 ? `${text}T23:59:59Z` : text);
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+}
+
+function parseAmountCents(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value > 1000 ? value : value * 100));
+  }
+  const text = String(value || "").trim().replace(/\./g, "").replace(",", ".");
+  const number = Number(text);
+  return Number.isFinite(number) ? Math.max(0, Math.round(number * 100)) : 0;
+}
+
 async function fetchPythonCompanyStats(env, actor, companyId) {
   if (!env.PYTHON_API_URL || !env.ISS_INTERNAL_SECRET) {
     return null;
@@ -2494,6 +2744,40 @@ async function migrate(db) {
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_logs_company_id ON logs(company_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_deletion_jobs_status ON deletion_jobs(status)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_deletion_jobs_company_id ON deletion_jobs(company_id)`),
+
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS billing_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by_user_id TEXT
+      )
+    `),
+
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        user_id TEXT,
+        user_email TEXT,
+        period_start TEXT NOT NULL,
+        months INTEGER NOT NULL DEFAULT 1,
+        active_until INTEGER NOT NULL,
+        amount_cents INTEGER NOT NULL DEFAULT 0,
+        description TEXT,
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'paid',
+        paid_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_by_user_id TEXT,
+        FOREIGN KEY (company_id) REFERENCES companies(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `),
+
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_payments_company_id ON payments(company_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_payments_active_until ON payments(active_until)`),
   ]);
 }
 

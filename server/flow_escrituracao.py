@@ -359,7 +359,19 @@ async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechad
     desab = await page.query_selector("span[id$=':linkEscriturarDesabilitado']")
     if desab:
         if not reabrir_fechada:
-            raise RuntimeError("Escrituração fechada. Reabertura desativada nas opções da run.")
+            await log_flow(
+                ctx,
+                "Empresa tava com a escrituração fechada, fluxo parou.",
+                event="WARN",
+                code="ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA",
+            )
+            raise FlowError(
+                "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA",
+                "Empresa tava com a escrituração fechada, fluxo parou.",
+                short_message="Empresa tava com a escrituração fechada, fluxo parou.",
+                action="Reabertura desativada; DAM pode seguir se estiver selecionado.",
+                retryable=False,
+            )
         try:
             await page.click("a[id$=':linkReabrir']")
             await asyncio.sleep(1.0)

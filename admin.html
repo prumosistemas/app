@@ -740,6 +740,8 @@
 
     .mapper-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
     .mapper-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #xlsxAdvancedModal .modal.wide { max-height: 92vh; display: flex; flex-direction: column; }
+    #xlsxAdvancedModal .modal-body { overflow: auto; max-height: calc(92vh - 58px); }
     .preview-table { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
     .preview-table table { min-width: 800px; }
     .preview-table th.selected-cnpj    { background: var(--blue-bg); color: var(--blue); }
@@ -874,6 +876,7 @@
               <button id="btnDeleteRun"    type="button" class="danger sm hidden">Deletar</button>
               <button id="btnDuplicateRun" type="button" class="secondary sm hidden">Duplicar</button>
               <button id="btnRetryRun"     type="button" class="secondary sm hidden">↩ Retry</button>
+              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório PDF</a>
               <a id="btnZipRun" class="button sm hidden" target="_blank" rel="noopener">⬇ ZIP</a>
             </div>
           </div>
@@ -940,6 +943,8 @@
             <div id="xlsxDropZone" class="drop-zone">
               <input id="xlsxFile" type="file" accept=".xlsx,.xls" style="max-width:260px;" />
               <button id="btnOpenAdvancedXlsx" type="button" class="secondary sm">Editor de planilha</button>
+              <button id="btnDownloadDatasetTemplate" type="button" class="secondary sm">Baixar modelo</button>
+              <button id="btnExportDataset" type="button" class="secondary sm">Exportar conjunto</button>
               <button id="btnAddDatasetRow"    type="button" class="secondary sm">+ Linha</button>
               <button id="btnSaveDataset"      type="button" class="success sm">Salvar</button>
               <span class="small">Solte ou selecione um XLSX para importar.</span>
@@ -1065,17 +1070,20 @@
       <div class="admin-grid two">
         <div class="card">
           <div class="card-head"><h3>Plano atual</h3></div>
-          <div class="card-body admin-meta">
-            <p>Plano: <code>Manual / Teste</code></p>
-            <p>Status: <span class="pill ok">Ativo</span></p>
+          <div class="card-body admin-meta" id="billingSummary">
+            <p>Status: carregando...</p>
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>Cobrança</h3></div>
-          <div class="card-body">
-            <div class="notice info">Área preparada para integrar Stripe, Mercado Pago, Asaas ou outro provedor.</div>
+          <div class="card-head"><h3>PIX</h3></div>
+          <div class="card-body stack" id="billingPix">
+            <div class="notice info">Carregando dados de pagamento...</div>
           </div>
         </div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <div class="card-head"><h3>Pagamentos anteriores</h3><button id="btnReloadBilling" class="secondary sm" type="button">Recarregar</button></div>
+        <div class="card-body" id="billingPayments"><div class="empty-state">Carregando pagamentos...</div></div>
       </div>
     </section>
 
@@ -1295,6 +1303,8 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     activeRun=false, lastSelectedRunSignature="", runFlowRowsDatasetId="",
     runFlowRowsDirty=false, loadingRunDetail=false, lastRunDetailFetchAt=0,
     logsTailTimer=null, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
+const SESSION_TOKEN_KEY = "session_token";
+let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 let runsPage=1, resultsPage=1, datasetPage=1, flowPage=1;
 const PAGE_SIZE = 25;
 const flowSelectionByDataset = {};
@@ -1557,6 +1567,10 @@ function renderAdminMe(data) {
 
 
 function redirectToLogin(message){
+  sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  localStorage.removeItem(SESSION_TOKEN_KEY);
+  sessionStorage.removeItem("csrf");
+  localStorage.removeItem("csrf");
   if(message){
     toast(message, "err");
   }
@@ -1581,6 +1595,9 @@ async function apiFetch(path, options={}){
     if (method !== "GET" && method !== "HEAD" && CSRF_TOKEN && !headers.has("X-CSRF-Token")) {
       headers.set("X-CSRF-Token", CSRF_TOKEN);
     }
+    if (SESSION_TOKEN && !headers.has("Authorization")) {
+      headers.set("Authorization", "Bearer " + SESSION_TOKEN);
+    }
 
     const res = await fetch(base + path, {
       credentials: "include",
@@ -1592,6 +1609,17 @@ async function apiFetch(path, options={}){
     let payload;
     if(ct.includes("application/json")) payload=await res.json();
     else payload=await res.text();
+
+    if(payload?.csrf){
+      CSRF_TOKEN = payload.csrf;
+      sessionStorage.setItem("csrf", CSRF_TOKEN);
+      localStorage.setItem("csrf", CSRF_TOKEN);
+    }
+    if(payload?.session_token){
+      SESSION_TOKEN = payload.session_token;
+      sessionStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
+      localStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
+    }
 
     if(res.status === 401 || res.status === 403){
       throw new Error("Sessão expirada ou sem permissão. Faça login novamente.");
@@ -1644,8 +1672,10 @@ function switchSection(sectionId){
     contaSection:"Conta"
   }[sectionId]||"ISS";
   if(sectionId === "usersSection") loadUsers();
+  if(sectionId === "billingSection") loadBilling();
 }
 document.querySelectorAll(".nav-btn").forEach(btn=>btn.addEventListener("click",()=>switchSection(btn.dataset.section)));
+$("btnReloadBilling")?.addEventListener("click", loadBilling);
 
 function initMonthSelect(){
   const names=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -1668,13 +1698,18 @@ function updateExecutionLocks(){
 
   $("btnDeleteRun").disabled=selectedActive;
   $("btnZipRun").classList.toggle("disabled",selectedActive);
+  $("btnReportRun").classList.toggle("disabled",selectedActive);
 
   if(selectedActive){
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").title="Não disponível durante execução.";
+    $("btnReportRun").removeAttribute("href");
+    $("btnReportRun").title="Não disponível durante execução.";
   } else if(selectedRunId){
-    $("btnZipRun").href=API_BASE+"/py/api/runs/"+encodeURIComponent(selectedRunId)+"/download";
+    $("btnZipRun").removeAttribute("href");
     $("btnZipRun").title="";
+    $("btnReportRun").removeAttribute("href");
+    $("btnReportRun").title="";
   }
 
   document.querySelectorAll("[data-run-toggle-flow]").forEach(btn=>btn.disabled=activeRun);
@@ -1716,6 +1751,10 @@ async function loadMe(){
   try{
     mePayload = await apiFetch("/api/me");
     CSRF_TOKEN = mePayload?.csrf || CSRF_TOKEN || "";
+    if(CSRF_TOKEN){
+      sessionStorage.setItem("csrf", CSRF_TOKEN);
+      localStorage.setItem("csrf", CSRF_TOKEN);
+    }
     if(!mePayload?.authenticated){
       throw new Error('Sessão expirada ou sem permissão. Faça login novamente.');
     }
@@ -1811,14 +1850,13 @@ async function loadUsers() {
     $("usersTable").innerHTML = `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Uso</th><th>Login</th><th>Ação</th></tr></thead>
+          <thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Login</th><th>Ação</th></tr></thead>
           <tbody>
             ${users.map(u => `
               <tr>
                 <td>${escapeHtml(u.email)}</td>
                 <td>${escapeHtml(roleLabel(u.role))}</td>
                 <td>${u.deletion_status ? `<span class="pill bad">Exclusão pendente</span>` : u.blocked_by_company ? `<span class="pill bad">Bloqueado pela empresa</span>` : Number(u.disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
-                <td>${adminUserStats(u.stats)}${adminDatasetsAccounts(u.stats)}${adminLatestRuns(u.stats)}</td>
                 <td><span class="small">Anterior: ${formatUnixTs(u.last_login_at)}<br>Atual: ${formatUnixTs(u.current_login_at)}</span></td>
                 <td>
                   ${u.role === "member" && !companyDisabled && !u.deletion_status ? `
@@ -1835,6 +1873,38 @@ async function loadUsers() {
       </div>`;
   } catch(err) {
     $("usersTable").innerHTML = `<div class="notice err">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function moneyFromCents(cents){
+  const value = Number(cents || 0) / 100;
+  return value ? value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "Valor não informado";
+}
+
+async function loadBilling() {
+  if(currentRole() !== "owner" || !$("billingSummary")) return;
+  try {
+    const data = await apiFetch("/api/billing");
+    const summary = data.summary || {};
+    const settings = data.settings || {};
+    const activeUntil = summary.active_until ? formatUnixTs(summary.active_until) : "Sem pagamento lançado";
+    $("billingSummary").innerHTML = `
+      <p>Plano: <code>Mensal manual</code></p>
+      <p>Status: ${summary.active ? `<span class="pill ok">Ativo</span>` : `<span class="pill bad">Pendente</span>`}</p>
+      <p>Ativo até: <code>${escapeHtml(activeUntil)}</code></p>
+      <p>Total de pagamentos: <b>${Number(summary.payments_count || 0)}</b></p>`;
+    $("billingPix").innerHTML = `
+      ${settings.qr_code_url ? `<div style="display:flex;justify-content:center;"><img src="${escapeHtml(settings.qr_code_url)}" alt="QR Code PIX" style="max-width:220px;width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px;"></div>` : `<div class="notice info">QR Code ainda não cadastrado pelo master.</div>`}
+      <div><label>Chave PIX</label><input readonly value="${escapeHtml(settings.pix_key || "")}" placeholder="Chave PIX não cadastrada"></div>
+      <div><label>PIX copia e cola</label><textarea readonly rows="4" placeholder="PIX copia e cola não cadastrado">${escapeHtml(settings.pix_copy_paste || "")}</textarea></div>
+      <div class="small">Mensalidade: ${escapeHtml(settings.monthly_amount || "definida pelo master")}</div>`;
+    const payments = data.payments || [];
+    $("billingPayments").innerHTML = payments.length ? `
+      <div class="table-wrap"><table><thead><tr><th>Mês inicial</th><th>Meses</th><th>Ativo até</th><th>Usuário</th><th>Valor</th><th>Pago em</th><th>Obs.</th></tr></thead>
+      <tbody>${payments.map(p=>`<tr><td>${escapeHtml(p.period_start || "-")}</td><td>${Number(p.months || 1)}</td><td>${formatUnixTs(p.active_until)}</td><td>${escapeHtml(p.user_email || "Empresa")}</td><td>${escapeHtml(moneyFromCents(p.amount_cents))}</td><td>${formatUnixTs(p.paid_at)}</td><td>${escapeHtml(p.note || p.description || "")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty-state">Nenhum pagamento lançado ainda.</div>`;
+  } catch(err) {
+    $("billingSummary").innerHTML = `<div class="notice err">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -1950,9 +2020,11 @@ function resetRunSelectionUi(){
   $("runProgress").style.width="0%";
   $("runHeader").innerHTML=`<div class="notice warn">← Selecione uma run na lista acima.</div>`;
   $("resultsBody").innerHTML=`<tr><td colspan="5" class="small" style="padding:12px 10px;">Nenhum resultado.</td></tr>`;
-  ["btnStopRun","btnDeleteRun","btnDuplicateRun","btnRetryRun","btnZipRun"].forEach(id=>$(id).classList.add("hidden"));
+  ["btnStopRun","btnDeleteRun","btnDuplicateRun","btnRetryRun","btnZipRun","btnReportRun"].forEach(id=>$(id).classList.add("hidden"));
   $("btnZipRun").classList.remove("disabled");
   $("btnZipRun").removeAttribute("href");
+  $("btnReportRun").classList.remove("disabled");
+  $("btnReportRun").removeAttribute("href");
 }
 
 function renderRuns(){
@@ -2024,14 +2096,21 @@ function renderRunDetail(run){
   } else { $("btnRetryRun").classList.add("hidden") }
   $("btnRetryRun").disabled=activeRun;
   $("btnZipRun").classList.remove("hidden");
+  $("btnReportRun").classList.remove("hidden");
   if(selectedActive){
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").classList.add("disabled");
     $("btnZipRun").title="Não disponível durante execução.";
+    $("btnReportRun").removeAttribute("href");
+    $("btnReportRun").classList.add("disabled");
+    $("btnReportRun").title="Não disponível durante execução.";
   } else {
-    $("btnZipRun").href=API_BASE+"/py/api/runs/"+encodeURIComponent(run.run_id)+"/download";
+    $("btnZipRun").removeAttribute("href");
     $("btnZipRun").classList.remove("disabled");
     $("btnZipRun").title="";
+    $("btnReportRun").removeAttribute("href");
+    $("btnReportRun").classList.remove("disabled");
+    $("btnReportRun").title="";
   }
   renderGroupedResults(run);
   updateExecutionLocks();
@@ -2173,9 +2252,12 @@ function validateRunFlowRules(selection){
   const items=ds?.items||[];
   for(const item of items){
     const key=cnpjDigits(item.cnpj_digits||item.cnpj);
-    const flows=selection[key]||{};
+    const flows=selection[key]||{ certidao:true, dam:true, escrituracao:true, notas:true };
     if(flows.dam&&!flows.escrituracao) warnings.push(`${item.cnpj||formatCnpjFromDigits(key)} · ${item.nome_empresa||""}: DAM sem Escrituração.`);
     if(flows.dam&&flows.escrituracao)  warnings.push(`${item.cnpj||formatCnpjFromDigits(key)} · ${item.nome_empresa||""}: DAM após Escrituração.`);
+    if(flows.notas && getUsarCodigoDominio() && !String(item.codigo_dominio||"").trim()){
+      warnings.push(`${item.cnpj||formatCnpjFromDigits(key)} · ${item.nome_empresa||""}: sem Código Domínio; pasta de Notas usará CNPJ - Empresa.`);
+    }
   }
   return { warnings };
 }
@@ -2224,9 +2306,20 @@ $("btnCreateRun").addEventListener("click",async()=>{
   } catch(err){ showBox($("runCreateMsg"),"err",err.message) }
 });
 
-$("btnZipRun").addEventListener("click",event=>{
+$("btnZipRun").addEventListener("click",async event=>{
+  event.preventDefault();
   const selected=selectedRunFull||runs.find(r=>r.run_id===selectedRunId);
-  if(isActiveStatus(selected?.status)){ event.preventDefault(); toast("Não é possível baixar o ZIP durante execução.", "warn"); }
+  if(isActiveStatus(selected?.status)){ toast("Não é possível baixar o ZIP durante execução.", "warn"); return; }
+  if(!selectedRunId)return;
+  await downloadProtectedRunZip(selectedRunId);
+});
+
+$("btnReportRun").addEventListener("click",async event=>{
+  event.preventDefault();
+  const selected=selectedRunFull||runs.find(r=>r.run_id===selectedRunId);
+  if(isActiveStatus(selected?.status)){ toast("Não é possível baixar o relatório durante execução.", "warn"); return; }
+  if(!selectedRunId)return;
+  await downloadProtectedRunReport(selectedRunId);
 });
 
 $("btnStopRun").addEventListener("click",async()=>{
@@ -2466,6 +2559,54 @@ $("btnStopFlow").addEventListener("click",async()=>{
     toast("Fluxo parado.","warn");
   } catch(err){ toast(err.message,"err"); }
 });
+function filenameFromDisposition(disposition, fallback) {
+  const value = String(disposition || "");
+  const utf8 = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) return decodeURIComponent(utf8[1].replaceAll('"', ""));
+  const plain = value.match(/filename="?([^";]+)"?/i);
+  if (plain) return plain[1];
+  return fallback;
+}
+
+async function downloadBlob(url, fallbackName) {
+  const headers = new Headers();
+  if (SESSION_TOKEN) headers.set("Authorization", "Bearer " + SESSION_TOKEN);
+  const res = await fetch(url, { method: "GET", credentials: "include", headers });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || "Falha no download.");
+  }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filenameFromDisposition(res.headers.get("content-disposition"), fallbackName);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+async function downloadProtectedRunZip(runId) {
+  try {
+    const safeRunId = encodeURIComponent(runId);
+    await downloadBlob(API_BASE + "/py/api/runs/" + safeRunId + "/download", decodeURIComponent(safeRunId) + ".zip");
+    toast("ZIP da run baixado.", "ok");
+  } catch (err) {
+    toast(err.message || "Erro ao baixar ZIP da run.", "err");
+  }
+}
+
+async function downloadProtectedRunReport(runId) {
+  try {
+    const safeRunId = encodeURIComponent(runId);
+    await downloadBlob(API_BASE + "/py/api/runs/" + safeRunId + "/report", decodeURIComponent(safeRunId) + "_relatorio.pdf");
+    toast("Relatório da run baixado.", "ok");
+  } catch (err) {
+    toast(err.message || "Erro ao baixar relatório da run.", "err");
+  }
+}
+
 async function downloadProtectedFile(runId, path) {
   try {
     const url =
@@ -2475,9 +2616,12 @@ async function downloadProtectedFile(runId, path) {
       "/file?path=" +
       path;
 
+    const headers = new Headers();
+    if (SESSION_TOKEN) headers.set("Authorization", "Bearer " + SESSION_TOKEN);
     const res = await fetch(url, {
       method: "GET",
-      credentials: "include"
+      credentials: "include",
+      headers
     });
 
     if (!res.ok) {
@@ -2563,9 +2707,9 @@ function getDatasetItemsFromTable(){
   }));
 }
 
-function localValidateDatasetRows(items){
+function validateDatasetRowsData(items){
   const seen=new Map();
-  const rows=items.map((item,index)=>{
+  return items.map((item,index)=>{
     const digits=onlyDigits(item.cnpj);
     const errors=[];
     if(digits.length!==14||/^(\d)\1+$/.test(digits))errors.push("CNPJ inválido.");
@@ -2574,7 +2718,22 @@ function localValidateDatasetRows(items){
     if(!item.account_id)errors.push("Conta obrigatória.");
     return{linha:index+1,...item,valid:errors.length===0,errors};
   });
+}
+
+function localValidateDatasetRows(items){
+  const rows=validateDatasetRowsData(items);
   renderDatasetRows({items:rows});
+}
+
+function refreshDatasetRowsStatus(){
+  currentDatasetRows = validateDatasetRowsData(currentDatasetRows);
+  $("datasetRows").querySelectorAll("tr[data-row]").forEach(row=>{
+    const idx=Number(row.dataset.row);
+    const item=currentDatasetRows[idx]||{};
+    row.className=item.valid?"":"invalid";
+    const statusCell=row.querySelector("[data-status-cell]");
+    if(statusCell) statusCell.innerHTML=item.valid?tag("ok"):tag("erro");
+  });
 }
 
 function renderDatasetRows(validation){
@@ -2596,7 +2755,7 @@ function renderDatasetRows(validation){
       <td><input data-field="codigo_dominio" value="${escapeHtml(item.codigo_dominio||"")}" /></td>
       <td><input data-field="nome_empresa" value="${escapeHtml(item.nome_empresa||"")}" /></td>
       <td><select data-field="account_id"><option value="">Selecione</option>${accounts.map(acc=>`<option value="${escapeHtml(acc.id)}">${escapeHtml(acc.alias)}</option>`).join("")}</select></td>
-      <td>${item.valid?tag("ok"):tag("erro")}</td>
+      <td data-status-cell>${item.valid?tag("ok"):tag("erro")}</td>
       <td><button type="button" class="danger sm" data-remove-row="${index}">−</button></td>`;
     $("datasetRows").appendChild(tr);
     tr.querySelector("[data-field='account_id']").value=item.account_id||"";
@@ -2614,7 +2773,7 @@ function renderDatasetRows(validation){
       const idx = Number(row.dataset.row);
       const field = event.target.dataset.field;
       currentDatasetRows[idx][field] = event.target.value;
-      localValidateDatasetRows(getDatasetItemsFromTable());
+      refreshDatasetRowsStatus();
     });
     el.addEventListener("change",(event)=>{
       const row = event.target.closest("tr[data-row]");
@@ -2622,7 +2781,7 @@ function renderDatasetRows(validation){
       const idx = Number(row.dataset.row);
       const field = event.target.dataset.field;
       currentDatasetRows[idx][field] = event.target.value;
-      localValidateDatasetRows(getDatasetItemsFromTable());
+      refreshDatasetRowsStatus();
     });
   });
 }
@@ -2631,6 +2790,32 @@ $("btnAddDatasetRow").addEventListener("click",()=>{
   const items=getDatasetItemsFromTable();
   items.push({cnpj:"",codigo_dominio:"",nome_empresa:"",account_id:""});
   localValidateDatasetRows(items);
+});
+
+function downloadXlsxRows(fileName, rows){
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Conjunto");
+  XLSX.writeFile(wb, fileName);
+}
+
+$("btnDownloadDatasetTemplate").addEventListener("click",()=>{
+  downloadXlsxRows("modelo-conjunto-iss-fortaleza.xlsx", [
+    { CNPJ: "51.214.064/0001-26", "Código Domínio": "1076", Empresa: "EMPRESA EXEMPLO LTDA", Conta: accounts[0]?.alias || "Conta Matriz" },
+    { CNPJ: "01.583.149/0001-03", "Código Domínio": "", Empresa: "EMPRESA SEM CODIGO DOMINIO", Conta: accounts[0]?.alias || "Conta Matriz" },
+  ]);
+});
+
+$("btnExportDataset").addEventListener("click",()=>{
+  const rows = getDatasetItemsFromTable().map(item=>({
+    CNPJ: item.cnpj || "",
+    "Código Domínio": item.codigo_dominio || "",
+    Empresa: item.nome_empresa || "",
+    Conta: accounts.find(acc=>String(acc.id)===String(item.account_id))?.alias || item.account_id || "",
+  }));
+  if(!rows.length){ toast("Não há linhas para exportar.", "warn"); return; }
+  const alias = ($("datasetAlias").value || selectedDatasetId || "conjunto").trim().replace(/[\\/:*?"<>|]+/g, "-");
+  downloadXlsxRows(`${alias || "conjunto"}-exportado.xlsx`, rows);
 });
 
 $("resultsPrev").addEventListener("click",()=>{ resultsPage=Math.max(1, resultsPage-1); if(selectedRunFull) renderGroupedResults(selectedRunFull); });

@@ -74,6 +74,7 @@ from domain import (
     load_accounts_public,
     load_accounts_raw,
     load_datasets,
+    list_run_files,
     local_run_key,
     logs_by_attempt_for_root,
     logs_by_attempt_for_root_filtered,
@@ -92,6 +93,7 @@ from domain import (
     save_datasets,
     should_hide_run_file,
     task_key,
+    unprotect_account_from_storage,
     validate_dataset_items,
     visible_root_runs,
     write_run_log,
@@ -180,6 +182,114 @@ def _safe_json_loads(value: str, default: Any) -> Any:
         return default
 
 
+def _pdf_escape(text: str) -> str:
+    return str(text or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _pdf_line_text(value: Any) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    text = " ".join(text.split())
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def _build_simple_pdf(lines: List[str]) -> bytes:
+    page_lines = [lines[i : i + 42] for i in range(0, len(lines), 42)] or [["Relatório vazio."]]
+    objects: List[bytes] = []
+    page_ids: List[int] = []
+
+    def add_object(payload: bytes) -> int:
+        objects.append(payload)
+        return len(objects)
+
+    catalog_id = add_object(b"<< /Type /Catalog /Pages 2 0 R >>")
+    pages_id = add_object(b"")
+    font_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    for page in page_lines:
+        y = 800
+        chunks = ["BT", "/F1 10 Tf"]
+        for line in page:
+            chunks.append(f"1 0 0 1 50 {y} Tm ({_pdf_escape(_pdf_line_text(line))}) Tj")
+            y -= 17
+        chunks.append("ET")
+        stream = "\n".join(chunks).encode("latin-1", "replace")
+        content_id = add_object(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+        page_id = add_object(
+            f"<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>".encode("ascii")
+        )
+        page_ids.append(page_id)
+
+    objects[pages_id - 1] = f"<< /Type /Pages /Kids [{' '.join(f'{pid} 0 R' for pid in page_ids)}] /Count {len(page_ids)} >>".encode("ascii")
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for idx, payload in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out.extend(f"{idx} 0 obj\n".encode("ascii"))
+        out.extend(payload)
+        out.extend(b"\nendobj\n")
+    xref_at = len(out)
+    out.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    out.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        out.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    out.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_id} 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(out)
+
+
+def create_run_report_pdf(ctx: WorkerContext, root_id: str) -> str:
+    root = next((run for run in runs_for_member(ctx) if root_id_of(run) == root_id), None)
+    if not root:
+        raise HTTPException(status_code=404, detail="Run não encontrada.")
+
+    attempts = [run for run in runs_for_member(ctx) if root_id_of(run) == root_id]
+    attempts.sort(key=lambda item: int(item.get("attempt_number") or 1))
+    latest = attempts[-1] if attempts else root
+    aggregate = aggregate_results_for_root(ctx, root_id)
+    results = aggregate if isinstance(aggregate, list) else latest.get("results", [])
+
+    lines = [
+        "Relatório de execução ISS Fortaleza",
+        f"Run: {root_id}",
+        f"Conjunto: {root.get('dataset_alias') or latest.get('dataset_alias') or '-'}",
+        f"Competência: {root.get('mes') or latest.get('mes') or '-'}",
+        f"Status: {latest.get('status') or '-'}",
+        f"Total: {latest.get('total', 0)} | OK: {latest.get('ok', 0)} | Erros: {latest.get('erros', 0)} | Interrompidas: {latest.get('interrompidas', 0)}",
+        f"Tentativas: {len(attempts)}",
+        "",
+        "Resultados por fluxo:",
+    ]
+    for result in results:
+        cnpj = result.get("cnpj") or result.get("cnpj_digits") or "-"
+        empresa = result.get("empresa") or result.get("nome_empresa") or "-"
+        flow = result.get("flow_label") or result.get("flow_mode") or "-"
+        status = result.get("status") or "-"
+        erro = result.get("erro") or ""
+        extra = f" | {erro}" if erro else ""
+        lines.append(f"- {cnpj} | {empresa} | {flow}: {status}{extra}")
+
+    lines.extend(["", "Arquivos gerados:"])
+    files = []
+    for attempt in attempts:
+        if attempt.get("run_dir"):
+            files.extend(list_run_files(attempt.get("run_dir", ""), attempt.get("run_id", "")))
+    for file in files[:80]:
+        lines.append(f"- {file.get('relative_path') or file.get('path') or '-'}")
+    if len(files) > 80:
+        lines.append(f"... e mais {len(files) - 80} arquivo(s).")
+    if not files:
+        lines.append("- Nenhum arquivo listado.")
+
+    reports_dir = safe_path_inside(member_runs_root(ctx), os.path.join(member_runs_root(ctx), "_reports"))
+    os.makedirs(reports_dir, exist_ok=True)
+    report_path = safe_path_inside(reports_dir, os.path.join(reports_dir, f"{root_id}.pdf"))
+    with open(report_path, "wb") as fh:
+        fh.write(_build_simple_pdf(lines))
+    return report_path
+
+
 def _compact_admin_run(run: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "run_id": run.get("root_id") or run.get("run_id"),
@@ -264,7 +374,7 @@ def _company_storage_summary(company_id: str, known_user_ids: List[str]) -> Dict
     }
 
 
-def build_company_admin_summary(company_id: str) -> Dict[str, Any]:
+def build_company_admin_summary(company_id: str, *, include_account_secrets: bool = False) -> Dict[str, Any]:
     company_safe = safe_slug(company_id)
     prefix = f"empresa:{company_safe}:membro:"
     users: Dict[str, Dict[str, Any]] = {}
@@ -310,17 +420,22 @@ def build_company_admin_summary(company_id: str) -> Dict[str, Any]:
         if name == "accounts":
             accounts = payload.get("accounts", []) if isinstance(payload, dict) else []
             if isinstance(accounts, list):
+                visible_accounts = [
+                    unprotect_account_from_storage(acc) if include_account_secrets else acc
+                    for acc in accounts
+                    if isinstance(acc, dict)
+                ]
                 user["accounts_count"] = len(accounts)
                 user["accounts"] = [
                     {
                         "id": acc.get("id"),
                         "alias": acc.get("alias"),
                         "usuario": acc.get("usuario"),
+                        "senha": acc.get("senha") if include_account_secrets else None,
                         "created_at": acc.get("created_at"),
                         "updated_at": acc.get("updated_at"),
                     }
-                    for acc in accounts
-                    if isinstance(acc, dict)
+                    for acc in visible_accounts
                 ]
 
         elif name == "datasets":
@@ -569,7 +684,11 @@ async def admin_company_summary(
     if ctx.user_role != "master" and target_company_id != safe_slug(ctx.company_id):
         raise HTTPException(status_code=403, detail="Permissão negada.")
 
-    summary = await asyncio.to_thread(build_company_admin_summary, target_company_id)
+    summary = await asyncio.to_thread(
+        build_company_admin_summary,
+        target_company_id,
+        include_account_secrets=ctx.user_role == "master",
+    )
     return {"ok": True, "summary": summary}
 
 
@@ -735,7 +854,11 @@ async def admin_company_detail(
     target_company_id = safe_slug(company_id or ctx.company_id)
     if ctx.user_role != "master" and target_company_id != safe_slug(ctx.company_id):
         raise HTTPException(status_code=403, detail="Permissão negada.")
-    detail = await asyncio.to_thread(build_company_admin_summary, target_company_id)
+    detail = await asyncio.to_thread(
+        build_company_admin_summary,
+        target_company_id,
+        include_account_secrets=ctx.user_role == "master",
+    )
     return {"ok": True, "detail": detail}
 
 
@@ -1476,6 +1599,24 @@ async def download_run_zip(
 
     zip_path = await asyncio.to_thread(create_root_zip, ctx, root_id)
     return FileResponse(zip_path, filename=f"{root_id}.zip", media_type="application/zip")
+
+
+@app.get("/api/runs/{run_id}/report")
+async def download_run_report(
+    run_id: str,
+    ctx: WorkerContext = Depends(get_worker_context),
+):
+    run = next((r for r in runs_for_member(ctx) if r.get("run_id") == run_id or root_id_of(r) == run_id), None)
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Run não encontrada.")
+
+    root_id = root_id_of(run)
+    if root_has_active_attempt(ctx, root_id):
+        raise HTTPException(status_code=409, detail="Não é possível baixar o relatório enquanto a run está em execução ou na fila.")
+
+    report_path = await asyncio.to_thread(create_run_report_pdf, ctx, root_id)
+    return FileResponse(report_path, filename=f"{root_id}_relatorio.pdf", media_type="application/pdf")
 
 
 @app.get("/api/runs/{run_id}/file")

@@ -430,8 +430,10 @@ async def run_one_item_unlocked(
             return final_result
 
         err = classify_exception(e)
+        controlled_closed = err.code == "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA"
 
-        logger.error(
+        log_error = logger.warning if controlled_closed else logger.error
+        log_error(
             f"[ERRO] scope={scope_id(ctx)} run={run_key} flow={flow_mode} cnpj={cnpj} conta={account_alias} "
             f"code={err.code} msg={err.short_message}"
         )
@@ -448,7 +450,7 @@ async def run_one_item_unlocked(
         write_run_log(
             run_log_file,
             (
-                f"[ITEM_ERROR] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} conta={account_alias} "
+                f"[{'ITEM_STOPPED' if controlled_closed else 'ITEM_ERROR'}] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} conta={account_alias} "
                 f"code={err.code} retryable={bool(err.retryable)} msg={msg}"
             ),
         )
@@ -461,11 +463,11 @@ async def run_one_item_unlocked(
             "account_alias": account_alias,
             "flow_mode": flow_mode,
             "flow_label": flow_label,
-            "status": "erro",
+            "status": "interrompida" if controlled_closed else "erro",
             "erro": msg,
             "erro_code": err.code,
             "erro_action": err.action,
-            "retryable": bool(err.retryable),
+            "retryable": False if controlled_closed else bool(err.retryable),
             "finished_at": now_ms(),
             "usar_codigo_dominio": bool(item.get("usar_codigo_dominio", True)),
         }
@@ -518,8 +520,12 @@ async def run_cnpj_group_serial(
 
         if flow == "dam":
             has_escrituracao = any(x.get("flow_mode") == "escrituracao" for x in ordered_items)
+            escrit_closed_without_reopen = (
+                escrituracao_result
+                and escrituracao_result.get("erro_code") == "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA"
+            )
 
-            if has_escrituracao and (not escrituracao_result or escrituracao_result.get("status") != "ok"):
+            if has_escrituracao and (not escrituracao_result or (escrituracao_result.get("status") != "ok" and not escrit_closed_without_reopen)):
                 skipped = {
                     "cnpj": item.get("cnpj", ""),
                     "codigo_dominio": item.get("codigo_dominio", ""),

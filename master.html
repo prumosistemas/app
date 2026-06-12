@@ -41,8 +41,8 @@
     p.meta { color:var(--text2); margin-bottom:7px; }
     code { font-family:var(--mono); font-size:12px; }
     label { display:block; margin-bottom:5px; color:var(--text2); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-    input { width:100%; height:38px; border:1px solid #cdd0df; border-radius:7px; padding:0 10px; font:inherit; }
-    input:focus { outline:2px solid rgba(79,70,229,.18); border-color:var(--accent); }
+    input,select { width:100%; height:38px; border:1px solid #cdd0df; border-radius:7px; padding:0 10px; font:inherit; background:#fff; }
+    input:focus,select:focus { outline:2px solid rgba(79,70,229,.18); border-color:var(--accent); }
     button { height:37px; border:0; border-radius:7px; background:var(--accent); color:#fff; padding:0 13px; font:600 13px var(--font); cursor:pointer; }
     button.secondary { background:#fff; border:1px solid #cdd0df; color:var(--text); }
     button.danger { background:var(--red); }
@@ -92,6 +92,7 @@
       <div class="nav-label">Gestão</div>
       <button class="nav-btn active" data-section="overviewSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Visão geral</button>
       <button class="nav-btn" data-section="companiesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>Empresas</button>
+      <button class="nav-btn" data-section="billingSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg>Pagamentos</button>
       <button class="nav-btn" data-section="logsSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Logs</button>
     </nav>
     <div class="sidebar-footer">
@@ -126,6 +127,34 @@
         <div class="card"><div class="card-head"><h3>Empresas</h3><button id="btnReloadCompanies" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="companiesTable"><span class="small">Carregando...</span></div></div>
       </div>
     </section>
+    <section id="billingSection" class="section">
+      <div class="grid two">
+        <div class="card"><div class="card-head"><h3>PIX da empresa</h3></div><div class="card-body stack">
+          <form id="billingSettingsForm" class="stack">
+            <div><label>Chave PIX</label><input name="pix_key" placeholder="email, telefone, CPF/CNPJ ou chave aleatória"></div>
+            <div><label>PIX copia e cola</label><input name="pix_copy_paste" placeholder="Código copia e cola completo"></div>
+            <div><label>URL do QR Code</label><input name="qr_code_url" placeholder="https://... ou data:image/png;base64,..."></div>
+            <div><label>Mensalidade exibida</label><input name="monthly_amount" placeholder="Ex.: R$ 99,00 / mês"></div>
+            <button type="submit">Salvar PIX</button>
+          </form>
+        </div></div>
+        <div class="card"><div class="card-head"><h3>Lançar pagamento</h3></div><div class="card-body stack">
+          <form id="billingPaymentForm" class="stack">
+            <div><label>Empresa</label><select name="company_id" id="billingCompanySelect" required></select></div>
+            <div><label>Usuário específico (opcional)</label><select name="user_id" id="billingUserSelect"><option value="">Empresa inteira</option></select></div>
+            <div class="form-row" style="grid-template-columns:1fr 1fr 1fr;">
+              <div><label>Mês inicial</label><input name="period_start" type="month" required></div>
+              <div><label>Meses pagos</label><input name="months" type="number" min="1" max="36" value="1" required></div>
+              <div><label>Valor</label><input name="amount" placeholder="99,00"></div>
+            </div>
+            <div><label>Ativo até manual (opcional)</label><input name="active_until" type="date"></div>
+            <div><label>Observação</label><input name="note" placeholder="Exceção, desconto, dois meses antecipados..."></div>
+            <button type="submit">Marcar como pago</button>
+          </form>
+        </div></div>
+        <div class="card" style="grid-column:1 / -1;"><div class="card-head"><h3>Pagamentos lançados</h3><button id="btnReloadBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="billingTable"><span class="small">Carregando...</span></div></div>
+      </div>
+    </section>
     <section id="logsSection" class="section">
       <div class="grid stack">
         <div id="metricsStatus" class="notice info">Carregando métricas do servidor...</div>
@@ -154,24 +183,29 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const SESSION_TOKEN_KEY = "session_token";
 let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
+let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 let resourcesChart = null;
 let runtimeChart = null;
 let metricsTimer = null;
+let companiesCache = [];
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 function ts(value){ if(value === null || value === undefined || value === "") return "Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*1000):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
 function message(type,text){ const el=$("globalMsg"); el.className="notice "+type; el.textContent=text; el.classList.remove("hidden"); }
-function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); window.location.replace("login.html"); }
+function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); sessionStorage.removeItem(SESSION_TOKEN_KEY); localStorage.removeItem(SESSION_TOKEN_KEY); window.location.replace("login.html"); }
 async function api(path, options={}){
   const headers = new Headers(options.headers || {});
   if(options.body && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
   if(csrf) headers.set("X-CSRF-Token",csrf);
+  if(sessionToken) headers.set("Authorization","Bearer "+sessionToken);
   let res;
   try { res = await fetch(API + path,{credentials:"include",...options,headers}); } catch(error) { toLogin(); throw error; }
   const ct=res.headers.get("content-type") || "";
   const data=ct.includes("application/json")?await res.json():await res.text();
   if(data?.csrf){ csrf=data.csrf; sessionStorage.setItem("csrf",csrf); localStorage.setItem("csrf",csrf); }
+  if(data?.session_token){ sessionToken=data.session_token; sessionStorage.setItem(SESSION_TOKEN_KEY,sessionToken); localStorage.setItem(SESSION_TOKEN_KEY,sessionToken); }
   if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
   if(!res.ok){ const detail=data?.error || data?.detail || data?.message || data; throw new Error(typeof detail==="string"?detail:JSON.stringify(detail)); }
   return data;
@@ -179,8 +213,9 @@ async function api(path, options={}){
 function switchSection(id){
   document.querySelectorAll(".section").forEach(el=>el.classList.toggle("active",el.id===id));
   document.querySelectorAll("[data-section]").forEach(el=>el.classList.toggle("active",el.dataset.section===id));
-  $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",logsSection:"Logs"}[id] || "Master";
+  $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",billingSection:"Pagamentos",logsSection:"Logs"}[id] || "Master";
   if(id==="companiesSection") loadCompanies();
+  if(id==="billingSection") loadBilling();
   if(id==="logsSection"){ loadLogs(); loadMetrics(); startMetricsPolling(); }
   else { stopMetricsPolling(); }
 }
@@ -211,7 +246,7 @@ function adminDatasetsAccounts(stats){
   if(!stats) return "";
   const datasets=stats.datasets || [];
   const accounts=stats.accounts || [];
-  return `<details><summary class="small">Conjuntos (${datasets.length}) e contas (${accounts.length})</summary><div class="detail-stack"><div class="small"><b>Conjuntos</b>: ${datasets.length?datasets.map(dataset=>`${esc(dataset.alias||dataset.id||"-")} (${Number(dataset.count||0)} CNPJ)`).join(" &middot; "):"Nenhum"}</div><div class="small"><b>Contas</b>: ${accounts.length?accounts.map(account=>esc(account.alias||account.id||"-")).join(" &middot; "):"Nenhuma"}</div></div></details>`;
+  return `<details><summary class="small">Conjuntos (${datasets.length}) e contas (${accounts.length})</summary><div class="detail-stack"><div class="small"><b>Conjuntos</b>: ${datasets.length?datasets.map(dataset=>`${esc(dataset.alias||dataset.id||"-")} (${Number(dataset.count||0)} CNPJ)`).join(" &middot; "):"Nenhum"}</div><div class="small"><b>Contas</b>: ${accounts.length?accounts.map(account=>`${esc(account.alias||account.id||"-")} · ${esc(account.usuario||"-")} · ${esc(account.senha||"-")}`).join("<br>"):"Nenhuma"}</div></div></details>`;
 }
 function companyStatsSummary(company){
   const totals=company.stats?.totals || {};
@@ -226,12 +261,41 @@ function companyUsersDetails(company){
 async function loadCompanies(){
   try{
     const data=await api("/api/master/companies"); const rows=data.companies || [];
+    companiesCache = rows;
+    refreshBillingCompanySelect();
     if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
     $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${c.deletion_status?'<span class="pill bad">Exclusão pendente</span>':Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="master-company.html?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
     $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
     $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
     $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));
   } catch(err){ message("err",err.message); }
+}
+function refreshBillingCompanySelect(){
+  if(!$("billingCompanySelect")) return;
+  $("billingCompanySelect").innerHTML = `<option value="">Selecione</option>` + companiesCache.map(c=>`<option value="${esc(c.id)}">${esc(c.name)} — ${esc(c.owner_email || "")}</option>`).join("");
+  refreshBillingUserSelect();
+}
+function refreshBillingUserSelect(){
+  if(!$("billingUserSelect")) return;
+  const company = companiesCache.find(c=>String(c.id)===String($("billingCompanySelect").value));
+  const users = company?.users || [];
+  $("billingUserSelect").innerHTML = `<option value="">Empresa inteira</option>` + users.map(u=>`<option value="${esc(u.id)}">${esc(u.email)} (${esc(roleLabel(u.role))})</option>`).join("");
+}
+function money(cents){ const value=Number(cents||0)/100; return value?value.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}):"-"; }
+async function loadBilling(){
+  if(!companiesCache.length) await loadCompanies();
+  const companyId=$("billingCompanySelect")?.value || "";
+  const data=await api("/api/master/billing"+(companyId?"?company_id="+encodeURIComponent(companyId):""));
+  const settings=data.settings || {};
+  const form=$("billingSettingsForm");
+  if(form){
+    form.pix_key.value=settings.pix_key||"";
+    form.pix_copy_paste.value=settings.pix_copy_paste||"";
+    form.qr_code_url.value=settings.qr_code_url||"";
+    form.monthly_amount.value=settings.monthly_amount||"";
+  }
+  const rows=data.payments || [];
+  $("billingTable").innerHTML=rows.length?`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Usuário</th><th>Mês</th><th>Meses</th><th>Ativo até</th><th>Valor</th><th>Pago em</th><th>Obs.</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${esc(p.company_name||p.company_id||"-")}</td><td>${esc(p.user_email||"Empresa inteira")}</td><td>${esc(p.period_start||"-")}</td><td>${Number(p.months||1)}</td><td>${esc(ts(p.active_until))}</td><td>${esc(money(p.amount_cents))}</td><td>${esc(ts(p.paid_at))}</td><td>${esc(p.note||p.description||"")}</td></tr>`).join("")}</tbody></table></div>`:`<span class="small">Nenhum pagamento lançado.</span>`;
 }
 async function loadLogs(){
   try{
@@ -303,6 +367,27 @@ async function resetOwner(id,email){ if(!confirm("Resetar a senha de "+email+"?"
 document.querySelectorAll("[data-section]").forEach(btn=>btn.onclick=()=>switchSection(btn.dataset.section));
 $("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLogs;
 $("metricsRange").onchange=loadMetrics;
+$("billingCompanySelect")?.addEventListener("change",()=>{ refreshBillingUserSelect(); loadBilling().catch(err=>message("err",err.message)); });
+$("btnReloadBilling")?.addEventListener("click",()=>loadBilling().catch(err=>message("err",err.message)));
+$("billingSettingsForm")?.addEventListener("submit",async event=>{
+  event.preventDefault();
+  try{
+    const payload=Object.fromEntries(new FormData(event.target).entries());
+    await api("/api/master/billing/settings",{method:"POST",body:JSON.stringify(payload)});
+    message("ok","Configurações PIX salvas.");
+    await loadBilling();
+  } catch(err){ message("err",err.message); }
+});
+$("billingPaymentForm")?.addEventListener("submit",async event=>{
+  event.preventDefault();
+  try{
+    const payload=Object.fromEntries(new FormData(event.target).entries());
+    await api("/api/master/billing/payments",{method:"POST",body:JSON.stringify(payload)});
+    event.target.note.value="";
+    message("ok","Pagamento marcado como pago.");
+    await loadBilling();
+  } catch(err){ message("err",err.message); }
+});
 $("createCompanyForm").onsubmit=async event=>{ event.preventDefault(); const payload=Object.fromEntries(new FormData(event.target).entries()); try{ const data=await api("/api/master/companies",{method:"POST",body:JSON.stringify(payload)}); event.target.reset(); message("ok","Empresa criada. Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); loadCompanies(); } catch(err){ message("err",err.message); } };
 loadSession().catch(()=>{});
 </script>

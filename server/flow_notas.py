@@ -343,7 +343,7 @@ def _build_notas_company_dirs(
     - pasta_tomadas
     """
 
-    if usar_codigo_dominio:
+    if usar_codigo_dominio and (codigo_dominio or "").strip():
         pasta_prestadas = _build_notas_company_dir_codigo_dominio(
             run_dir,
             "prestadas",

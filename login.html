@@ -298,7 +298,9 @@
   <script>
     const WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
 
+    const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || "";
+    let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 
     const $ = id => document.getElementById(id);
 
@@ -320,6 +322,13 @@
       sessionStorage.setItem("csrf", value);
     }
 
+    function saveSessionToken(value) {
+      if (!value) return;
+      sessionToken = value;
+      sessionStorage.setItem(SESSION_TOKEN_KEY, value);
+      localStorage.setItem(SESSION_TOKEN_KEY, value);
+    }
+
     async function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
       const hasBody = options.body !== undefined && options.body !== null;
@@ -330,6 +339,10 @@
 
       if (csrf) {
         headers.set("X-CSRF-Token", csrf);
+      }
+
+      if (sessionToken) {
+        headers.set("Authorization", "Bearer " + sessionToken);
       }
 
       const res = await fetch(WORKER_URL + path, {
@@ -349,6 +362,10 @@
 
       if (data && data.csrf) {
         saveCsrf(data.csrf);
+      }
+
+      if (data && data.session_token) {
+        saveSessionToken(data.session_token);
       }
 
       if (!res.ok) {
@@ -412,6 +429,10 @@
           method: "POST",
           body: JSON.stringify({ email, password })
         });
+
+        if (data.session_token) {
+          saveSessionToken(data.session_token);
+        }
 
         if (data.must_change_password) {
           showChangePassword();

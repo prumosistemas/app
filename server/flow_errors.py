@@ -97,7 +97,7 @@ def classify_exception(exc: Exception) -> ErrorSpec:
             short_message=exc.short_message,
             action=exc.action,
             retryable=exc.retryable,
-            capture_screenshot=True,
+            capture_screenshot=exc.code != "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA",
         )
 
     text = str(exc or "").strip()
@@ -182,28 +182,30 @@ async def handle_job_error(ctx: "FlowContext", page, exc: Exception) -> None:
     from flow_core import log_flow
 
     spec = classify_exception(exc)
+    log_level = logging.WARNING if spec.code == "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA" else logging.ERROR
+    event_prefix = "WARN" if log_level == logging.WARNING else "ERROR"
 
     await log_flow(
         ctx,
         f"Erro classificado: {spec.short_message}",
-        event="ERROR",
-        level=logging.ERROR,
+        event=event_prefix,
+        level=log_level,
         code=spec.code,
     )
 
     await log_flow(
         ctx,
         f"Ação sugerida: {spec.action}",
-        event="ERROR_ACTION",
-        level=logging.ERROR,
+        event=f"{event_prefix}_ACTION",
+        level=log_level,
         code=spec.code,
     )
 
     await log_flow(
         ctx,
         f"Detalhe técnico: {type(exc).__name__}: {exc}",
-        event="ERROR_DETAIL",
-        level=logging.ERROR,
+        event=f"{event_prefix}_DETAIL",
+        level=log_level,
         code=spec.code,
     )
 
