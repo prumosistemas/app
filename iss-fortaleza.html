@@ -861,6 +861,7 @@
             <button id="btnOpenCreateRun" type="button">+ Nova run</button>
           </div>
           <div class="card-body">
+            <input id="runsSearch" placeholder="Buscar run, conjunto, mês ou status..." />
             <div id="runsList" class="list runs-list-scroll">
               <div class="empty-state">Carregando runs...</div>
             </div>
@@ -880,7 +881,7 @@
               <button id="btnDeleteRun"    type="button" class="danger sm hidden">Deletar</button>
               <button id="btnDuplicateRun" type="button" class="secondary sm hidden">Duplicar</button>
               <button id="btnRetryRun"     type="button" class="secondary sm hidden">↩ Retry</button>
-              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório PDF</a>
+              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório HTML</a>
               <a id="btnZipRun" class="button sm hidden" target="_blank" rel="noopener">⬇ ZIP</a>
             </div>
           </div>
@@ -890,6 +891,7 @@
             <div class="progress"><div id="runProgress"></div></div>
             <div>
               <label>Resultados por CNPJ</label>
+              <input id="selectedRunSearch" placeholder="Buscar CNPJ, empresa, conta ou status..." style="margin-bottom:10px;" />
               <div class="table-wrap">
                 <table>
                   <thead>
@@ -924,6 +926,7 @@
             <button id="btnNewDataset" type="button">+ Novo</button>
           </div>
           <div class="card-body">
+            <input id="datasetsSearch" placeholder="Buscar conjunto..." />
             <div id="datasetsList" class="list">
               <div class="empty-state">Nenhum conjunto salvo.</div>
             </div>
@@ -946,11 +949,13 @@
             </div>
             <div id="xlsxDropZone" class="drop-zone">
               <input id="xlsxFile" type="file" accept=".xlsx,.xls" style="max-width:260px;" />
-              <button id="btnOpenAdvancedXlsx" type="button" class="secondary sm">Editor de conjunto</button>
-              <button id="btnDownloadDatasetTemplate" type="button" class="secondary sm">Baixar modelo</button>
-              <button id="btnExportDataset" type="button" class="secondary sm">Exportar conjunto</button>
-              <button id="btnAddDatasetRow"    type="button" class="secondary sm">+ Linha</button>
-              <button id="btnSaveDataset"      type="button" class="success sm">Salvar</button>
+              <div class="actions">
+                <button id="btnOpenAdvancedXlsx" type="button" class="secondary sm">Editor de conjunto</button>
+                <button id="btnDownloadDatasetTemplate" type="button" class="secondary sm">Baixar modelo</button>
+                <button id="btnExportDataset" type="button" class="secondary sm">Exportar conjunto</button>
+                <button id="btnAddDatasetRow"    type="button" class="secondary sm">+ Linha</button>
+                <button id="btnSaveDataset"      type="button" class="success sm">Salvar</button>
+              </div>
               <span class="small">Solte ou selecione um XLSX para importar.</span>
             </div>
             <div class="small">Importação rápida: A=CNPJ · B=Código · C=Empresa · D=Conta (por nome). Use o Editor de conjunto para mapear qualquer ordem de colunas.</div>
@@ -1129,7 +1134,7 @@
     <section id="billingSection" class="section">
       <div class="admin-grid two">
         <div class="card">
-          <div class="card-head"><h3>Plano atual</h3></div>
+          <div class="card-head"><h3>Status do acesso</h3></div>
           <div class="card-body admin-meta" id="billingSummary">
             <p>Status: carregando...</p>
           </div>
@@ -1140,10 +1145,6 @@
             <div class="notice info">Carregando dados de pagamento...</div>
           </div>
         </div>
-      </div>
-      <div class="card" style="margin-top:14px;">
-        <div class="card-head"><h3>Pagamentos anteriores</h3><button id="btnReloadBilling" class="secondary sm" type="button">Recarregar</button></div>
-        <div class="card-body" id="billingPayments"><div class="empty-state">Carregando pagamentos...</div></div>
       </div>
     </section>
 
@@ -1177,6 +1178,10 @@
           <label>Conjunto</label>
           <select id="runDataset"></select>
         </div>
+      </div>
+      <div>
+        <label>Buscar no conjunto</label>
+        <input id="runFlowSearch" placeholder="Buscar CNPJ, empresa ou código..." />
       </div>
 
       <div id="runCodigoDominioOption" class="run-option-box hidden">
@@ -1564,29 +1569,10 @@ function companyStatsSummary(c) {
 
 function companyUsersDetails(c) {
   const users = c.users || [];
-  const statUsers = new Map((c.stats?.users || []).map(item => [String(item.user_id), item]));
   if (!users.length) return `<div class="small">Sem usuários.</div>`;
-  return `
-    <details>
-      <summary class="small">Ver usuários (${users.length}) e últimas runs</summary>
-      <div class="table-wrap" style="margin-top:8px;">
-        <table>
-          <thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Dados</th><th>Últimas runs</th></tr></thead>
-          <tbody>
-            ${users.map(u => {
-              const st = statUsers.get(String(u.id));
-              return `<tr>
-                <td>${escapeHtml(u.email)}</td>
-                <td>${escapeHtml(roleLabel(u.role))}</td>
-                <td>${Number(u.disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
-                <td>${adminUserStats(st)}${adminDatasetsAccounts(st)}</td>
-                <td>${adminLatestRuns(st)}</td>
-              </tr>`;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
-    </details>`;
+  const sample = users.slice(0, 4).map(user=>`${escapeHtml(user.email)} (${escapeHtml(roleLabel(user.role))})`).join("<br>");
+  const extra = users.length > 4 ? `<br><span class="small">... e mais ${users.length - 4} usuário(s).</span>` : "";
+  return `<div class="small">${sample}${extra}<br><a class="button secondary sm" style="margin-top:8px;" href="master-company.html?id=${encodeURIComponent(c.id)}">Ver usuários e dados</a></div>`;
 }
 
 function applyRoleUI(user) {
@@ -2079,20 +2065,12 @@ async function loadBilling() {
     const settings = data.settings || {};
     const activeUntil = summary.active_until ? formatUnixTs(summary.active_until) : "Sem pagamento lançado";
     $("billingSummary").innerHTML = `
-      <p>Plano: <code>Mensal manual</code></p>
       <p>Status: ${summary.active ? `<span class="pill ok">Ativo</span>` : `<span class="pill bad">Pendente</span>`}</p>
-      <p>Ativo até: <code>${escapeHtml(activeUntil)}</code></p>
-      <p>Total de pagamentos: <b>${Number(summary.payments_count || 0)}</b></p>`;
+      <p>Ativo até: <code>${escapeHtml(activeUntil)}</code></p>`;
     $("billingPix").innerHTML = `
       ${settings.qr_code_url ? `<div style="display:flex;justify-content:center;"><img src="${escapeHtml(settings.qr_code_url)}" alt="QR Code PIX" style="max-width:220px;width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px;"></div>` : `<div class="notice info">QR Code ainda não cadastrado pelo master.</div>`}
-      <div><label>Chave PIX</label><input readonly value="${escapeHtml(settings.pix_key || "")}" placeholder="Chave PIX não cadastrada"></div>
-      <div><label>PIX copia e cola</label><textarea readonly rows="4" placeholder="PIX copia e cola não cadastrado">${escapeHtml(settings.pix_copy_paste || "")}</textarea></div>
-      <div class="small">Mensalidade: ${escapeHtml(settings.monthly_amount || "definida pelo master")}</div>`;
-    const payments = data.payments || [];
-    $("billingPayments").innerHTML = payments.length ? `
-      <div class="table-wrap"><table><thead><tr><th>Mês inicial</th><th>Meses</th><th>Ativo até</th><th>Usuário</th><th>Valor</th><th>Pago em</th><th>Obs.</th></tr></thead>
-      <tbody>${payments.map(p=>`<tr><td>${escapeHtml(p.period_start || "-")}</td><td>${Number(p.months || 1)}</td><td>${formatUnixTs(p.active_until)}</td><td>${escapeHtml(p.user_email || "Empresa")}</td><td>${escapeHtml(moneyFromCents(p.amount_cents))}</td><td>${formatUnixTs(p.paid_at)}</td><td>${escapeHtml(p.note || p.description || "")}</td></tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty-state">Nenhum pagamento lançado ainda.</div>`;
+      <div><label>Chave PIX</label><div class="notice info">${escapeHtml(settings.pix_key || "Chave PIX não cadastrada")}</div></div>
+      <div><label>PIX copia e cola</label><div class="notice info" style="word-break:break-word;">${escapeHtml(settings.pix_copy_paste || "PIX copia e cola não cadastrado")}</div></div>`;
   } catch(err) {
     $("billingSummary").innerHTML = `<div class="notice err">${escapeHtml(err.message)}</div>`;
   }
@@ -2224,18 +2202,20 @@ async function refreshSelectedRunDetail(force=false){
   lastRunDetailFetchAt=now;
   loadingRunDetail=true;
   try{
+    const searchQuery = normalizeText($("selectedRunSearch")?.value || "");
     const run=await apiFetch(
       "/py/api/runs/"+encodeURIComponent(selectedRunId)+
-      "?paginate=true&page="+encodeURIComponent(resultsPage)+
-      "&page_size="+encodeURIComponent(PAGE_SIZE),
+      (searchQuery ? "" : "?paginate=true&page="+encodeURIComponent(resultsPage)+"&page_size="+encodeURIComponent(PAGE_SIZE)),
       { __showLoader: false }
     );
     selectedRunFull={...run};
-    selectedRunPagination = {
-      page: run.pagination?.page || resultsPage,
-      totalPages: run.pagination?.total_pages || 1,
-      total: run.pagination?.total || 0,
-    };
+    selectedRunPagination = searchQuery
+      ? { page: 1, totalPages: 1, total: (run.result_groups || groupResultsByCnpj(run)).length }
+      : {
+          page: run.pagination?.page || resultsPage,
+          totalPages: run.pagination?.total_pages || 1,
+          total: run.pagination?.total || 0,
+        };
     resultsPage = selectedRunPagination.page;
     if(!userIsSelectingText()){
       renderRunDetail(selectedRunFull);
@@ -2260,8 +2240,15 @@ function resetRunSelectionUi(){
 
 function renderRuns(){
   const box=$("runsList");
-  if(!runs.length){ box.innerHTML=`<div class="empty-state">Nenhuma run encontrada.</div>`; updatePager("runs",1,1); return }
-  const paged = paginateArray(runs, runsPage);
+  const query = normalizeText($("runsSearch")?.value || "");
+  const filteredRuns = query
+    ? runs.filter(run => normalizeText([
+        run.run_id, run.dataset_alias, run.mes, run.status, notasModeLabel(run),
+        FLOW_ORDER.map(flow=>run.flow_counts?.[flow] ? `${FLOW_LABELS[flow]} ${run.flow_counts[flow]}` : "").join(" ")
+      ].join(" ")).includes(query))
+    : runs;
+  if(!filteredRuns.length){ box.innerHTML=`<div class="empty-state">${runs.length?"Nenhuma run encontrada na busca.":"Nenhuma run encontrada."}</div>`; updatePager("runs",1,1); return }
+  const paged = paginateArray(filteredRuns, runsPage);
   runsPage = paged.page;
   updatePager("runs", paged.page, paged.totalPages);
   box.innerHTML="";
@@ -2383,7 +2370,18 @@ function updatePager(prefix, page, totalPages){
 }
 
 function renderGroupedResults(run){
-  const groups=run.result_groups || groupResultsByCnpj(run);
+  const query = normalizeText($("selectedRunSearch")?.value || "");
+  const groups=(run.result_groups || groupResultsByCnpj(run)).filter(group => {
+    if(!query) return true;
+    const text = normalizeText([
+      group.cnpj, group.nome_empresa, group.account_alias,
+      ...FLOW_ORDER.map(flow => {
+        const result = group.flows?.[flow] || {};
+        return [flow, FLOW_LABELS[flow], result.status, result.erro, result.aviso, result.erro_code, result.aviso_code].join(" ");
+      })
+    ].join(" "));
+    return text.includes(query);
+  });
   if(!groups.length){
     $("resultsBody").innerHTML=`<tr><td colspan="5" class="small" style="padding:12px 10px;">Nenhum resultado.</td></tr>`;
     updatePager("results", 1, 1);
@@ -2479,14 +2477,28 @@ async function renderRunFlowRows(force=false){
   }
   ensureDatasetFlowSelection(datasetId);
   $("runFlowRows").innerHTML=`<tr><td colspan="6" class="small" style="padding:12px 10px;">Carregando página...</td></tr>`;
+  const query = normalizeText($("runFlowSearch")?.value || "");
   let payload;
+  let pageItems = [];
   try{
-    payload = await loadRunFlowPage(datasetId, flowPage);
+    if(query){
+      const allItems = await loadRunFlowAllItems(datasetId);
+      const filtered = allItems.filter(item => normalizeText([
+        item.cnpj,
+        item.cnpj_digits,
+        item.codigo_dominio,
+        item.nome_empresa,
+      ].join(" ")).includes(query));
+      const paged = paginateArray(filtered, flowPage);
+      payload = { dataset: { items: paged.items }, pagination: { page: paged.page, total_pages: paged.totalPages, total: filtered.length } };
+    } else {
+      payload = await loadRunFlowPage(datasetId, flowPage);
+    }
   }catch(err){
     $("runFlowRows").innerHTML=`<tr><td colspan="6" class="small" style="padding:12px 10px;">${escapeHtml(err.message)}</td></tr>`;
     return;
   }
-  const pageItems = payload.dataset?.items || [];
+  pageItems = payload.dataset?.items || [];
   runFlowPagination = {
     page: payload.pagination?.page || flowPage,
     totalPages: payload.pagination?.total_pages || 1,
@@ -2495,7 +2507,7 @@ async function renderRunFlowRows(force=false){
   flowPage = runFlowPagination.page;
   updatePager("flow", flowPage, runFlowPagination.totalPages);
   if(!pageItems.length){
-    $("runFlowRows").innerHTML=`<tr><td colspan="6" class="small" style="padding:12px 10px;">Nenhum item nesta página.</td></tr>`;
+    $("runFlowRows").innerHTML=`<tr><td colspan="6" class="small" style="padding:12px 10px;">${query?"Nenhum item encontrado na busca.":"Nenhum item nesta página."}</td></tr>`;
     return;
   }
   $("runFlowRows").innerHTML="";
@@ -3008,7 +3020,7 @@ async function downloadProtectedRunReport(runId) {
   try {
     const safeRunId = encodeURIComponent(runId);
     const url = API_BASE + "/py/api/runs/" + safeRunId + "/report";
-    await downloadBlob(url, decodeURIComponent(safeRunId) + "_relatorio.pdf");
+    await downloadBlob(url, decodeURIComponent(safeRunId) + "_relatorio.html");
     toast("Relatório da run baixado.", "ok");
   } catch (err) {
     console.error(err);
@@ -3050,9 +3062,13 @@ async function downloadProtectedFile(runId, path, options = {}) {
 function renderDatasets(){
   const box=$("datasetsList");
   const activeIds=getActiveRunDatasetIds();
-  if(!datasets.length){ box.innerHTML=`<div class="empty-state">Nenhum conjunto salvo.</div>`; return }
+  const query = normalizeText($("datasetsSearch")?.value || "");
+  const filteredDatasets = query
+    ? datasets.filter(ds => normalizeText([ds.alias, ds.id, ds.count].join(" ")).includes(query))
+    : datasets;
+  if(!filteredDatasets.length){ box.innerHTML=`<div class="empty-state">${datasets.length?"Nenhum conjunto encontrado na busca.":"Nenhum conjunto salvo."}</div>`; return }
   box.innerHTML="";
-  datasets.forEach(ds=>{
+  filteredDatasets.forEach(ds=>{
     const inUse=activeIds.includes(ds.id);
     const div=document.createElement("div");
     div.className="item"+(ds.id===selectedDatasetId?" active":"");
@@ -3209,8 +3225,8 @@ function downloadXlsxRows(fileName, rows){
 
 $("btnDownloadDatasetTemplate").addEventListener("click",()=>{
   downloadXlsxRows("modelo-conjunto-iss-fortaleza.xlsx", [
-    { CNPJ: "51.214.064/0001-26", "Código Domínio": "1076", Empresa: "EMPRESA EXEMPLO LTDA", Conta: accounts[0]?.alias || "Conta Matriz" },
-    { CNPJ: "01.583.149/0001-03", "Código Domínio": "", Empresa: "EMPRESA SEM CODIGO DOMINIO", Conta: accounts[0]?.alias || "Conta Matriz" },
+    { CNPJ: "12.345.678/0001-90", "Código Domínio": "1001", Empresa: "EMPRESA FICTICIA ALFA LTDA", Conta: "Conta Ficticia ISS" },
+    { CNPJ: "98.765.432/0001-10", "Código Domínio": "", Empresa: "SERVICOS FICTICIOS BETA LTDA", Conta: "Conta Ficticia ISS" },
   ]);
 });
 
@@ -3242,6 +3258,10 @@ $("flowPrev").addEventListener("click",async()=>{ flowPage=Math.max(1, flowPage-
 $("flowNext").addEventListener("click",async()=>{ if(flowPage<runFlowPagination.totalPages) flowPage+=1; await renderRunFlowRows(true); });
 $("runsPrev").addEventListener("click",()=>{ runsPage=Math.max(1, runsPage-1); renderRuns(); });
 $("runsNext").addEventListener("click",()=>{ runsPage+=1; renderRuns(); });
+$("runsSearch")?.addEventListener("input",()=>{ runsPage=1; renderRuns(); });
+$("datasetsSearch")?.addEventListener("input",()=>{ renderDatasets(); });
+$("selectedRunSearch")?.addEventListener("input",async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } });
+$("runFlowSearch")?.addEventListener("input",async()=>{ flowPage=1; await renderRunFlowRows(true); });
 
 $("btnSaveDataset").addEventListener("click",async()=>{
   hideBox($("datasetMsg"));

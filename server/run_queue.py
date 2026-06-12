@@ -450,7 +450,7 @@ async def run_one_item_unlocked(
         write_run_log(
             run_log_file,
             (
-                f"[{'ITEM_STOPPED' if controlled_closed else 'ITEM_ERROR'}] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} conta={account_alias} "
+                f"[{'ITEM_OK_WITH_WARNING' if controlled_closed else 'ITEM_ERROR'}] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} conta={account_alias} "
                 f"code={err.code} retryable={bool(err.retryable)} msg={msg}"
             ),
         )
@@ -463,10 +463,13 @@ async def run_one_item_unlocked(
             "account_alias": account_alias,
             "flow_mode": flow_mode,
             "flow_label": flow_label,
-            "status": "interrompida" if controlled_closed else "erro",
-            "erro": msg,
-            "erro_code": err.code,
-            "erro_action": err.action,
+            "status": "ok" if controlled_closed else "erro",
+            "erro": "" if controlled_closed else msg,
+            "erro_code": "" if controlled_closed else err.code,
+            "erro_action": "" if controlled_closed else err.action,
+            "aviso": msg if controlled_closed else "",
+            "aviso_code": err.code if controlled_closed else "",
+            "aviso_action": err.action if controlled_closed else "",
             "retryable": False if controlled_closed else bool(err.retryable),
             "finished_at": now_ms(),
             "usar_codigo_dominio": bool(item.get("usar_codigo_dominio", True)),

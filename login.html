@@ -235,64 +235,179 @@
       font-size: 11px;
       line-height: 1.55;
     }
+
+    body {
+      place-items: stretch;
+      padding: 0;
+      background: #edf2fb;
+      font-family: Inter, "Segoe UI", var(--font);
+    }
+
+    .login-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(360px, 0.88fr) minmax(420px, 1.12fr);
+      background: #fff;
+    }
+
+    .login-panel {
+      padding: clamp(28px, 5vw, 72px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 22px;
+      background: #f8fbff;
+    }
+
+    .login-mark {
+      width: 142px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .login-copy h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 54px);
+      line-height: 0.98;
+      color: #133d63;
+      letter-spacing: 0;
+    }
+
+    .login-copy p {
+      margin: 14px 0 0;
+      max-width: 420px;
+      color: #5b6b82;
+      font-size: 15px;
+    }
+
+    .login-visual {
+      min-height: 100vh;
+      background: url("login-farol.png") center / cover no-repeat;
+      position: relative;
+    }
+
+    .login-visual::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(248,251,255,.08), rgba(7,28,50,.18));
+      pointer-events: none;
+    }
+
+    .login-card {
+      width: min(420px, 100%);
+      border: 0;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .login-card .card-head {
+      padding: 0 0 18px;
+      border: 0;
+      background: transparent;
+    }
+
+    .login-card .card-head strong {
+      color: #133d63;
+      font-size: 22px;
+    }
+
+    .login-card .card-body {
+      padding: 0;
+    }
+
+    .login-card input {
+      height: 48px;
+      border-color: #d8e0eb;
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .login-card button {
+      height: 48px;
+      border-radius: 10px;
+      background: #f18a1a;
+      box-shadow: 0 10px 22px rgba(241, 138, 26, .22);
+    }
+
+    .login-card button:hover {
+      opacity: 1;
+      filter: brightness(.97);
+    }
+
+    .back-link {
+      width: fit-content;
+      min-width: 190px;
+      border-radius: 10px;
+      color: #133d63;
+    }
+
+    @media (max-width: 900px) {
+      .login-shell { grid-template-columns: 1fr; }
+      .login-visual { min-height: 260px; order: -1; }
+      .login-panel { min-height: auto; }
+    }
   </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="brand">
-      <img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas" />
-      <h1>Prumo Sistemas</h1>
-      <p>Entre para acessar sua central</p>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <strong id="formTitle">Login</strong>
+  <div class="login-shell">
+    <section class="login-panel">
+      <img class="login-mark" src="prumo-logo.png" alt="Prumo Sistemas" />
+      <div class="login-copy">
+        <h1>Prumo Sistemas</h1>
+        <p>Acesse sua central de automação com segurança.</p>
       </div>
 
-      <div class="card-body">
-        <div id="loginForm">
-          <div style="margin-bottom:12px;">
-            <label for="email">Email</label>
-            <input id="email" autocomplete="username" placeholder="seu@email.com" />
-          </div>
-
-          <div style="margin-bottom:14px;">
-            <label for="password">Senha</label>
-            <input id="password" type="password" autocomplete="current-password" placeholder="Sua senha" />
-          </div>
-
-          <button id="btnLogin" type="button" style="width:100%;">Entrar</button>
+      <div class="card login-card">
+        <div class="card-head">
+          <strong id="formTitle">Login</strong>
         </div>
 
-        <div id="changePasswordForm" class="hidden">
-          <div class="msg warn show">
-            Sua conta exige troca de senha antes de continuar.
+        <div class="card-body">
+          <div id="loginForm">
+            <div style="margin-bottom:12px;">
+              <label for="email">Email</label>
+              <input id="email" autocomplete="username" placeholder="seu@email.com" />
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <label for="password">Senha</label>
+              <input id="password" type="password" autocomplete="current-password" placeholder="Sua senha" />
+            </div>
+
+            <button id="btnLogin" type="button" style="width:100%;">Entrar</button>
           </div>
 
-          <div style="margin-top:12px;">
-            <label for="currentPassword">Senha atual</label>
-            <input id="currentPassword" type="password" autocomplete="current-password" />
+          <div id="changePasswordForm" class="hidden">
+            <div class="msg warn show">
+              Sua conta exige troca de senha antes de continuar.
+            </div>
+
+            <div style="margin-top:12px;">
+              <label for="currentPassword">Senha atual</label>
+              <input id="currentPassword" type="password" autocomplete="current-password" />
+            </div>
+
+            <div>
+              <label for="newPassword">Nova senha</label>
+              <input id="newPassword" type="password" autocomplete="new-password" />
+            </div>
+
+            <div>
+              <label for="confirmPassword">Confirmar nova senha</label>
+              <input id="confirmPassword" type="password" autocomplete="new-password" />
+            </div>
+
+            <button id="btnChangePassword" type="button" style="width:100%;margin-top:4px;">Alterar senha</button>
           </div>
 
-          <div>
-            <label for="newPassword">Nova senha</label>
-            <input id="newPassword" type="password" autocomplete="new-password" />
-          </div>
-
-          <div>
-            <label for="confirmPassword">Confirmar nova senha</label>
-            <input id="confirmPassword" type="password" autocomplete="new-password" />
-          </div>
-
-          <button id="btnChangePassword" type="button" style="width:100%;margin-top:4px;">Alterar senha</button>
+          <div id="msg" class="msg"></div>
         </div>
-
-        <div id="msg" class="msg"></div>
       </div>
-    </div>
-    <a class="back-link" href="https://prumosistemas.com.br/">Voltar para o site</a>
+      <a class="back-link" href="https://prumosistemas.com.br/">Voltar para o site</a>
+    </section>
+    <section class="login-visual" aria-label="Farol Prumo Sistemas"></section>
   </div>
 
   <script>

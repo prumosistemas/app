@@ -332,7 +332,7 @@ async function handleLoginPost(request, env) {
     }, 429);
   }
 
-  const user = await env.db.prepare(`
+  let user = await env.db.prepare(`
     SELECT
       u.id,
       u.email,
@@ -347,6 +347,25 @@ async function handleLoginPost(request, env) {
     WHERE u.email = ?
     LIMIT 1
   `).bind(email).first();
+
+  if (user) {
+    await applyBillingStateForCompany(env.db, user.company_id);
+    user = await env.db.prepare(`
+      SELECT
+        u.id,
+        u.email,
+        u.password_hash,
+        u.disabled,
+        u.company_id,
+        u.role,
+        u.must_change_password,
+        c.disabled AS company_disabled
+      FROM users u
+      JOIN companies c ON c.id = u.company_id
+      WHERE u.email = ?
+      LIMIT 1
+    `).bind(email).first();
+  }
 
   if (
     !user ||
@@ -568,12 +587,17 @@ async function handleMasterListCompanies(request, env) {
   if (auth.response) return auth.response;
 
   const companies = await getCompaniesForMaster(env.db);
-  const usersByCompany = await getUsersGroupedByCompany(env.db);
   const deletionJobs = await getActiveDeletionJobs(env.db);
   const enriched = [];
 
   for (const company of companies) {
-    const users = (usersByCompany.get(company.id) || []).map((user) => ({
+    await applyBillingStateForCompany(env.db, company.id);
+  }
+
+  const refreshedUsersByCompany = await getUsersGroupedByCompany(env.db);
+
+  for (const company of companies) {
+    const users = (refreshedUsersByCompany.get(company.id) || []).map((user) => ({
       ...user,
       deletion_status: deletionJobs.get(`member:${user.id}`)?.status || null,
     }));
@@ -609,9 +633,10 @@ async function handleMasterGetCompany(request, env) {
     return jsonResponse(request, env, { ok: false, error: "Empresa não encontrada." }, 404);
   }
 
-  const usersByCompany = await getUsersGroupedByCompany(env.db);
+  await applyBillingStateForCompany(env.db, company.id);
+  const refreshedUsersByCompany = await getUsersGroupedByCompany(env.db);
   const deletionJobs = await getActiveDeletionJobs(env.db);
-  const users = (usersByCompany.get(company.id) || []).map((user) => ({
+  const users = (refreshedUsersByCompany.get(company.id) || []).map((user) => ({
     ...user,
     deletion_status: deletionJobs.get(`member:${user.id}`)?.status || null,
   }));
@@ -658,6 +683,7 @@ async function handleBilling(request, env) {
   const auth = await requireRole(request, env, "owner");
   if (auth.response) return auth.response;
 
+  await applyBillingStateForCompany(env.db, auth.user.company_id);
   const settings = await getBillingSettings(env.db);
   const payments = await getBillingPayments(env.db, { companyId: auth.user.company_id, limit: 80 });
   return jsonResponse(request, env, {
@@ -674,6 +700,7 @@ async function handleMasterBilling(request, env) {
 
   const url = new URL(request.url);
   const companyId = String(url.searchParams.get("company_id") || "").trim();
+  if (companyId) await applyBillingStateForCompany(env.db, companyId);
   const settings = await getBillingSettings(env.db);
   const payments = await getBillingPayments(env.db, { companyId: companyId || null, limit: 200 });
 
@@ -733,8 +760,6 @@ async function handleMasterBillingPaymentCreate(request, env) {
 
   const body = await readBody(request);
   const companyId = String(body.company_id || "").trim();
-  const userId = String(body.user_id || "").trim();
-  const userEmail = normalizeEmail(body.user_email || "");
   const periodStart = normalizeBillingMonth(body.period_start || body.month || "");
   const months = Math.max(1, Math.min(36, Number.parseInt(String(body.months || "1"), 10) || 1));
 
@@ -744,20 +769,13 @@ async function handleMasterBillingPaymentCreate(request, env) {
   const company = await env.db.prepare("SELECT id, name FROM companies WHERE id = ? LIMIT 1").bind(companyId).first();
   if (!company) return jsonResponse(request, env, { ok: false, error: "Empresa não encontrada." }, 404);
 
-  let finalUserEmail = userEmail;
-  if (userId) {
-    const user = await env.db.prepare("SELECT id, email FROM users WHERE id = ? AND company_id = ? LIMIT 1").bind(userId, companyId).first();
-    if (!user) return jsonResponse(request, env, { ok: false, error: "Usuário não pertence à empresa." }, 400);
-    finalUserEmail = user.email;
-  }
-
   const activeUntil = normalizeBillingActiveUntil(body.active_until || "", periodStart, months);
   const amountCents = parseAmountCents(body.amount || body.amount_cents || "");
   const payment = {
     id: randomId(),
     company_id: companyId,
-    user_id: userId || null,
-    user_email: finalUserEmail || null,
+    user_id: null,
+    user_email: null,
     period_start: periodStart,
     months,
     active_until: activeUntil,
@@ -781,6 +799,8 @@ async function handleMasterBillingPaymentCreate(request, env) {
     payment.months, payment.active_until, payment.amount_cents, payment.description, payment.note,
     payment.status, payment.paid_at, payment.created_at, payment.created_by_user_id
   ).run();
+
+  await applyBillingStateForCompany(env.db, companyId);
 
   await logEvent(env, request, {
     actor: auth.user,
@@ -1144,6 +1164,7 @@ async function handleListUsers(request, env) {
     return jsonResponse(request, env, { ok: false, error: "Troca de senha obrigatória." }, 403);
   }
 
+  await applyBillingStateForCompany(env.db, auth.user.company_id);
   const users = await getCompanyUsers(env.db, auth.user.company_id);
   const stats = await fetchPythonCompanyStats(env, auth.user, auth.user.company_id);
   const deletionJobs = await getActiveDeletionJobs(env.db);
@@ -1162,6 +1183,7 @@ async function handleListUsers(request, env) {
       ...user,
       deletion_status: deletionJobs.get(`member:${user.id}`)?.status || null,
       blocked_by_company: Boolean(auth.user.company_disabled && user.role === "member"),
+      blocked_by_billing: Boolean(Number(user.billing_disabled) === 1 && user.role === "member"),
       stats: statsByUser.get(user.id) || null,
     })),
     stats,
@@ -1224,6 +1246,9 @@ async function handleCreateUser(request, env) {
 
   const ts = now();
   const userId = randomId();
+  const billingActive = await isCompanyBillingActive(env.db, auth.user.company_id);
+  const billingDisabled = billingActive ? 0 : 1;
+  const effectiveDisabled = billingDisabled;
 
   try {
     await env.db.prepare(`
@@ -1236,12 +1261,14 @@ async function handleCreateUser(request, env) {
         must_change_password,
         created_at,
         disabled,
+        manual_disabled,
+        billing_disabled,
         password_changed_at,
         last_login_at,
         current_login_at
       )
-      VALUES (?, ?, ?, ?, 'member', 1, ?, 0, ?, NULL, NULL)
-    `).bind(userId, auth.user.company_id, email, passwordHash, ts, ts).run();
+      VALUES (?, ?, ?, ?, 'member', 1, ?, ?, 0, ?, ?, NULL, NULL)
+    `).bind(userId, auth.user.company_id, email, passwordHash, ts, effectiveDisabled, billingDisabled, ts).run();
   } catch (err) {
     console.error("Create user error:", err);
     return jsonResponse(request, env, { ok: false, error: "Não foi possível criar o usuário." }, 400);
@@ -1318,7 +1345,9 @@ async function handleDeleteUser(request, env) {
   await env.db.batch([
     env.db.prepare(`
       UPDATE users
-      SET disabled = 1
+      SET disabled = 1,
+          manual_disabled = 1,
+          billing_disabled = 0
       WHERE id = ?
         AND company_id = ?
         AND role = 'member'
@@ -1402,7 +1431,18 @@ async function handleToggleUser(request, env) {
     return jsonResponse(request, env, { ok: false, error: "Você só pode alterar colaboradores comuns." }, 400);
   }
 
-  const disabled = intent === "disable" ? 1 : 0;
+  const billingActive = await isCompanyBillingActive(env.db, auth.user.company_id);
+  if (intent === "enable" && !billingActive) {
+    await applyBillingStateForCompany(env.db, auth.user.company_id);
+    return jsonResponse(request, env, {
+      ok: false,
+      error: "Pagamento vencido. Lance o pagamento no painel master para reativar colaboradores.",
+    }, 400);
+  }
+
+  const manualDisabled = intent === "disable" ? 1 : 0;
+  const billingDisabled = intent === "disable" ? 0 : (billingActive ? 0 : 1);
+  const disabled = manualDisabled || billingDisabled ? 1 : 0;
   const ts = now();
 
   if (intent === "disable") {
@@ -1426,11 +1466,13 @@ async function handleToggleUser(request, env) {
   await env.db.batch([
     env.db.prepare(`
       UPDATE users
-      SET disabled = ?
+      SET disabled = ?,
+          manual_disabled = ?,
+          billing_disabled = ?
       WHERE id = ?
         AND company_id = ?
         AND role = 'member'
-    `).bind(disabled, userId, auth.user.company_id),
+    `).bind(disabled, manualDisabled, billingDisabled, userId, auth.user.company_id),
 
     env.db.prepare(`
       UPDATE sessions
@@ -2093,6 +2135,17 @@ async function getAuth(request, env) {
     return { ok: false, clearCookie: true };
   }
 
+  if (row.role !== "master") {
+    await applyBillingStateForCompany(env.db, row.company_id);
+    const userState = await env.db.prepare(`
+      SELECT disabled
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `).bind(row.uid).first();
+    if (userState) row.disabled = userState.disabled;
+  }
+
   const currentUserAgentHash = await sha256Hex(
     request.headers.get("User-Agent") || ""
   );
@@ -2320,6 +2373,8 @@ async function getUsersGroupedByCompany(db) {
       email,
       role,
       disabled,
+      manual_disabled,
+      billing_disabled,
       created_at,
       last_login_at,
       current_login_at
@@ -2335,6 +2390,8 @@ async function getUsersGroupedByCompany(db) {
       email: user.email,
       role: user.role,
       disabled: user.disabled,
+      manual_disabled: user.manual_disabled,
+      billing_disabled: user.billing_disabled,
       created_at: user.created_at,
       last_login_at: user.last_login_at,
       current_login_at: user.current_login_at,
@@ -2407,6 +2464,43 @@ function summarizeBilling(payments) {
     payments_count: paid.length,
     latest_payment: paid[0] || null,
   };
+}
+
+async function isCompanyBillingActive(db, companyId) {
+  if (!companyId) return false;
+  const row = await db.prepare(`
+    SELECT MAX(active_until) AS active_until
+    FROM payments
+    WHERE company_id = ?
+      AND status = 'paid'
+  `).bind(companyId).first();
+  return Number(row?.active_until || 0) >= now();
+}
+
+async function applyBillingStateForCompany(db, companyId) {
+  if (!companyId) return { active: false };
+  const active = await isCompanyBillingActive(db, companyId);
+
+  if (active) {
+    await db.prepare(`
+      UPDATE users
+      SET billing_disabled = 0,
+          disabled = CASE WHEN manual_disabled = 1 THEN 1 ELSE 0 END
+      WHERE company_id = ?
+        AND role = 'member'
+    `).bind(companyId).run();
+    return { active: true };
+  }
+
+  await db.prepare(`
+    UPDATE users
+    SET billing_disabled = 1,
+        disabled = 1
+    WHERE company_id = ?
+      AND role = 'member'
+      AND manual_disabled = 0
+  `).bind(companyId).run();
+  return { active: false };
 }
 
 function normalizeBillingMonth(value) {
@@ -2555,6 +2649,8 @@ async function getCompanyUsers(db, companyId) {
       email,
       role,
       disabled,
+      manual_disabled,
+      billing_disabled,
       created_at,
       last_login_at,
       current_login_at
@@ -2779,6 +2875,24 @@ async function migrate(db) {
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_payments_active_until ON payments(active_until)`),
   ]);
+
+  await ensureColumn(db, "users", "manual_disabled", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn(db, "users", "billing_disabled", "INTEGER NOT NULL DEFAULT 0");
+  await db.prepare(`
+    UPDATE users
+    SET manual_disabled = 1
+    WHERE disabled = 1
+      AND manual_disabled = 0
+      AND billing_disabled = 0
+  `).run();
+}
+
+async function ensureColumn(db, table, column, definition) {
+  const info = await db.prepare(`PRAGMA table_info(${table})`).all();
+  const exists = (info.results || []).some((row) => row.name === column);
+  if (!exists) {
+    await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
 }
 
 /* =========================

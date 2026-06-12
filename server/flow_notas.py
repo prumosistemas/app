@@ -361,12 +361,11 @@ def _build_notas_company_dirs(
 
     cnpj_norm = _norm_cnpj(cnpj)
     nome_limpo = sanitize_folder_name(empresa)
-    pasta_base = os.path.join(run_dir, f"{cnpj_norm} - {nome_limpo}")
+    pasta = f"{cnpj_norm} - {nome_limpo}"
+    pasta_base = run_dir
+    pasta_prestadas = os.path.join(run_dir, "prestadas", pasta)
+    pasta_tomadas = os.path.join(run_dir, "tomadas", pasta)
 
-    pasta_prestadas = os.path.join(pasta_base, "prestadas")
-    pasta_tomadas = os.path.join(pasta_base, "tomadas")
-
-    ensure_dir(pasta_base)
     ensure_dir(pasta_prestadas)
     ensure_dir(pasta_tomadas)
 

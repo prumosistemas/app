@@ -1799,11 +1799,17 @@ def create_root_zip(ctx: WorkerContext, root_id: str) -> str:
     if os.path.exists(zip_path):
         os.remove(zip_path)
 
-    entries = collect_unified_zip_entries(ctx, root_id)
-    if not entries:
-        raise HTTPException(status_code=404, detail="Nenhum arquivo de execução bem-sucedida encontrado nesta run.")
-
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        entries = collect_unified_zip_entries(ctx, root_id)
+        if not entries:
+            zf.writestr(
+                "SEM_ARQUIVOS_GERADOS.txt",
+                (
+                    "Esta run foi concluída, mas não gerou arquivos baixáveis.\n"
+                    "Isso pode acontecer quando o fluxo não encontrou notas, DAMs ou certidões para baixar.\n"
+                    "Consulte o relatório da run e os logs para ver o resultado de cada empresa.\n"
+                ),
+            )
         for rel, full_path in sorted(entries.items(), key=lambda x: x[0].lower()):
             zf.write(full_path, rel)
 

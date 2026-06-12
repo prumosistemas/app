@@ -134,14 +134,12 @@
             <div><label>Chave PIX</label><input name="pix_key" placeholder="email, telefone, CPF/CNPJ ou chave aleatória"></div>
             <div><label>PIX copia e cola</label><input name="pix_copy_paste" placeholder="Código copia e cola completo"></div>
             <div><label>URL do QR Code</label><input name="qr_code_url" placeholder="https://... ou data:image/png;base64,..."></div>
-            <div><label>Mensalidade exibida</label><input name="monthly_amount" placeholder="Ex.: R$ 99,00 / mês"></div>
             <button type="submit">Salvar PIX</button>
           </form>
         </div></div>
         <div class="card"><div class="card-head"><h3>Lançar pagamento</h3></div><div class="card-body stack">
           <form id="billingPaymentForm" class="stack">
             <div><label>Empresa</label><select name="company_id" id="billingCompanySelect" required></select></div>
-            <div><label>Usuário específico (opcional)</label><select name="user_id" id="billingUserSelect"><option value="">Empresa inteira</option></select></div>
             <div class="form-row" style="grid-template-columns:1fr 1fr 1fr;">
               <div><label>Mês inicial</label><input name="period_start" type="month" required></div>
               <div><label>Meses pagos</label><input name="months" type="number" min="1" max="36" value="1" required></div>
@@ -254,9 +252,10 @@ function companyStatsSummary(company){
 }
 function companyUsersDetails(company){
   const users=company.users || [];
-  const statUsers=new Map((company.stats?.users || []).map(item=>[String(item.user_id),item]));
   if(!users.length) return `<div class="small">Sem usuários.</div>`;
-  return `<details><summary class="small">Ver usuários (${users.length}) e atividade</summary><div class="table-wrap user-details"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Dados</th><th>Últimas runs</th></tr></thead><tbody>${users.map(user=>{ const stats=statUsers.get(String(user.id)); return `<tr><td>${esc(user.email)}</td><td>${esc(roleLabel(user.role))}</td><td>${Number(user.disabled)===1?`<span class="pill bad">Desativado</span>`:`<span class="pill ok">Ativo</span>`}</td><td>${adminUserStats(stats)}${adminDatasetsAccounts(stats)}</td><td>${adminLatestRuns(stats)}</td></tr>`; }).join("")}</tbody></table></div></details>`;
+  const sample = users.slice(0, 4).map(user=>`${esc(user.email)} (${esc(roleLabel(user.role))})`).join("<br>");
+  const extra = users.length > 4 ? `<br><span class="small">... e mais ${users.length - 4} usuário(s).</span>` : "";
+  return `<div class="small">${sample}${extra}<br><a class="button-link" style="margin-top:8px;" href="master-company.html?id=${encodeURIComponent(company.id)}">Ver usuários e dados</a></div>`;
 }
 async function loadCompanies(){
   try{
@@ -273,13 +272,6 @@ async function loadCompanies(){
 function refreshBillingCompanySelect(){
   if(!$("billingCompanySelect")) return;
   $("billingCompanySelect").innerHTML = `<option value="">Selecione</option>` + companiesCache.map(c=>`<option value="${esc(c.id)}">${esc(c.name)} — ${esc(c.owner_email || "")}</option>`).join("");
-  refreshBillingUserSelect();
-}
-function refreshBillingUserSelect(){
-  if(!$("billingUserSelect")) return;
-  const company = companiesCache.find(c=>String(c.id)===String($("billingCompanySelect").value));
-  const users = company?.users || [];
-  $("billingUserSelect").innerHTML = `<option value="">Empresa inteira</option>` + users.map(u=>`<option value="${esc(u.id)}">${esc(u.email)} (${esc(roleLabel(u.role))})</option>`).join("");
 }
 function money(cents){ const value=Number(cents||0)/100; return value?value.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}):"-"; }
 async function loadBilling(){
@@ -292,7 +284,6 @@ async function loadBilling(){
     form.pix_key.value=settings.pix_key||"";
     form.pix_copy_paste.value=settings.pix_copy_paste||"";
     form.qr_code_url.value=settings.qr_code_url||"";
-    form.monthly_amount.value=settings.monthly_amount||"";
   }
   const rows=data.payments || [];
   $("billingTable").innerHTML=rows.length?`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Usuário</th><th>Mês</th><th>Meses</th><th>Ativo até</th><th>Valor</th><th>Pago em</th><th>Obs.</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${esc(p.company_name||p.company_id||"-")}</td><td>${esc(p.user_email||"Empresa inteira")}</td><td>${esc(p.period_start||"-")}</td><td>${Number(p.months||1)}</td><td>${esc(ts(p.active_until))}</td><td>${esc(money(p.amount_cents))}</td><td>${esc(ts(p.paid_at))}</td><td>${esc(p.note||p.description||"")}</td></tr>`).join("")}</tbody></table></div>`:`<span class="small">Nenhum pagamento lançado.</span>`;
@@ -367,7 +358,7 @@ async function resetOwner(id,email){ if(!confirm("Resetar a senha de "+email+"?"
 document.querySelectorAll("[data-section]").forEach(btn=>btn.onclick=()=>switchSection(btn.dataset.section));
 $("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLogs;
 $("metricsRange").onchange=loadMetrics;
-$("billingCompanySelect")?.addEventListener("change",()=>{ refreshBillingUserSelect(); loadBilling().catch(err=>message("err",err.message)); });
+$("billingCompanySelect")?.addEventListener("change",()=>{ loadBilling().catch(err=>message("err",err.message)); });
 $("btnReloadBilling")?.addEventListener("click",()=>loadBilling().catch(err=>message("err",err.message)));
 $("billingSettingsForm")?.addEventListener("submit",async event=>{
   event.preventDefault();

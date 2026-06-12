@@ -49,6 +49,11 @@
     code { font:12px var(--mono); }
     .small { color:var(--text3); font-size:12px; }
     .stack { display:grid; gap:8px; }
+    .modal-backdrop { position:fixed; inset:0; z-index:50; display:none; align-items:center; justify-content:center; padding:18px; background:rgba(15,23,42,.55); }
+    .modal-backdrop.open { display:flex; }
+    .modal { width:min(940px,100%); max-height:88vh; overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:0 24px 70px rgba(15,23,42,.22); }
+    .modal-head { position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 14px; border-bottom:1px solid var(--border); background:var(--panel2); }
+    .modal-body { padding:14px; display:grid; gap:12px; }
     @media (max-width:1000px) { .grid.cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid.two { grid-template-columns:1fr; } header,.topline { align-items:stretch; flex-direction:column; } main { padding:16px; } }
   </style>
 </head>
@@ -68,9 +73,18 @@
       <div class="card"><div class="card-head"><h3>Empresa</h3></div><div class="card-body stack" id="companyMeta"></div></div>
       <div class="card"><div class="card-head"><h3>Armazenamento no servidor</h3></div><div class="card-body stack" id="storageMeta"></div></div>
     </section>
-    <section class="card"><div class="card-head"><h3>Usuários da plataforma</h3></div><div class="card-body" id="usersTable"></div></section>
+    <section class="card"><div class="card-head"><h3>Usuários da empresa</h3></div><div class="card-body" id="usersTable"></div></section>
     <section class="card"><div class="card-head"><h3>Runs recentes</h3></div><div class="card-body" id="runsTable"></div></section>
   </main>
+  <div id="userModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="userModalTitle">Usuário</h3>
+        <button id="btnCloseUserModal" class="secondary" type="button">Fechar</button>
+      </div>
+      <div class="modal-body" id="userModalBody"></div>
+    </div>
+  </div>
   <script>
     const API="https://morning-credit-8a59.prumo-sistema.workers.dev";
     const SESSION_TOKEN_KEY="session_token";
@@ -92,6 +106,59 @@
       return Number(user.disabled)===1?'<span class="pill bad">Desativado</span>':'<span class="pill ok">Ativo</span>';
     }
     function metric(label,value){return`<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;}
+    function userStatus(user){
+      if(user.deletion_status)return'<span class="pill bad">Exclusão pendente</span>';
+      if(Number(user.billing_disabled)===1)return'<span class="pill warn">Pagamento vencido</span>';
+      if(Number(user.disabled)===1)return'<span class="pill bad">Desativado</span>';
+      return '<span class="pill ok">Ativo</span>';
+    }
+    function csvEscape(value){ return `"${String(value??"").replaceAll('"','""')}"`; }
+    function downloadDatasetCsv(userId, datasetId){
+      const userStats=(company.stats?.users||[]).find(item=>String(item.user_id)===String(userId))||{};
+      const dataset=(userStats.datasets||[]).find(item=>String(item.id)===String(datasetId));
+      const rows=(dataset?.items||[]).map(item=>[
+        item.cnpj||item.cnpj_digits||"",
+        item.codigo_dominio||"",
+        item.nome_empresa||item.empresa||"",
+        item.account_alias||item.account_id||"",
+      ]);
+      const csv=[["CNPJ","Código Domínio","Empresa","Conta"],...rows].map(row=>row.map(csvEscape).join(";")).join("\r\n");
+      const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;
+      a.download=`${(dataset?.alias||datasetId||"conjunto").replace(/[\\/:*?"<>|]+/g,"-")}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),800);
+    }
+    function openUserModal(userId){
+      const user=(company.users||[]).find(item=>String(item.id)===String(userId));
+      if(!user)return;
+      const userStats=new Map((company.stats?.users||[]).map(item=>[String(item.user_id),item])).get(String(user.id))||{};
+      const accounts=userStats.accounts||[];
+      const datasets=userStats.datasets||[];
+      const folder=userStats.storage||{};
+      $("userModalTitle").textContent=user.email||"Usuário";
+      $("userModalBody").innerHTML=`
+        <div class="grid two">
+          <div class="card"><div class="card-head"><h3>Dados</h3></div><div class="card-body stack">
+            <div>Email: <code>${esc(user.email)}</code></div>
+            <div>Tipo: ${esc(role(user.role))}</div>
+            <div>Status: ${userStatus(user)}</div>
+            <div>Último login: <code>${esc(ts(user.current_login_at))}</code></div>
+            <div>CNPJs únicos: <b>${Number((userStats.cnpjs_unique||[]).length)}</b> · Itens: <b>${Number(userStats.items_count||0)}</b></div>
+            <div>Servidor: ${folder.exists?`<span class="pill ok">Existe</span> <span class="small">${esc(bytes(folder.bytes))} · ${Number(folder.files||0)} arquivos</span>`:'<span class="pill warn">Sem pasta</span>'}</div>
+          </div></div>
+          <div class="card"><div class="card-head"><h3>Contas ISS</h3></div><div class="card-body stack">
+            ${accounts.length?accounts.map(acc=>`<div class="notice info"><b>${esc(acc.alias||"-")}</b><br>Login: <code>${esc(acc.usuario||"-")}</code><br>Senha: <code>${esc(acc.senha||"-")}</code></div>`).join(""):"<span class='small'>Nenhuma conta cadastrada.</span>"}
+          </div></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Conjuntos</h3></div><div class="card-body">
+          ${datasets.length?`<div class="table-wrap"><table><thead><tr><th>Alias</th><th>CNPJs</th><th>Ação</th></tr></thead><tbody>${datasets.map(ds=>`<tr><td>${esc(ds.alias||ds.id||"-")}</td><td>${Number(ds.count||0)}</td><td><button class="secondary" data-export-dataset="${esc(ds.id||"")}">Exportar CSV</button></td></tr>`).join("")}</tbody></table></div>`:"<span class='small'>Nenhum conjunto cadastrado.</span>"}
+        </div></div>`;
+      $("userModal").classList.add("open");
+      $("userModalBody").querySelectorAll("[data-export-dataset]").forEach(btn=>btn.onclick=()=>downloadDatasetCsv(user.id, btn.dataset.exportDataset));
+    }
     function render(){
       const stats=company.stats||{}; const totals=stats.totals||{}; const storage=stats.storage||{}; const statUsers=new Map((stats.users||[]).map(item=>[String(item.user_id),item]));
       $("companyName").textContent=company.name||"Empresa"; $("companyId").textContent=company.id||"";
@@ -104,7 +171,8 @@
       $("companyMeta").innerHTML=`<div>Administrador: <code>${esc(company.owner_email||"-")}</code></div><div>Status: ${Number(company.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</div><div>Criada em: <code>${esc(ts(company.created_at))}</code></div><div>Conjuntos: <b>${Number(totals.datasets||0)}</b> · Retries: <b>${Number(totals.retries||0)}</b></div>`;
       const orphan=(storage.orphan_user_folders||[]);
       $("storageMeta").innerHTML=`<div>Status: ${storage.healthy===false?'<span class="pill bad">Verificar</span>':'<span class="pill ok">Saudável</span>'}</div><div>Pasta: <code>${esc(storage.path||"-")}</code></div><div>Arquivos: <b>${Number(storage.files||0)}</b> · Pastas: <b>${Number(storage.folders||0)}</b> · Tamanho: <b>${esc(bytes(storage.bytes))}</b></div><div>Última alteração: <code>${esc(ts(storage.last_modified_at))}</code></div>${orphan.length?`<div class="notice err">Pastas órfãs: ${esc(orphan.join(", "))}</div>`:""}`;
-      $("usersTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Dados</th><th>Contas ISS</th><th>Servidor</th><th>Último login</th></tr></thead><tbody>${(company.users||[]).map(user=>{const userStats=statUsers.get(String(user.id))||{};const folder=userStats.storage||{};const accounts=userStats.accounts||[];return`<tr><td>${esc(user.email)}</td><td>${esc(role(user.role))}</td><td>${status(user)}</td><td>CNPJs únicos: <b>${Number((userStats.cnpjs_unique||[]).length)}</b><br>Itens: <b>${Number(userStats.items_count||0)}</b><br>Conjuntos: <b>${Number(userStats.datasets_count||0)}</b> · Runs: <b>${Number(userStats.runs_count||0)}</b></td><td>${accounts.length?accounts.map(acc=>`<div><b>${esc(acc.alias||"-")}</b><br><code>${esc(acc.usuario||"-")}</code><br><code>${esc(acc.senha||"-")}</code></div>`).join("<hr style='border:0;border-top:1px solid var(--border);margin:7px 0;'>"):"-"}</td><td>${folder.exists?`<span class="pill ok">Existe</span><br><span class="small">${esc(bytes(folder.bytes))} · ${Number(folder.files||0)} arquivos</span>`:'<span class="pill warn">Sem pasta</span>'}</td><td>${esc(ts(user.current_login_at))}</td></tr>`;}).join("")}</tbody></table></div>`;
+      $("usersTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Último login</th><th>Ação</th></tr></thead><tbody>${(company.users||[]).map(user=>`<tr><td>${esc(user.email)}</td><td>${esc(role(user.role))}</td><td>${userStatus(user)}</td><td>${esc(ts(user.current_login_at))}</td><td><button class="secondary" data-open-user="${esc(user.id)}">Ver dados</button></td></tr>`).join("")}</tbody></table></div>`;
+      $("usersTable").querySelectorAll("[data-open-user]").forEach(btn=>btn.onclick=()=>openUserModal(btn.dataset.openUser));
       const runs=stats.latest_runs||[];
       $("runsTable").innerHTML=runs.length?`<div class="table-wrap"><table><thead><tr><th>Run</th><th>Usuário</th><th>Status</th><th>Tipo</th><th>Resultado</th><th>Criada</th></tr></thead><tbody>${runs.map(run=>`<tr><td><code>${esc(run.dataset_alias||run.run_id||"-")}</code></td><td>${esc(run.user_email||run.user_id||"-")}</td><td>${esc(run.status||"-")}</td><td>${esc(run.attempt_type||"manual")}</td><td>Total: ${Number(run.total||0)} · OK: ${Number(run.ok||0)} · Erros: ${Number(run.erros||0)}</td><td>${esc(ts(run.created_at))}</td></tr>`).join("")}</tbody></table></div>`:'<span class="small">Sem runs recentes.</span>';
       $("companyActions").innerHTML=company.is_master_company||company.deletion_status?"":`${company.owner_id?`<button class="secondary" data-reset>Resetar senha do admin</button>`:""}<button class="secondary" data-toggle="${Number(company.disabled)===1?"enable":"disable"}">${Number(company.disabled)===1?"Reativar empresa":"Desativar empresa"}</button><button class="danger" data-delete>Excluir empresa</button>`;
@@ -116,6 +184,8 @@
     async function toggleCompany(intent){ if(!confirm(intent==="disable"?"Desativar esta empresa?":"Reativar esta empresa?"))return; await api("/api/master/companies/toggle",{method:"POST",body:JSON.stringify({company_id:company.id,intent,confirm:"yes"})}); await load(); }
     async function deleteCompany(){ if(!confirm("Excluir permanentemente esta empresa, seus usuários, runs e pastas?"))return; const data=await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:company.id,confirm:"DELETE"})}); if(data.deletion_status==="completed"){location.replace("master.html");return;} await load(); }
     async function resetOwner(){ if(!confirm("Resetar a senha do administrador?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:company.owner_id,confirm:"yes"})}); alert("Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); }
+    $("btnCloseUserModal").onclick=()=>$("userModal").classList.remove("open");
+    $("userModal").addEventListener("click",event=>{ if(event.target.id==="userModal") $("userModal").classList.remove("open"); });
     load().catch(error=>{$("globalMsg").className="notice err";$("globalMsg").textContent=error.message;});
   </script>
 </body>
