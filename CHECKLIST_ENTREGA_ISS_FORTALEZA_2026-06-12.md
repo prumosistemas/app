@@ -32,9 +32,16 @@ Data: 2026-06-12
   - `admin.html`
   - `master.html`
   - `master-company.html`
+- Deploy do Worker `morning-credit-8a59` realizado com Wrangler.
+- Deploy da API realizado no servidor via Docker Compose com `PRUMO_API_IMAGE=ryang20/prumo-api:1.0.10`.
+- Smoke externo de `https://api.prumosistemas.com.br/` retornou `version=1.0.10`.
+- `https://app.prumosistemas.com.br/iss-fortaleza.html` ja esta servindo a logo nova e os botoes novos.
+- Commits publicados no GitHub em `prumosistemas/app`.
 
 ## Observacoes
 
 - A cobranca continua manual por design: o master marca o pagamento e define excecoes sem alterar codigo.
 - A logo usada veio da pagina oficial da SEFIN/Prefeitura de Fortaleza.
 - As pastas sem Codigo Dominio preservam o padrao seguro `cnpj - empresa`.
+- A troca do repositorio GitHub para privado foi tentada, mas a credencial local recebeu `HTTP 404`/`insufficient permission` para alterar visibilidade. O push foi feito; a privacidade precisa de uma credencial com permissao administrativa no repositorio.
+- O push da imagem Docker para Docker Hub foi tentado, mas o servidor recebeu `insufficient_scope`. A producao esta rodando a imagem local construida no servidor.
