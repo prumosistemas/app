@@ -861,7 +861,6 @@
             <button id="btnOpenCreateRun" type="button">+ Nova run</button>
           </div>
           <div class="card-body">
-            <input id="runsSearch" placeholder="Buscar run, conjunto, mês ou status..." />
             <div id="runsList" class="list runs-list-scroll">
               <div class="empty-state">Carregando runs...</div>
             </div>
@@ -881,7 +880,7 @@
               <button id="btnDeleteRun"    type="button" class="danger sm hidden">Deletar</button>
               <button id="btnDuplicateRun" type="button" class="secondary sm hidden">Duplicar</button>
               <button id="btnRetryRun"     type="button" class="secondary sm hidden">↩ Retry</button>
-              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório HTML</a>
+              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório</a>
               <a id="btnZipRun" class="button sm hidden" target="_blank" rel="noopener">⬇ ZIP</a>
             </div>
           </div>
@@ -891,7 +890,19 @@
             <div class="progress"><div id="runProgress"></div></div>
             <div>
               <label>Resultados por CNPJ</label>
-              <input id="selectedRunSearch" placeholder="Buscar CNPJ, empresa, conta ou status..." style="margin-bottom:10px;" />
+              <div class="row" style="margin-bottom:10px;align-items:end;">
+                <div style="flex:1;min-width:220px;">
+                  <label>Buscar</label>
+                  <input id="selectedRunSearch" placeholder="CNPJ, empresa, conta ou status..." />
+                </div>
+                <div style="width:190px;">
+                  <label>Status</label>
+                  <select id="selectedRunStatusFilter">
+                    <option value="all">Todos</option>
+                    <option value="not_ok">Não OK</option>
+                  </select>
+                </div>
+              </div>
               <div class="table-wrap">
                 <table>
                   <thead>
@@ -2203,13 +2214,15 @@ async function refreshSelectedRunDetail(force=false){
   loadingRunDetail=true;
   try{
     const searchQuery = normalizeText($("selectedRunSearch")?.value || "");
+    const statusFilter = $("selectedRunStatusFilter")?.value || "all";
+    const needsFullResults = !!searchQuery || statusFilter !== "all";
     const run=await apiFetch(
       "/py/api/runs/"+encodeURIComponent(selectedRunId)+
-      (searchQuery ? "" : "?paginate=true&page="+encodeURIComponent(resultsPage)+"&page_size="+encodeURIComponent(PAGE_SIZE)),
+      (needsFullResults ? "" : "?paginate=true&page="+encodeURIComponent(resultsPage)+"&page_size="+encodeURIComponent(PAGE_SIZE)),
       { __showLoader: false }
     );
     selectedRunFull={...run};
-    selectedRunPagination = searchQuery
+    selectedRunPagination = needsFullResults
       ? { page: 1, totalPages: 1, total: (run.result_groups || groupResultsByCnpj(run)).length }
       : {
           page: run.pagination?.page || resultsPage,
@@ -2240,15 +2253,8 @@ function resetRunSelectionUi(){
 
 function renderRuns(){
   const box=$("runsList");
-  const query = normalizeText($("runsSearch")?.value || "");
-  const filteredRuns = query
-    ? runs.filter(run => normalizeText([
-        run.run_id, run.dataset_alias, run.mes, run.status, notasModeLabel(run),
-        FLOW_ORDER.map(flow=>run.flow_counts?.[flow] ? `${FLOW_LABELS[flow]} ${run.flow_counts[flow]}` : "").join(" ")
-      ].join(" ")).includes(query))
-    : runs;
-  if(!filteredRuns.length){ box.innerHTML=`<div class="empty-state">${runs.length?"Nenhuma run encontrada na busca.":"Nenhuma run encontrada."}</div>`; updatePager("runs",1,1); return }
-  const paged = paginateArray(filteredRuns, runsPage);
+  if(!runs.length){ box.innerHTML=`<div class="empty-state">Nenhuma run encontrada.</div>`; updatePager("runs",1,1); return }
+  const paged = paginateArray(runs, runsPage);
   runsPage = paged.page;
   updatePager("runs", paged.page, paged.totalPages);
   box.innerHTML="";
@@ -2371,7 +2377,13 @@ function updatePager(prefix, page, totalPages){
 
 function renderGroupedResults(run){
   const query = normalizeText($("selectedRunSearch")?.value || "");
+  const statusFilter = $("selectedRunStatusFilter")?.value || "all";
   const groups=(run.result_groups || groupResultsByCnpj(run)).filter(group => {
+    const hasNotOk = FLOW_ORDER.some(flow => {
+      const status = String(group.flows?.[flow]?.status || "");
+      return status && status !== "ok";
+    });
+    if(statusFilter === "not_ok" && !hasNotOk) return false;
     if(!query) return true;
     const text = normalizeText([
       group.cnpj, group.nome_empresa, group.account_alias,
@@ -3258,9 +3270,9 @@ $("flowPrev").addEventListener("click",async()=>{ flowPage=Math.max(1, flowPage-
 $("flowNext").addEventListener("click",async()=>{ if(flowPage<runFlowPagination.totalPages) flowPage+=1; await renderRunFlowRows(true); });
 $("runsPrev").addEventListener("click",()=>{ runsPage=Math.max(1, runsPage-1); renderRuns(); });
 $("runsNext").addEventListener("click",()=>{ runsPage+=1; renderRuns(); });
-$("runsSearch")?.addEventListener("input",()=>{ runsPage=1; renderRuns(); });
 $("datasetsSearch")?.addEventListener("input",()=>{ renderDatasets(); });
 $("selectedRunSearch")?.addEventListener("input",async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } });
+$("selectedRunStatusFilter")?.addEventListener("change",async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } });
 $("runFlowSearch")?.addEventListener("input",async()=>{ flowPage=1; await renderRunFlowRows(true); });
 
 $("btnSaveDataset").addEventListener("click",async()=>{
