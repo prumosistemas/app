@@ -33,8 +33,48 @@ DB_FILE = os.path.join(DATA_ROOT, "iss_automacao.db")
 MAX_DATASETS = int(os.getenv("MAX_DATASETS", "0"))
 MAX_RUNS_PER_MEMBER = int(os.getenv("MAX_RUNS_PER_MEMBER", "8"))
 RUN_RETENTION_DAYS = int(os.getenv("RUN_RETENTION_DAYS", "30"))
-MAX_BROWSERS = int(os.getenv("MAX_BROWSERS", "15"))
+
+
+def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(min_value, value)
+
+
+def _browser_pool_capacity_from_env(default: int = 15) -> int:
+    pool = os.getenv("BROWSER_CDP_POOL", "").strip()
+    if not pool:
+        return default
+
+    total = 0
+    for raw_entry in pool.split(";;"):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+
+        parts = [part.strip() for part in entry.split("|", 2)]
+        if len(parts) == 3:
+            _, capacity_raw, _ = parts
+        elif len(parts) == 2:
+            capacity_raw, _ = parts
+        else:
+            capacity_raw = "1"
+
+        try:
+            total += max(1, int(capacity_raw))
+        except Exception:
+            total += 1
+
+    return total or default
+
+
+BASE_BROWSER_SLOTS = _env_int("BASE_BROWSER_SLOTS", 15, min_value=1)
+MAX_BROWSERS = int(os.getenv("MAX_BROWSERS", str(_browser_pool_capacity_from_env(BASE_BROWSER_SLOTS))))
 MAX_BROWSERS = max(1, min(MAX_BROWSERS, 30))
+BROWSER_TURBO_EXTRA = max(0, MAX_BROWSERS - BASE_BROWSER_SLOTS)
+BROWSER_POOL_CONFIGURED = bool(os.getenv("BROWSER_CDP_POOL", "").strip())
 
 HEADLESS = os.getenv("ISS_HEADLESS", "true").lower() in {"1", "true", "yes", "sim"}
 

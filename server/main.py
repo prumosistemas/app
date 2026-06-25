@@ -6,7 +6,6 @@ API local para executar fluxos ISS conectada ao Cloudflare Worker.
 """
 
 import asyncio
-import html
 import json
 import os
 import shutil
@@ -33,6 +32,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from db import (
     ACTIVE_STATUSES,
     ALLOW_DIRECT_LOCAL,
+    BASE_BROWSER_SLOTS,
+    BROWSER_POOL_CONFIGURED,
+    BROWSER_TURBO_EXTRA,
     DATA_ROOT,
     DB_FILE,
     FLOW_ORDER,
@@ -75,7 +77,6 @@ from domain import (
     load_accounts_public,
     load_accounts_raw,
     load_datasets,
-    list_run_files,
     local_run_key,
     logs_by_attempt_for_root,
     logs_by_attempt_for_root_filtered,
@@ -119,7 +120,7 @@ from run_queue import (
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.11",
+    version="1.0.12",
     description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
 )
 
@@ -181,217 +182,6 @@ def _safe_json_loads(value: str, default: Any) -> Any:
         return json.loads(value)
     except Exception:
         return default
-
-
-def _pdf_escape(text: str) -> str:
-    return str(text or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def _pdf_line_text(value: Any) -> str:
-    text = str(value or "").replace("\r", " ").replace("\n", " ")
-    text = " ".join(text.split())
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-
-def _build_simple_pdf(lines: List[str]) -> bytes:
-    page_lines = [lines[i : i + 42] for i in range(0, len(lines), 42)] or [["Relatório vazio."]]
-    objects: List[bytes] = []
-    page_ids: List[int] = []
-
-    def add_object(payload: bytes) -> int:
-        objects.append(payload)
-        return len(objects)
-
-    catalog_id = add_object(b"<< /Type /Catalog /Pages 2 0 R >>")
-    pages_id = add_object(b"")
-    font_id = add_object(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-
-    for page in page_lines:
-        y = 800
-        chunks = ["BT", "/F1 10 Tf"]
-        for line in page:
-            chunks.append(f"1 0 0 1 50 {y} Tm ({_pdf_escape(_pdf_line_text(line))}) Tj")
-            y -= 17
-        chunks.append("ET")
-        stream = "\n".join(chunks).encode("latin-1", "replace")
-        content_id = add_object(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
-        page_id = add_object(
-            f"<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>".encode("ascii")
-        )
-        page_ids.append(page_id)
-
-    objects[pages_id - 1] = f"<< /Type /Pages /Kids [{' '.join(f'{pid} 0 R' for pid in page_ids)}] /Count {len(page_ids)} >>".encode("ascii")
-
-    out = bytearray(b"%PDF-1.4\n")
-    offsets = [0]
-    for idx, payload in enumerate(objects, start=1):
-        offsets.append(len(out))
-        out.extend(f"{idx} 0 obj\n".encode("ascii"))
-        out.extend(payload)
-        out.extend(b"\nendobj\n")
-    xref_at = len(out)
-    out.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-    out.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        out.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-    out.extend(
-        f"trailer\n<< /Size {len(objects) + 1} /Root {catalog_id} 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode("ascii")
-    )
-    return bytes(out)
-
-
-def create_run_report_html(ctx: WorkerContext, root_id: str) -> str:
-    root = next((run for run in runs_for_member(ctx) if root_id_of(run) == root_id), None)
-    if not root:
-        raise HTTPException(status_code=404, detail="Run não encontrada.")
-
-    attempts = [run for run in runs_for_member(ctx) if root_id_of(run) == root_id]
-    attempts.sort(key=lambda item: int(item.get("attempt_number") or 1))
-    latest = attempts[-1] if attempts else root
-    aggregate = aggregate_results_for_root(ctx, root_id)
-    results = aggregate if isinstance(aggregate, list) else latest.get("results", [])
-
-    files = []
-    for attempt in attempts:
-        if attempt.get("run_dir"):
-            files.extend(list_run_files(attempt.get("run_dir", ""), attempt.get("run_id", "")))
-
-    def esc(value: Any) -> str:
-        return html.escape(str(value if value is not None else "-"))
-
-    def ts(value: Any) -> str:
-        try:
-            n = int(value or 0)
-            if n <= 0:
-                return "-"
-            if n > 10_000_000_000:
-                n = n // 1000
-            return time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(n))
-        except Exception:
-            return esc(value or "-")
-
-    def status_badge(status: Any) -> str:
-        text = str(status or "-")
-        cls = {
-            "ok": "ok",
-            "finished": "ok",
-            "erro": "bad",
-            "failed": "bad",
-            "interrompida": "warn",
-            "cancelled": "warn",
-            "running": "info",
-            "queued": "info",
-        }.get(text, "muted")
-        return f'<span class="badge {cls}">{esc(text)}</span>'
-
-    result_rows = []
-    for result in results:
-        notice = result.get("aviso") or ""
-        err = result.get("erro") or ""
-        message = notice or err or ""
-        code = result.get("aviso_code") or result.get("erro_code") or ""
-        result_rows.append(
-            "<tr>"
-            f"<td><code>{esc(result.get('cnpj') or result.get('cnpj_digits') or '-')}</code></td>"
-            f"<td>{esc(result.get('empresa') or result.get('nome_empresa') or '-')}</td>"
-            f"<td>{esc(result.get('flow_label') or result.get('flow_mode') or '-')}</td>"
-            f"<td>{status_badge(result.get('status'))}</td>"
-            f"<td>{esc(code)}</td>"
-            f"<td>{esc(message)}</td>"
-            "</tr>"
-        )
-
-    file_rows = [
-        f"<li><code>{esc(file.get('relative_path') or file.get('path') or '-')}</code></li>"
-        for file in files[:120]
-    ]
-    if len(files) > 120:
-        file_rows.append(f"<li>... e mais {len(files) - 120} arquivo(s).</li>")
-    if not file_rows:
-        file_rows.append("<li>Nenhum arquivo baixável foi gerado nesta run.</li>")
-
-    summary_cards = [
-        ("Conjunto", root.get("dataset_alias") or latest.get("dataset_alias") or "-"),
-        ("Competência", root.get("mes") or latest.get("mes") or "-"),
-        ("Status", latest.get("status") or "-"),
-        ("Total", latest.get("total", 0)),
-        ("OK", latest.get("ok", 0)),
-        ("Erros", latest.get("erros", 0)),
-        ("Interrompidas", latest.get("interrompidas", 0)),
-        ("Tentativas", len(attempts)),
-    ]
-
-    body = f"""<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Relatório {esc(root_id)}</title>
-  <style>
-    :root {{ --bg:#f4f6fb; --panel:#fff; --line:#e3e7f0; --text:#172033; --muted:#667085; --ok:#15803d; --bad:#b91c1c; --warn:#a16207; --info:#2563eb; }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; background:var(--bg); color:var(--text); font:14px/1.55 Inter, "Segoe UI", Arial, sans-serif; }}
-    main {{ max-width:1180px; margin:0 auto; padding:34px 22px 48px; }}
-    header {{ display:flex; justify-content:space-between; gap:18px; align-items:flex-start; margin-bottom:22px; }}
-    h1 {{ margin:0; font-size:28px; letter-spacing:0; }}
-    h2 {{ margin:0 0 12px; font-size:16px; }}
-    .muted {{ color:var(--muted); }}
-    .grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:18px 0; }}
-    .card,.section {{ background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 28px rgba(17,24,39,.06); }}
-    .card {{ padding:14px; }}
-    .card span {{ display:block; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }}
-    .card b {{ display:block; margin-top:5px; font-size:19px; }}
-    .section {{ padding:18px; margin-top:14px; overflow:hidden; }}
-    table {{ width:100%; border-collapse:collapse; min-width:820px; }}
-    th,td {{ padding:10px 9px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left; }}
-    th {{ color:var(--muted); background:#f8fafc; font-size:11px; text-transform:uppercase; }}
-    code {{ font:12px ui-monospace, SFMono-Regular, Consolas, monospace; }}
-    ul {{ margin:0; padding-left:18px; }}
-    li {{ margin:5px 0; }}
-    .table-wrap {{ overflow:auto; border:1px solid var(--line); border-radius:8px; }}
-    .badge {{ display:inline-flex; border-radius:999px; padding:2px 9px; font-size:12px; font-weight:700; background:#eef2ff; color:#334155; }}
-    .badge.ok {{ background:#ecfdf3; color:var(--ok); }}
-    .badge.bad {{ background:#fef2f2; color:var(--bad); }}
-    .badge.warn {{ background:#fffbeb; color:var(--warn); }}
-    .badge.info {{ background:#eff6ff; color:var(--info); }}
-    @media (max-width:800px) {{ header {{ flex-direction:column; }} .grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>Relatório de execução</h1>
-        <div class="muted">ISS Fortaleza · run <code>{esc(root_id)}</code></div>
-      </div>
-      <div class="muted">Gerado em {esc(ts(int(time.time())))}</div>
-    </header>
-    <section class="grid">
-      {''.join(f'<div class="card"><span>{esc(label)}</span><b>{esc(value)}</b></div>' for label, value in summary_cards)}
-    </section>
-    <section class="section">
-      <h2>Resultados por empresa e fluxo</h2>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>CNPJ</th><th>Empresa</th><th>Fluxo</th><th>Status</th><th>Código</th><th>Mensagem</th></tr></thead>
-          <tbody>{''.join(result_rows) or '<tr><td colspan="6">Nenhum resultado registrado.</td></tr>'}</tbody>
-        </table>
-      </div>
-    </section>
-    <section class="section">
-      <h2>Arquivos gerados</h2>
-      <ul>{''.join(file_rows)}</ul>
-    </section>
-  </main>
-</body>
-</html>"""
-
-    reports_dir = safe_path_inside(member_runs_root(ctx), os.path.join(member_runs_root(ctx), "_reports"))
-    os.makedirs(reports_dir, exist_ok=True)
-    report_path = safe_path_inside(reports_dir, os.path.join(reports_dir, f"{root_id}.html"))
-    with open(report_path, "w", encoding="utf-8") as fh:
-        fh.write(body)
-    return report_path
 
 
 def _compact_admin_run(run: Dict[str, Any]) -> Dict[str, Any]:
@@ -678,10 +468,13 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "ISS Automação API",
-        "version": "1.0.11",
+        "version": "1.0.12",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
+        "base_browsers": BASE_BROWSER_SLOTS,
+        "browser_turbo_extra": BROWSER_TURBO_EXTRA,
+        "browser_pool_configured": BROWSER_POOL_CONFIGURED,
         "queue": "global_fair_round_robin_by_member",
         "storage_scope": "member",
     }
@@ -1706,25 +1499,6 @@ async def download_run_zip(
 
     zip_path = await asyncio.to_thread(create_root_zip, ctx, root_id)
     return FileResponse(zip_path, filename=f"{root_id}.zip", media_type="application/zip")
-
-
-@app.get("/api/runs/{run_id}/report")
-async def download_run_report(
-    run_id: str,
-    ctx: WorkerContext = Depends(get_worker_context),
-):
-    run = next((r for r in runs_for_member(ctx) if r.get("run_id") == run_id or root_id_of(r) == run_id), None)
-
-    if not run:
-        raise HTTPException(status_code=404, detail="Run não encontrada.")
-
-    root_id = root_id_of(run)
-    if root_has_active_attempt(ctx, root_id):
-        raise HTTPException(status_code=409, detail="Não é possível baixar o relatório enquanto a run está em execução ou na fila.")
-
-    report_path = await asyncio.to_thread(create_run_report_html, ctx, root_id)
-    return FileResponse(report_path, filename=f"{root_id}_relatorio.html", media_type="text/html; charset=utf-8")
-
 
 @app.get("/api/runs/{run_id}/file")
 async def download_run_file(

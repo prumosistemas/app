@@ -21,6 +21,9 @@ from flow_core import somente_digitos
 from db import (
     ACTIVE_STATUSES,
     ALLOW_DIRECT_LOCAL,
+    BASE_BROWSER_SLOTS,
+    BROWSER_POOL_CONFIGURED,
+    BROWSER_TURBO_EXTRA,
     DB_FILE,
     FINAL_STATUSES,
     FLOW_EXECUTION_ORDER,
@@ -1901,6 +1904,9 @@ def build_state_sync(ctx: WorkerContext) -> Dict[str, Any]:
         "runs": visible_root_runs(ctx),
         "config": {
             "max_browsers": MAX_BROWSERS,
+            "base_browsers": BASE_BROWSER_SLOTS,
+            "browser_turbo_extra": BROWSER_TURBO_EXTRA,
+            "browser_pool_configured": BROWSER_POOL_CONFIGURED,
             "headless": HEADLESS,
             "max_datasets": None,
             "max_runs_per_member": MAX_RUNS_PER_MEMBER,

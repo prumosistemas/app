@@ -777,6 +777,33 @@
       display: grid;
       gap: 6px;
     }
+    .browser-turbo-box {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      min-width: min(100%, 360px);
+      padding: 9px 12px;
+      border: 1px solid rgba(14, 165, 233, .28);
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f0f9ff 0%, #ecfdf5 100%);
+      color: var(--text);
+      font-size: 12px;
+    }
+    .browser-turbo-box strong { font-size: 14px; }
+    .browser-turbo-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #0f172a;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -851,6 +878,7 @@
   <main>
     <div class="topline">
       <h2 id="pageTitle">Runs</h2>
+      <div id="browserTurboBox" class="browser-turbo-box hidden"></div>
     </div>
 
     <section id="runsSection" class="section active">
@@ -880,7 +908,6 @@
               <button id="btnDeleteRun"    type="button" class="danger sm hidden">Deletar</button>
               <button id="btnDuplicateRun" type="button" class="secondary sm hidden">Duplicar</button>
               <button id="btnRetryRun"     type="button" class="secondary sm hidden">↩ Retry</button>
-              <a id="btnReportRun" class="button secondary sm hidden" target="_blank" rel="noopener">Relatório</a>
               <a id="btnZipRun" class="button sm hidden" target="_blank" rel="noopener">⬇ ZIP</a>
             </div>
           </div>
@@ -1796,18 +1823,13 @@ function updateExecutionLocks(){
 
   $("btnDeleteRun").disabled=selectedActive;
   $("btnZipRun").classList.toggle("disabled",selectedActive);
-  $("btnReportRun").classList.toggle("disabled",selectedActive);
 
   if(selectedActive){
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").title="Não disponível durante execução.";
-    $("btnReportRun").removeAttribute("href");
-    $("btnReportRun").title="Não disponível durante execução.";
   } else if(selectedRunId){
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").title="";
-    $("btnReportRun").removeAttribute("href");
-    $("btnReportRun").title="";
   }
 
   document.querySelectorAll("[data-run-toggle-flow]").forEach(btn=>btn.disabled=activeRun);
@@ -1876,6 +1898,29 @@ async function loadMe(){
   }
 }
 
+function renderBrowserTurbo(state){
+  const box=$("browserTurboBox");
+  if(!box)return;
+  const config=state?.config||{};
+  const total=Number(config.max_browsers||0);
+  const base=Number(config.base_browsers||15);
+  const extra=Number(config.browser_turbo_extra||Math.max(0,total-base));
+  if(!total){
+    box.classList.add("hidden");
+    box.innerHTML="";
+    return;
+  }
+  box.classList.remove("hidden");
+  const chip=extra>0
+    ? `<span class="browser-turbo-chip">+${extra} turbo</span>`
+    : `<span class="browser-turbo-chip">base</span>`;
+  box.innerHTML=`<div><strong>${total}</strong> navegadores disponíveis</div>${chip}`;
+  if(extra<=0 && !renderBrowserTurbo.warnedBase){
+    renderBrowserTurbo.warnedBase=true;
+    console.warn("Turbo Modal indisponível ou sem orçamento; operando com a capacidade base de navegadores.", { total, base });
+  }
+}
+
 async function loadStateOnce(){
   if(!isIssRole()) return;
   const state = await apiFetch("/py/api/state", { __showLoader: false });
@@ -1884,6 +1929,7 @@ async function loadStateOnce(){
   accounts = state.accounts || [];
   datasets = state.datasets || [];
   runs = state.runs || [];
+  renderBrowserTurbo(state);
 
   if(!userIsSelectingText()){
     renderAccounts();
@@ -2244,11 +2290,9 @@ function resetRunSelectionUi(){
   $("runProgress").style.width="0%";
   $("runHeader").innerHTML=`<div class="notice warn">← Selecione uma run na lista acima.</div>`;
   $("resultsBody").innerHTML=`<tr><td colspan="5" class="small" style="padding:12px 10px;">Nenhum resultado.</td></tr>`;
-  ["btnStopRun","btnDeleteRun","btnDuplicateRun","btnRetryRun","btnZipRun","btnReportRun"].forEach(id=>$(id).classList.add("hidden"));
+  ["btnStopRun","btnDeleteRun","btnDuplicateRun","btnRetryRun","btnZipRun"].forEach(id=>$(id).classList.add("hidden"));
   $("btnZipRun").classList.remove("disabled");
   $("btnZipRun").removeAttribute("href");
-  $("btnReportRun").classList.remove("disabled");
-  $("btnReportRun").removeAttribute("href");
 }
 
 function renderRuns(){
@@ -2325,21 +2369,14 @@ function renderRunDetail(run){
   } else { $("btnRetryRun").classList.add("hidden") }
   $("btnRetryRun").disabled=activeRun;
   $("btnZipRun").classList.remove("hidden");
-  $("btnReportRun").classList.remove("hidden");
   if(selectedActive){
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").classList.add("disabled");
     $("btnZipRun").title="Não disponível durante execução.";
-    $("btnReportRun").removeAttribute("href");
-    $("btnReportRun").classList.add("disabled");
-    $("btnReportRun").title="Não disponível durante execução.";
   } else {
     $("btnZipRun").removeAttribute("href");
     $("btnZipRun").classList.remove("disabled");
     $("btnZipRun").title="";
-    $("btnReportRun").removeAttribute("href");
-    $("btnReportRun").classList.remove("disabled");
-    $("btnReportRun").title="";
   }
   renderGroupedResults(run);
   updateExecutionLocks();
@@ -2666,14 +2703,6 @@ $("btnZipRun").addEventListener("click",async event=>{
   if(isActiveStatus(selected?.status)){ toast("Não é possível baixar o ZIP durante execução.", "warn"); return; }
   if(!selectedRunId)return;
   await downloadProtectedRunZip(selectedRunId);
-});
-
-$("btnReportRun").addEventListener("click",async event=>{
-  event.preventDefault();
-  const selected=selectedRunFull||runs.find(r=>r.run_id===selectedRunId);
-  if(isActiveStatus(selected?.status)){ toast("Não é possível baixar o relatório durante execução.", "warn"); return; }
-  if(!selectedRunId)return;
-  await downloadProtectedRunReport(selectedRunId);
 });
 
 $("btnStopRun").addEventListener("click",async()=>{
@@ -3025,18 +3054,6 @@ async function downloadProtectedRunZip(runId) {
   } catch (err) {
     console.error(err);
     toast(err.message || "Erro ao baixar ZIP da run.", "err");
-  }
-}
-
-async function downloadProtectedRunReport(runId) {
-  try {
-    const safeRunId = encodeURIComponent(runId);
-    const url = API_BASE + "/py/api/runs/" + safeRunId + "/report";
-    await downloadBlob(url, decodeURIComponent(safeRunId) + "_relatorio.html");
-    toast("Relatório da run baixado.", "ok");
-  } catch (err) {
-    console.error(err);
-    toast(err.message || "Erro ao baixar relatório da run.", "err");
   }
 }
 

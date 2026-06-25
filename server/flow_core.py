@@ -28,6 +28,9 @@ logger = logging.getLogger("iss")
 
 # Injetado pelo main.py
 BASE_DIR = ""
+_BROWSER_POOL_ENV_KEY: tuple[str, str] | None = None
+_BROWSER_POOL: list[tuple[str, str]] = []
+_BROWSER_POOL_CURSOR = 0
 
 
 @dataclass(frozen=True)
@@ -191,6 +194,58 @@ def rename_cnpj_dir_with_company(run_dir: str, cnpj: str, empresa: str) -> str:
     return destino
 
 
+def _parse_browser_cdp_pool() -> list[tuple[str, str]]:
+    raw_pool = os.getenv("BROWSER_CDP_POOL", "").strip()
+    fallback_url = os.getenv("BROWSER_CDP_URL", "").strip()
+    env_key = (raw_pool, fallback_url)
+
+    global _BROWSER_POOL_ENV_KEY, _BROWSER_POOL
+    if _BROWSER_POOL_ENV_KEY == env_key:
+        return _BROWSER_POOL
+
+    pool: list[tuple[str, str]] = []
+    if raw_pool:
+        for idx, raw_entry in enumerate(raw_pool.split(";;"), start=1):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+
+            parts = [part.strip() for part in entry.split("|", 2)]
+            if len(parts) == 3:
+                label, capacity_raw, url = parts
+            elif len(parts) == 2:
+                label, capacity_raw, url = f"browser-{idx}", parts[0], parts[1]
+            else:
+                label, capacity_raw, url = f"browser-{idx}", "1", parts[0]
+
+            if not url:
+                continue
+
+            try:
+                capacity = max(1, int(capacity_raw))
+            except Exception:
+                capacity = 1
+
+            pool.extend((label or f"browser-{idx}", url) for _ in range(capacity))
+    elif fallback_url:
+        pool.append(("browserless", fallback_url))
+
+    _BROWSER_POOL_ENV_KEY = env_key
+    _BROWSER_POOL = pool
+    return _BROWSER_POOL
+
+
+def _next_browser_cdp_target() -> tuple[str, str]:
+    pool = _parse_browser_cdp_pool()
+    if not pool:
+        raise RuntimeError("BROWSER_CDP_URL ou BROWSER_CDP_POOL nao configurado.")
+
+    global _BROWSER_POOL_CURSOR
+    target = pool[_BROWSER_POOL_CURSOR % len(pool)]
+    _BROWSER_POOL_CURSOR += 1
+    return target
+
+
 async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], Awaitable[None]]]:
     last_err: Optional[BaseException] = None
 
@@ -204,9 +259,15 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
 
         try:
             pw = await async_playwright().start()
-            browser_cdp_url = os.getenv("BROWSER_CDP_URL", "").strip()
-            if not browser_cdp_url:
-                raise RuntimeError("BROWSER_CDP_URL não configurado.")
+            browser_label, browser_cdp_url = _next_browser_cdp_target()
+            logger.info(
+                "[BROWSER_CONNECT] run=%s cnpj=%s target=%s attempt=%s/%s",
+                config.run_id,
+                os.path.basename(config.cnpj_dir or ""),
+                browser_label,
+                attempt,
+                max_attempts,
+            )
 
             browser = await pw.chromium.connect_over_cdp(browser_cdp_url)
 
