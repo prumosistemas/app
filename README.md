@@ -1,6 +1,6 @@
 # Prumo ISS Fortaleza
 
-Versão: **1.0.0 - Produção Inicial**
+Versão: **1.0.13 - Turbo Modal Browserless**
 
 Central operacional da Prumo Sistemas para executar automações de ISS Fortaleza com isolamento por empresa e colaborador.
 
@@ -107,9 +107,26 @@ O Browserless e a API ficam disponíveis apenas no loopback do Ubuntu. Publique 
 
 O Compose configura 15 sessões concorrentes, fila para 30 conexões aguardando e timeout de 10 minutos. Esses limites evitam rejeições `429` prematuras; acompanhe CPU, RAM e fila no painel master antes de ampliar a concorrência. A referência oficial das variáveis está na [documentação Docker do Browserless](https://docs.browserless.io/enterprise/docker/config).
 
-Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|4|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`.
+Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|32|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, a configuração testada é `15 local + 32 Modal = 47 navegadores`, protegida por `MAX_BROWSER_LIMIT`.
 
 O app Modal versionado em `deploy/modal_browserless.py` usa a mesma imagem Browserless digestada do servidor e espera um Secret Modal chamado `prumo-browserless` contendo `TOKEN=<token>`. Publique com `modal deploy deploy/modal_browserless.py`.
+
+#### Turbo Modal Browserless
+
+O limite operacional escolhido agora é +32 navegadores no Modal, com 4 containers e 8 sessões por container. O teste sintético do app `prumo-browserless-loadtest-multi` validou estes pontos sem falhas de CDP:
+
+| Configuração | Paralelo | Resultado | Tempo total | p95 |
+| --- | ---: | --- | ---: | ---: |
+| 1 container | 8 | 8/8 OK | 7.83s | n/d |
+| 1 container | 12 | 12/12 OK | 15.48s | n/d |
+| 1 container | 16 | 16/16 OK | 20.17s | n/d |
+| 2 containers x 8 | 16 | 16/16 OK | 8.43s | 7.91s |
+| 2 containers x 8 | 48 | 48/48 OK | 23.53s | 22.93s |
+| 4 containers x 8 | 48 | 48/48 OK | 13.15s | 12.50s |
+| 4 containers x 8 | 64 | 64/64 OK | 16.25s | 15.81s |
+| 4 containers x 8 | 96 | 96/96 OK | 22.95s | 22.13s |
+
+O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Para rollback imediato, deixe `MAX_BROWSERS=15` e limpe `BROWSER_CDP_POOL`; para reduzir sem remover, troque a capacidade `modal-turbo|32|...` por um número menor.
 
 ### 4. Instalar Monitoramento
 
