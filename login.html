@@ -417,8 +417,16 @@
     let csrf = sessionStorage.getItem("csrf") || "";
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
     const REQUEST_TIMEOUT_MS = 45000;
+    const NETWORK_ERROR_MESSAGE = "Falha de rede ao conectar no Worker. Recarregue a página e tente novamente.";
 
     const $ = id => document.getElementById(id);
+
+    function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+    function isNetworkFetchError(err) {
+      const msg = String(err?.message || err || "").toLowerCase();
+      return err instanceof TypeError || msg.includes("networkerror") || msg.includes("failed to fetch") || msg.includes("load failed");
+    }
 
     function setMsg(type, text) {
       const el = $("msg");
@@ -474,12 +482,21 @@
 
       let res;
       try {
-        res = await fetch(WORKER_URL + path, fetchOptions);
-      } catch (err) {
-        if (err && err.name === "AbortError") {
-          throw new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            res = await fetch(WORKER_URL + path, fetchOptions);
+            break;
+          } catch (err) {
+            if (err && err.name === "AbortError") {
+              throw new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+            }
+            if (attempt < 2 && isNetworkFetchError(err)) {
+              await sleep(650);
+              continue;
+            }
+            throw new Error(isNetworkFetchError(err) ? NETWORK_ERROR_MESSAGE : (err.message || "Falha no login."));
+          }
         }
-        throw err;
       } finally {
         clearTimeout(timeoutId);
       }

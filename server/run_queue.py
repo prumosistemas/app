@@ -283,6 +283,17 @@ async def execute_flow(
     return result
 
 
+def _transient_flow_retries() -> int:
+    try:
+        return max(0, min(int(os.getenv("FLOW_TRANSIENT_RETRIES", "1")), 3))
+    except Exception:
+        return 1
+
+
+def _retry_backoff_seconds(attempt: int) -> float:
+    return min(18.0, 2.0 + (attempt * 3.0))
+
+
 async def run_one_item_unlocked(
     ctx: WorkerContext,
     *,
@@ -337,13 +348,61 @@ async def run_one_item_unlocked(
             f"[ITEM_START] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} conta={account_alias}",
         )
 
-        result = await execute_flow(
-            item=item,
-            mes=mes,
-            run_key=run_key,
-            attempt_run_dir=attempt_run_dir,
-            run_log_file=run_log_file,
-        )
+        flow_retry = 0
+        max_flow_retries = _transient_flow_retries()
+        while True:
+            try:
+                result = await execute_flow(
+                    item=item,
+                    mes=mes,
+                    run_key=run_key,
+                    attempt_run_dir=attempt_run_dir,
+                    run_log_file=run_log_file,
+                )
+                break
+            except Exception as e:
+                if item_stop_requested(run_key, item):
+                    raise
+
+                err = classify_exception(e)
+                if not err.retryable or flow_retry >= max_flow_retries:
+                    raise
+
+                flow_retry += 1
+                delay = _retry_backoff_seconds(flow_retry)
+                logger.warning(
+                    f"[RETRY] scope={scope_id(ctx)} run={run_key} flow={flow_mode} "
+                    f"cnpj={cnpj} conta={account_alias} code={err.code} "
+                    f"attempt={flow_retry}/{max_flow_retries} delay={delay:.1f}s"
+                )
+                write_run_log(
+                    run_log_file,
+                    (
+                        f"[ITEM_RETRY] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} "
+                        f"conta={account_alias} code={err.code} "
+                        f"attempt={flow_retry}/{max_flow_retries} delay={delay:.1f}s"
+                    ),
+                )
+                await upsert_run_result(
+                    ctx,
+                    run_key,
+                    {
+                        "cnpj": cnpj,
+                        "codigo_dominio": item.get("codigo_dominio", ""),
+                        "nome_empresa": nome_empresa,
+                        "account_id": item.get("account_id", ""),
+                        "account_alias": account_alias,
+                        "flow_mode": flow_mode,
+                        "flow_label": flow_label,
+                        "status": "running",
+                        "aviso": f"Retry automático após {err.code}.",
+                        "aviso_code": "AUTO_RETRY",
+                        "retryable": False,
+                        "usar_codigo_dominio": bool(item.get("usar_codigo_dominio", True)),
+                    },
+                    save=True,
+                )
+                await asyncio.sleep(delay)
 
         if item_stop_requested(run_key, item):
             final_result = {

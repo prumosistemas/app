@@ -1,6 +1,6 @@
 # Prumo ISS Fortaleza
 
-Versão: **1.0.18 - Modal Turbo com Proxy no Chrome**
+Versão: **1.0.19 - Modal Turbo +32 com retry transitório**
 
 Central operacional da Prumo Sistemas para executar automações de ISS Fortaleza com isolamento por empresa e colaborador.
 
@@ -107,7 +107,7 @@ O Browserless e a API ficam disponíveis apenas no loopback do Ubuntu. Publique 
 
 O Compose configura 15 sessões concorrentes, fila para 30 conexões aguardando e timeout de 10 minutos. Esses limites evitam rejeições `429` prematuras; acompanhe CPU, RAM e fila no painel master antes de ampliar a concorrência. A referência oficial das variáveis está na [documentação Docker do Browserless](https://docs.browserless.io/enterprise/docker/config).
 
-Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|16|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, o limite validado atual e `15 locais + 16 Modal com proxy = 31 navegadores`, protegido por `MAX_BROWSER_LIMIT`.
+Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|32|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, o limite atual e `15 locais + 32 Modal com proxy = 47 navegadores`, protegido por `MAX_BROWSER_LIMIT`.
 
 Se um alvo externo precisar sair por proxy, configure `BROWSER_PROXY_MAP` com `label|proxy_url`, separado por `;;`. Para `modal-turbo`, prefira o modo embutido: o Browserless Modal sobe `cloudflared access tcp`, expoe a proxy do servidor em `127.0.0.1:31480` dentro do container e injeta `--proxy-server=http://127.0.0.1:31480` no Chrome. Isso evita que o `APIRequestContext` do Playwright tente usar a proxy local do container a partir da API no servidor.
 
@@ -128,7 +128,7 @@ O Modal direto continua bloqueado pelo GEO-IP do portal no login. O modo aprovad
 | 4 containers x 8 | 64 | 64/64 OK | 16.25s | 15.81s |
 | 4 containers x 8 | 96 | 96/96 OK | 22.95s | 22.13s |
 
-O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy. Em seguida, a versao 1.0.18 moveu a proxy para o launch arg do Chrome, porque proxy no contexto Playwright tambem afetava `APIRequestContext`.
+O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy. Em seguida, a versao 1.0.18 moveu a proxy para o launch arg do Chrome, porque proxy no contexto Playwright tambem afetava `APIRequestContext`. A versao 1.0.19 amplia o Modal para 4 containers x 8, adiciona rampa de conexao para `modal-turbo` e retry curto para erros transitórios antes de gravar erro final no item.
 
 ### 4. Instalar Monitoramento
 

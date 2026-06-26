@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ _BROWSER_POOL: list[tuple[str, str]] = []
 _BROWSER_POOL_CURSOR = 0
 _BROWSER_PROXY_ENV_KEY: str | None = None
 _BROWSER_PROXY_MAP: dict[str, dict[str, str]] = {}
+_BROWSER_LABEL_ACTIVE: dict[str, int] = {}
+_BROWSER_LABEL_LOCK = asyncio.Lock()
 
 
 @dataclass(frozen=True)
@@ -249,6 +252,46 @@ def _next_browser_cdp_target() -> tuple[str, str]:
     return target
 
 
+async def _register_browser_label(label: str) -> int:
+    async with _BROWSER_LABEL_LOCK:
+        active = _BROWSER_LABEL_ACTIVE.get(label, 0) + 1
+        _BROWSER_LABEL_ACTIVE[label] = active
+        return active
+
+
+async def _unregister_browser_label(label: str) -> None:
+    async with _BROWSER_LABEL_LOCK:
+        active = max(0, _BROWSER_LABEL_ACTIVE.get(label, 0) - 1)
+        if active:
+            _BROWSER_LABEL_ACTIVE[label] = active
+        else:
+            _BROWSER_LABEL_ACTIVE.pop(label, None)
+
+
+def _browser_stagger_ms(label: str) -> int:
+    env_label = _proxy_env_label(label)
+    raw = os.getenv(f"BROWSER_CONNECT_STAGGER_MS_{env_label}", "").strip()
+    if not raw:
+        raw = os.getenv("BROWSER_CONNECT_STAGGER_MS", "").strip()
+    if not raw and "modal" in (label or "").lower():
+        raw = "250"
+    try:
+        return max(0, min(int(raw or "0"), 5_000))
+    except Exception:
+        return 0
+
+
+async def _stagger_browser_connect(label: str, active_for_label: int) -> None:
+    step_ms = _browser_stagger_ms(label)
+    if step_ms <= 0 or active_for_label <= 1:
+        return
+    max_ms = max(0, min(_env_int("BROWSER_CONNECT_STAGGER_MAX_MS", 6_000), 20_000))
+    delay_ms = min(max_ms, (active_for_label - 1) * step_ms)
+    if delay_ms <= 0:
+        return
+    await asyncio.sleep((delay_ms / 1000.0) + random.uniform(0.05, 0.25))
+
+
 def _proxy_env_label(label: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9]+", "_", label or "").strip("_").upper()
     return normalized or "DEFAULT"
@@ -323,10 +366,15 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
         pw = None
         browser = None
         context = None
+        browser_label = ""
+        label_registered = False
 
         try:
             pw = await async_playwright().start()
             browser_label, browser_cdp_url = _next_browser_cdp_target()
+            active_for_label = await _register_browser_label(browser_label)
+            label_registered = True
+            await _stagger_browser_connect(browser_label, active_for_label)
             logger.info(
                 "[BROWSER_CONNECT] run=%s cnpj=%s target=%s attempt=%s/%s",
                 config.run_id,
@@ -376,6 +424,9 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
                 except Exception:
                     pass
 
+                if browser_label:
+                    await _unregister_browser_label(browser_label)
+
             return context, closer
 
         except Exception as e:
@@ -397,6 +448,8 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
                     await pw.stop()
             except Exception:
                 pass
+            if label_registered and browser_label:
+                await _unregister_browser_label(browser_label)
 
             text = str(e).lower()
             if "429" in text or "too many requests" in text:

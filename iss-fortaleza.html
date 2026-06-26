@@ -1410,10 +1410,15 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     selectedModalFlow="certidao", lastState=null,
     activeRun=false, lastSelectedRunSignature="", runFlowRowsDatasetId="",
     runFlowRowsDirty=false, loadingRunDetail=false, lastRunDetailFetchAt=0,
+    pendingRunDetailRefresh=false, pendingRunDetailForce=false,
+    loadingState=false, pendingStateLoad=false,
     logsTailTimer=null, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
 const SESSION_TOKEN_KEY = "session_token";
 let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 const REQUEST_TIMEOUT_MS = 60000;
+const ACTIVE_POLL_MS = 4500;
+const IDLE_POLL_MS = 12000;
+const NETWORK_ERROR_MESSAGE = "Falha de rede ao conectar no Worker. Recarregue a página e tente novamente.";
 let runsPage=1, resultsPage=1, datasetPage=1, flowPage=1;
 const PAGE_SIZE = 25;
 const flowSelectionByDataset = {};
@@ -1427,6 +1432,27 @@ let currentDatasetRows = [];
 let advancedXlsxWorkbook=null, advancedXlsxRows=[], advancedXlsxHeaders=[];
 
 const $ = id => document.getElementById(id);
+
+function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function isNetworkFetchError(err){
+  const msg = String(err?.message || err || "").toLowerCase();
+  return err instanceof TypeError || msg.includes("networkerror") || msg.includes("failed to fetch") || msg.includes("load failed");
+}
+
+function normalizeFetchError(err){
+  if(err && err.name === "AbortError") return new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+  if(isNetworkFetchError(err)) return new Error(NETWORK_ERROR_MESSAGE);
+  return err;
+}
+
+function debounce(fn, wait=300){
+  let timer=null;
+  return (...args)=>{
+    clearTimeout(timer);
+    timer=setTimeout(()=>fn(...args), wait);
+  };
+}
 
 const TOAST_ICONS  = { ok:'✓', err:'✕', warn:'⚠', info:'ℹ' };
 const TOAST_TITLES = { ok:'Sucesso', err:'Erro', warn:'Aviso', info:'Informação' };
@@ -1704,13 +1730,21 @@ async function apiFetch(path, options={}){
     delete fetchOptions.__timeoutMs;
 
     let res;
+    const maxFetchAttempts = method === "GET" ? 1 : 2;
     try {
-      res = await fetch(base + path, fetchOptions);
-    } catch (err) {
-      if (err && err.name === "AbortError") {
-        throw new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+      for(let attempt=1; attempt<=maxFetchAttempts; attempt++){
+        try{
+          res = await fetch(base + path, fetchOptions);
+          break;
+        }catch(err){
+          if(err && err.name === "AbortError") throw err;
+          if(attempt < maxFetchAttempts && isNetworkFetchError(err)){
+            await sleep(650);
+            continue;
+          }
+          throw normalizeFetchError(err);
+        }
       }
-      throw err;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1942,37 +1976,44 @@ function renderBrowserTurbo(state){
 
 async function loadStateOnce(){
   if(!isIssRole()) return;
-  const state = await apiFetch("/py/api/state", { __showLoader: false });
-  lastState = state;
-  activeRun = Boolean(state.has_active_run);
-  accounts = state.accounts || [];
-  datasets = state.datasets || [];
-  runs = state.runs || [];
-  renderBrowserTurbo(state);
-
-  if(!userIsSelectingText()){
-    renderAccounts();
-    renderDatasets();
-    renderRunDatasetsSelect(false);
-    renderRuns();
-    renderDebug();
-    updateExecutionLocks();
-    refreshAdvancedEditorAccountSelect();
-  }
-
-  if(selectedRunId && !runs.some(r=>r.run_id===selectedRunId)){
-    resetRunSelectionUi();
-    renderRuns();
+  if(loadingState){
+    pendingStateLoad = true;
     return;
   }
+  loadingState = true;
+  try{
+    const state = await apiFetch("/py/api/state", { __showLoader: false });
+    lastState = state;
+    activeRun = Boolean(state.has_active_run);
+    accounts = state.accounts || [];
+    datasets = state.datasets || [];
+    runs = state.runs || [];
+    renderBrowserTurbo(state);
 
-  if(!selectedRunId && runs.length){
-    selectedRunId = runs[0].run_id;
-  }
+    if(!userIsSelectingText()){
+      renderAccounts();
+      renderDatasets();
+      renderRunDatasetsSelect(false);
+      renderRuns();
+      renderDebug();
+      updateExecutionLocks();
+      refreshAdvancedEditorAccountSelect();
+    }
 
-  if(selectedRunId){
-    const compact = runs.find(r=>r.run_id===selectedRunId);
+    if(selectedRunId && !runs.some(r=>r.run_id===selectedRunId)){
+      resetRunSelectionUi();
+      renderRuns();
+      return;
+    }
+
+    if(!selectedRunId && runs.length){
+      selectedRunId = runs[0].run_id;
+    }
+
+    if(selectedRunId){
+      const compact = runs.find(r=>r.run_id===selectedRunId);
       if(compact){
+        const selectedActive = compact.status==="running"||compact.status==="queued";
         const sig=JSON.stringify({
           status:compact.status,done:compact.done,total:compact.total,
           ok:compact.ok,erros:compact.erros,running:compact.running,
@@ -1980,19 +2021,28 @@ async function loadStateOnce(){
           stop_requested:compact.stop_requested,
           latest_attempt_number:compact.latest_attempt_number,
           attempts_count:compact.attempts_count,
-          page:resultsPage,
-        usar_codigo_dominio:compact.usar_codigo_dominio
-      });
-      if(sig!==lastSelectedRunSignature){
-        lastSelectedRunSignature=sig;
-        selectedRunFull={...(selectedRunFull||{}),...compact};
-        if(!userIsSelectingText()) await refreshSelectedRunDetail(true);
+          usar_codigo_dominio:compact.usar_codigo_dominio
+        });
+        if(sig!==lastSelectedRunSignature){
+          lastSelectedRunSignature=sig;
+          selectedRunFull={...(selectedRunFull||{}),...compact};
+          if(!userIsSelectingText()){
+            if(selectedActive) refreshSelectedRunDetail(false);
+            else await refreshSelectedRunDetail(true);
+          }
+        }
+        if(selectedActive){
+          refreshSelectedRunDetail(false);
+        } else if(!selectedRunFull?.logs_by_attempt){
+          refreshSelectedRunDetail(true);
+        }
       }
-      if(compact.status==="running"||compact.status==="queued"){
-        refreshSelectedRunDetail(false);
-      } else if(!selectedRunFull?.logs_by_attempt){
-        refreshSelectedRunDetail(true);
-      }
+    }
+  } finally {
+    loadingState = false;
+    if(pendingStateLoad){
+      pendingStateLoad = false;
+      setTimeout(()=>loadStateOnce(), 80);
     }
   }
 }
@@ -2232,7 +2282,7 @@ async function confirmToggleUser(userId, email, intent) {
 }
 
 async function startPolling(){
-  clearInterval(pollingTimer);
+  clearTimeout(pollingTimer);
   setLoader(true, "Carregando sessão e dados...");
   try{
     const user = await loadMe();
@@ -2258,21 +2308,35 @@ async function startPolling(){
     setLoader(false);
   }
 
-  pollingTimer = setInterval(async()=>{
-    if(!isIssRole()) return;
-    try{
-      await loadStateOnce();
-      if($("apiDot")) $("apiDot").className="api-dot ok";
-      if($("apiStatus")) $("apiStatus").textContent="Conectado via Worker";
-    }catch(err){
-      if($("apiDot")) $("apiDot").className="api-dot err";
-      if($("apiStatus")) $("apiStatus").textContent="Erro: " + err.message;
-    }
-  }, 3000);
+  scheduleStatePolling();
+}
+
+function scheduleStatePolling(delayMs){
+  clearTimeout(pollingTimer);
+  pollingTimer = setTimeout(pollStateLoop, delayMs ?? (activeRun ? ACTIVE_POLL_MS : IDLE_POLL_MS));
+}
+
+async function pollStateLoop(){
+  if(!isIssRole()) return;
+  try{
+    await loadStateOnce();
+    if($("apiDot")) $("apiDot").className="api-dot ok";
+    if($("apiStatus")) $("apiStatus").textContent="Conectado via Worker";
+  }catch(err){
+    if($("apiDot")) $("apiDot").className="api-dot err";
+    if($("apiStatus")) $("apiStatus").textContent="Erro: " + err.message;
+  }finally{
+    scheduleStatePolling(activeRun ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+  }
 }
 
 async function refreshSelectedRunDetail(force=false){
-  if(!selectedRunId||loadingRunDetail)return;
+  if(!selectedRunId)return;
+  if(loadingRunDetail){
+    pendingRunDetailRefresh = true;
+    pendingRunDetailForce = pendingRunDetailForce || force;
+    return;
+  }
   const now=Date.now();
   if(!force&&now-lastRunDetailFetchAt<900)return;
   lastRunDetailFetchAt=now;
@@ -2301,7 +2365,15 @@ async function refreshSelectedRunDetail(force=false){
     }
   } catch(err){
     if(String(err.message||"").includes("Run não encontrada"))resetRunSelectionUi();
-  } finally{ loadingRunDetail=false; }
+  } finally{
+    loadingRunDetail=false;
+    if(pendingRunDetailRefresh){
+      const nextForce = pendingRunDetailForce;
+      pendingRunDetailRefresh = false;
+      pendingRunDetailForce = false;
+      setTimeout(()=>refreshSelectedRunDetail(nextForce), 40);
+    }
+  }
 }
 
 function resetRunSelectionUi(){
@@ -3307,9 +3379,11 @@ $("flowNext").addEventListener("click",async()=>{ if(flowPage<runFlowPagination.
 $("runsPrev").addEventListener("click",()=>{ runsPage=Math.max(1, runsPage-1); renderRuns(); });
 $("runsNext").addEventListener("click",()=>{ runsPage+=1; renderRuns(); });
 $("datasetsSearch")?.addEventListener("input",()=>{ renderDatasets(); });
-$("selectedRunSearch")?.addEventListener("input",async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } });
+const handleSelectedRunFilterChange = debounce(async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } }, 350);
+$("selectedRunSearch")?.addEventListener("input",handleSelectedRunFilterChange);
 $("selectedRunStatusFilter")?.addEventListener("change",async()=>{ if(selectedRunId){ resultsPage=1; await refreshSelectedRunDetail(true); } });
-$("runFlowSearch")?.addEventListener("input",async()=>{ flowPage=1; await renderRunFlowRows(true); });
+const handleRunFlowSearchChange = debounce(async()=>{ flowPage=1; await renderRunFlowRows(true); }, 300);
+$("runFlowSearch")?.addEventListener("input",handleRunFlowSearchChange);
 
 $("btnSaveDataset").addEventListener("click",async()=>{
   hideBox($("datasetMsg"));

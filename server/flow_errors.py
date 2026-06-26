@@ -115,7 +115,7 @@ def classify_exception(exc: Exception) -> ErrorSpec:
     text = str(exc or "").strip()
     text_low = text.lower()
 
-    if "net::err_connection_timed_out" in text_low:
+    if "net::err_connection_timed_out" in text_low or "net::err_timed_out" in text_low:
         return ErrorSpec(
             code="NETWORK_TIMEOUT",
             short_message="Timeout de conexão ao acessar o portal ISS.",
