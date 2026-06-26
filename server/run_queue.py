@@ -285,9 +285,9 @@ async def execute_flow(
 
 def _transient_flow_retries() -> int:
     try:
-        return max(0, min(int(os.getenv("FLOW_TRANSIENT_RETRIES", "1")), 3))
+        return max(0, min(int(os.getenv("FLOW_TRANSIENT_RETRIES", "2")), 3))
     except Exception:
-        return 1
+        return 2
 
 
 def _retry_backoff_seconds(attempt: int) -> float:

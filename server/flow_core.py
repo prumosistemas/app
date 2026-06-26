@@ -274,7 +274,7 @@ def _browser_stagger_ms(label: str) -> int:
     if not raw:
         raw = os.getenv("BROWSER_CONNECT_STAGGER_MS", "").strip()
     if not raw and "modal" in (label or "").lower():
-        raw = "250"
+        raw = "500"
     try:
         return max(0, min(int(raw or "0"), 5_000))
     except Exception:
@@ -285,7 +285,7 @@ async def _stagger_browser_connect(label: str, active_for_label: int) -> None:
     step_ms = _browser_stagger_ms(label)
     if step_ms <= 0 or active_for_label <= 1:
         return
-    max_ms = max(0, min(_env_int("BROWSER_CONNECT_STAGGER_MAX_MS", 6_000), 20_000))
+    max_ms = max(0, min(_env_int("BROWSER_CONNECT_STAGGER_MAX_MS", 10_000), 20_000))
     delay_ms = min(max_ms, (active_for_label - 1) * step_ms)
     if delay_ms <= 0:
         return

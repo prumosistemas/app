@@ -1,6 +1,6 @@
 # Prumo ISS Fortaleza
 
-Versão: **1.0.19 - Modal Turbo +32 com retry transitório**
+Versão: **1.0.20 - Modal Turbo +32 distribuído**
 
 Central operacional da Prumo Sistemas para executar automações de ISS Fortaleza com isolamento por empresa e colaborador.
 
@@ -128,7 +128,7 @@ O Modal direto continua bloqueado pelo GEO-IP do portal no login. O modo aprovad
 | 4 containers x 8 | 64 | 64/64 OK | 16.25s | 15.81s |
 | 4 containers x 8 | 96 | 96/96 OK | 22.95s | 22.13s |
 
-O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy. Em seguida, a versao 1.0.18 moveu a proxy para o launch arg do Chrome, porque proxy no contexto Playwright tambem afetava `APIRequestContext`. A versao 1.0.19 amplia o Modal para 4 containers x 8, adiciona rampa de conexao para `modal-turbo` e retry curto para erros transitórios antes de gravar erro final no item.
+O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy. Em seguida, a versao 1.0.18 moveu a proxy para o launch arg do Chrome, porque proxy no contexto Playwright tambem afetava `APIRequestContext`. A versao 1.0.20 mantem o Modal em +32, mas distribui a carga em 8 containers x 4 sessoes, aumenta a rampa de conexao para `modal-turbo` e usa 2 retries curtos para erros transitorios antes de gravar erro final no item.
 
 ### 4. Instalar Monitoramento
 

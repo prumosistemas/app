@@ -123,6 +123,14 @@ def classify_exception(exc: Exception) -> ErrorSpec:
             retryable=True,
         )
 
+    if "chrome-error://chromewebdata" in text_low or "interrupted by another navigation" in text_low:
+        return ErrorSpec(
+            code="NETWORK_NAVIGATION_ERROR",
+            short_message="Falha de navegação ao acessar o portal ISS.",
+            action="Verificar proxy, disponibilidade do portal e repetir o fluxo.",
+            retryable=True,
+        )
+
     if "net::err_name_not_resolved" in text_low:
         return ErrorSpec(
             code="DNS_ERROR",
