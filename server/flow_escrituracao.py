@@ -158,7 +158,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
     await asyncio.sleep(1.0)
     await _verificar_mensagem_na_tela(page)
 
-    await page.wait_for_selector("input[id$='cpfPesquisa']", timeout=15_000)
+    await page.wait_for_selector("input[id$='cpfPesquisa']", timeout=ctx.config.selector_timeout_ms)
     await page.check("input[value='CNPJ']")
     await asyncio.sleep(0.8)
 

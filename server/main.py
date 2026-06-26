@@ -120,7 +120,7 @@ from run_queue import (
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.16",
+    version="1.0.17",
     description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
 )
 
@@ -468,7 +468,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "ISS Automação API",
-        "version": "1.0.16",
+        "version": "1.0.17",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,

@@ -462,7 +462,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> str:
                 )
             await asyncio.sleep(2)
 
-    await page.wait_for_selector("input[id$='cpfPesquisa']", timeout=15_000)
+    await page.wait_for_selector("input[id$='cpfPesquisa']", timeout=ctx.config.selector_timeout_ms)
     await page.check("input[value='CNPJ']")
     await asyncio.sleep(0.8)
 
