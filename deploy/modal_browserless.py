@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -31,6 +32,13 @@ image = (
 )
 
 app = modal.App("prumo-browserless", image=image)
+
+
+def _default_launch_args() -> str:
+    args = ["--no-sandbox"]
+    if PROXY_HOSTNAME:
+        args.append(f"--proxy-server=http://{PROXY_LISTENER}")
+    return json.dumps(args)
 
 
 def _wait_for_listener(listener: str, timeout: float = 20.0) -> None:
@@ -85,7 +93,7 @@ def _start_proxy_tunnel() -> None:
         "QUEUE_LENGTH": str(QUEUE_LENGTH),
         "TIMEOUT": "600000",
         "CONNECTION_TIMEOUT": "600000",
-        "DEFAULT_LAUNCH_ARGS": '["--no-sandbox"]',
+        "DEFAULT_LAUNCH_ARGS": _default_launch_args(),
     },
 )
 @modal.concurrent(max_inputs=CAPACITY_PER_CONTAINER, target_inputs=TARGET_INPUTS)

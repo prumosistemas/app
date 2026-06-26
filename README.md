@@ -1,6 +1,6 @@
 # Prumo ISS Fortaleza
 
-Versão: **1.0.17 - Modal Turbo com Proxy do Servidor**
+Versão: **1.0.18 - Modal Turbo com Proxy no Chrome**
 
 Central operacional da Prumo Sistemas para executar automações de ISS Fortaleza com isolamento por empresa e colaborador.
 
@@ -109,7 +109,7 @@ O Compose configura 15 sessões concorrentes, fila para 30 conexões aguardando 
 
 Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|16|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, o limite validado atual e `15 locais + 16 Modal com proxy = 31 navegadores`, protegido por `MAX_BROWSER_LIMIT`.
 
-Se um alvo externo precisar sair por proxy, configure `BROWSER_PROXY_MAP` com `label|proxy_url`, separado por `;;`, ou prefira `BROWSER_PROXY_URL_MODAL_TURBO` para o label `modal-turbo`. No Modal, o Browserless sobe `cloudflared access tcp` e expoe a proxy do servidor em `127.0.0.1:31480` dentro do container. A senha fica somente no `.env` do servidor; o app mascara logs e registra apenas `proxy=on`.
+Se um alvo externo precisar sair por proxy, configure `BROWSER_PROXY_MAP` com `label|proxy_url`, separado por `;;`. Para `modal-turbo`, prefira o modo embutido: o Browserless Modal sobe `cloudflared access tcp`, expoe a proxy do servidor em `127.0.0.1:31480` dentro do container e injeta `--proxy-server=http://127.0.0.1:31480` no Chrome. Isso evita que o `APIRequestContext` do Playwright tente usar a proxy local do container a partir da API no servidor.
 
 O app Modal versionado em `deploy/modal_browserless.py` usa a mesma imagem Browserless digestada do servidor e espera um Secret Modal chamado `prumo-browserless` contendo `TOKEN=<token>`. Publique com `modal deploy deploy/modal_browserless.py`.
 
@@ -128,7 +128,7 @@ O Modal direto continua bloqueado pelo GEO-IP do portal no login. O modo aprovad
 | 4 containers x 8 | 64 | 64/64 OK | 16.25s | 15.81s |
 | 4 containers x 8 | 96 | 96/96 OK | 22.95s | 22.13s |
 
-O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy.
+O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Em 2026-06-25, o probe `deploy/modal_proxy_probe.py` confirmou `exit_ip=45.165.22.179` e `iss_status=200` a partir do Modal. O teste CDP real abriu `/grpfor/oauth2/login` via `modal-turbo` com `#username` visivel e sem GEO-IP. A execucao pequena `run_AXl3qXA8SK_bFNBncNUt_A` tambem confirmou `target=modal-turbo proxy=on`: o login passou e os erros ocorreram depois em `Pesquisar Empresa`, nao no login/proxy. Em seguida, a versao 1.0.18 moveu a proxy para o launch arg do Chrome, porque proxy no contexto Playwright tambem afetava `APIRequestContext`.
 
 ### 4. Instalar Monitoramento
 
@@ -190,4 +190,4 @@ Teste de rede em 2026-06-25:
 - Modal direto conectou no Browserless, mas o portal bloqueou o IP de origem cloud no login.
 - Proxy HTTP CONNECT no servidor funcionou no host e saiu pelo IP `45.165.22.179`.
 - A porta direta `31380` nao ficou acessivel de fora; Cloudflare Tunnel HTTP nao repassa `CONNECT` como proxy HTTP comum.
-- O caminho funcional e `cloudflared access tcp` para `modal-proxy.prumosistemas.com.br`, expondo a proxy em `127.0.0.1:31480` dentro do container Modal.
+- O caminho funcional e `cloudflared access tcp` para `modal-proxy.prumosistemas.com.br`, expondo uma proxy loopback sem auth em `127.0.0.1:31480` dentro do container Modal. A origem real no servidor fica em `127.0.0.1:31381`, limitada por dominio e inacessivel diretamente pela internet.

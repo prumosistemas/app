@@ -1,4 +1,3 @@
-import pathlib
 import socket
 import subprocess
 import time
@@ -8,7 +7,6 @@ import modal
 
 PROXY_HOSTNAME = "modal-proxy.prumosistemas.com.br"
 PROXY_LISTENER = "127.0.0.1:31480"
-PROXY_USER = "prumo"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -39,9 +37,7 @@ def _wait_for_port(host: str, port: int, timeout: float = 20.0) -> None:
 
 
 @app.function(timeout=120)
-def probe(proxy_password: str) -> dict:
-    from urllib.parse import quote
-
+def probe() -> dict:
     import requests
 
     proc = subprocess.Popen(
@@ -62,8 +58,7 @@ def probe(proxy_password: str) -> dict:
     )
     try:
         _wait_for_port("127.0.0.1", 31480)
-        proxy_password = quote(proxy_password, safe="")
-        proxy_url = f"http://{PROXY_USER}:{proxy_password}@{PROXY_LISTENER}"
+        proxy_url = f"http://{PROXY_LISTENER}"
         proxies = {"http": proxy_url, "https": proxy_url}
         ip_response = requests.get(
             "https://api.ipify.org",
@@ -94,7 +89,6 @@ def probe(proxy_password: str) -> dict:
 
 
 @app.local_entrypoint()
-def main(password_file: str = r"C:\tmp\prumo_proxy_password.txt"):
-    password = pathlib.Path(password_file).read_text().strip()
-    result = probe.remote(password)
+def main():
+    result = probe.remote()
     print(result)
