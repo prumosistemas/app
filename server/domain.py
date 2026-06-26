@@ -1810,7 +1810,7 @@ def create_root_zip(ctx: WorkerContext, root_id: str) -> str:
                 (
                     "Esta run foi concluída, mas não gerou arquivos baixáveis.\n"
                     "Isso pode acontecer quando o fluxo não encontrou notas, DAMs ou certidões para baixar.\n"
-                    "Consulte o relatório da run e os logs para ver o resultado de cada empresa.\n"
+                    "Consulte o painel da run e os logs para ver o resultado de cada empresa.\n"
                 ),
             )
         for rel, full_path in sorted(entries.items(), key=lambda x: x[0].lower()):

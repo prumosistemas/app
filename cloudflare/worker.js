@@ -284,7 +284,7 @@ async function handleSetup(request, env) {
 ========================= */
 
 async function handleLoginPost(request, env) {
-  await cleanupTemporaryData(env.db);
+  await cleanupTemporaryData(env.db, { force: true, includeHeavy: false });
 
   const body = await readBody(request);
 
@@ -381,6 +381,8 @@ async function handleLoginPost(request, env) {
   if (!passwordOk) {
     return jsonResponse(request, env, { ok: false, error: "Email ou senha inválidos." }, 401);
   }
+
+  await clearLoginRateLimits(env.db, ip, emailHash);
 
   const ts = now();
 
@@ -1899,12 +1901,15 @@ async function reconcileDeletionJob(env, job) {
    CLEANUP
 ========================= */
 
-async function cleanupTemporaryData(db) {
-  if (Math.random() > 0.1) return;
+async function cleanupTemporaryData(db, options = {}) {
+  const force = options.force === true;
+  const includeHeavy = options.includeHeavy !== false;
+
+  if (!force && Math.random() > 0.1) return;
 
   const ts = now();
 
-  await db.batch([
+  const statements = [
     db.prepare(`
       DELETE FROM rate_limits
       WHERE reset_at < ?
@@ -1915,18 +1920,24 @@ async function cleanupTemporaryData(db) {
       WHERE absolute_expires_at < ?
          OR (revoked_at IS NOT NULL AND revoked_at < ?)
     `).bind(ts, ts - 3600),
+  ];
 
-    db.prepare(`
-      DELETE FROM logs
-      WHERE created_at < ?
-    `).bind(ts - LOG_RETENTION_SECONDS),
+  if (includeHeavy) {
+    statements.push(
+      db.prepare(`
+        DELETE FROM logs
+        WHERE created_at < ?
+      `).bind(ts - LOG_RETENTION_SECONDS),
 
-    db.prepare(`
-      DELETE FROM deletion_jobs
-      WHERE status = 'completed'
-        AND completed_at < ?
-    `).bind(ts - 30 * 24 * 60 * 60),
-  ]);
+      db.prepare(`
+        DELETE FROM deletion_jobs
+        WHERE status = 'completed'
+          AND completed_at < ?
+      `).bind(ts - 30 * 24 * 60 * 60)
+    );
+  }
+
+  await db.batch(statements);
 }
 
 /* =========================
@@ -1976,6 +1987,13 @@ async function checkRateLimit(db, key, limit, windowSeconds) {
   `).bind(key).run();
 
   return { ok: true };
+}
+
+async function clearLoginRateLimits(db, ip, emailHash) {
+  await db.batch([
+    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:ip:${ip}`),
+    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:email:${emailHash}`),
+  ]);
 }
 
 /* =========================

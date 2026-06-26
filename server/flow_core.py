@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Tuple
+from urllib.parse import unquote, urlsplit
 
 from playwright.async_api import TimeoutError as PWTimeoutError  # type: ignore
 from playwright.async_api import Page, async_playwright  # type: ignore
@@ -22,7 +23,7 @@ except Exception:  # pragma: no cover
     class TargetClosedError(PlaywrightError):  # type: ignore
         pass
 
-from flow_errors import FlowError
+from flow_errors import FlowError, PortalAccessBlockedError
 
 logger = logging.getLogger("iss")
 
@@ -31,6 +32,8 @@ BASE_DIR = ""
 _BROWSER_POOL_ENV_KEY: tuple[str, str] | None = None
 _BROWSER_POOL: list[tuple[str, str]] = []
 _BROWSER_POOL_CURSOR = 0
+_BROWSER_PROXY_ENV_KEY: str | None = None
+_BROWSER_PROXY_MAP: dict[str, dict[str, str]] = {}
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,70 @@ def _next_browser_cdp_target() -> tuple[str, str]:
     return target
 
 
+def _proxy_env_label(label: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", label or "").strip("_").upper()
+    return normalized or "DEFAULT"
+
+
+def _parse_proxy_url(proxy_url: str) -> dict[str, str]:
+    parsed = urlsplit(proxy_url.strip())
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError("Proxy precisa estar no formato http://usuario:senha@host:porta")
+
+    server = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        server += f":{parsed.port}"
+
+    proxy: dict[str, str] = {"server": server}
+    if parsed.username:
+        proxy["username"] = unquote(parsed.username)
+    if parsed.password:
+        proxy["password"] = unquote(parsed.password)
+    return proxy
+
+
+def _parse_browser_proxy_map() -> dict[str, dict[str, str]]:
+    raw = os.getenv("BROWSER_PROXY_MAP", "").strip()
+
+    global _BROWSER_PROXY_ENV_KEY, _BROWSER_PROXY_MAP
+    if _BROWSER_PROXY_ENV_KEY == raw:
+        return _BROWSER_PROXY_MAP
+
+    proxy_map: dict[str, dict[str, str]] = {}
+    for raw_entry in raw.split(";;"):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+
+        parts = [part.strip() for part in entry.split("|", 1)]
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            logger.warning("[BROWSER_PROXY] entrada ignorada em BROWSER_PROXY_MAP")
+            continue
+
+        label, proxy_url = parts
+        try:
+            proxy_map[label] = _parse_proxy_url(proxy_url)
+        except Exception as exc:
+            logger.warning("[BROWSER_PROXY] proxy ignorado label=%s erro=%s", label, exc)
+
+    _BROWSER_PROXY_ENV_KEY = raw
+    _BROWSER_PROXY_MAP = proxy_map
+    return _BROWSER_PROXY_MAP
+
+
+def _browser_proxy_for_label(label: str) -> Optional[dict[str, str]]:
+    env_key = f"BROWSER_PROXY_URL_{_proxy_env_label(label)}"
+    raw = os.getenv(env_key, "").strip()
+    if raw:
+        try:
+            return _parse_proxy_url(raw)
+        except Exception as exc:
+            logger.warning("[BROWSER_PROXY] proxy ignorado label=%s env=%s erro=%s", label, env_key, exc)
+            return None
+
+    return _parse_browser_proxy_map().get(label)
+
+
 async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], Awaitable[None]]]:
     last_err: Optional[BaseException] = None
 
@@ -271,10 +338,22 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
 
             browser = await pw.chromium.connect_over_cdp(browser_cdp_url)
 
-            context = await browser.new_context(
-                accept_downloads=True,
-                viewport={"width": 1366, "height": 900},
-            )
+            context_options: dict[str, Any] = {
+                "accept_downloads": True,
+                "viewport": {"width": 1366, "height": 900},
+            }
+            proxy = _browser_proxy_for_label(browser_label)
+            if proxy:
+                context_options["proxy"] = proxy
+                logger.info(
+                    "[BROWSER_PROXY] run=%s cnpj=%s target=%s proxy=on server=%s",
+                    config.run_id,
+                    os.path.basename(config.cnpj_dir or ""),
+                    browser_label,
+                    proxy.get("server", ""),
+                )
+
+            context = await browser.new_context(**context_options)
             context.set_default_timeout(config.selector_timeout_ms)
             context.set_default_navigation_timeout(config.nav_timeout_ms)
 
@@ -347,21 +426,56 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+async def detect_portal_access_block(page: Page) -> None:
+    try:
+        title = await page.title()
+    except Exception:
+        title = ""
+
+    try:
+        body = await page.locator("body").inner_text(timeout=2_000)
+    except Exception:
+        body = ""
+
+    text = f"{title}\n{body}".strip()
+    low = text.lower()
+    blocked = (
+        "geo-ip filter alert" in low
+        or "this site has been blocked by the network administrator" in low
+        or ("forbidden" in low and "sefin.fortaleza" in low)
+    )
+    if not blocked:
+        return
+
+    compact = re.sub(r"\s+", " ", text).strip()
+    ip_match = re.search(r"IP address:\s*([0-9.]+)", compact, re.IGNORECASE)
+    reason_match = re.search(r"Block reason:\s*([^\.]+(?:\.))", compact, re.IGNORECASE)
+    detail_parts = []
+    if reason_match:
+        detail_parts.append(reason_match.group(1).strip())
+    if ip_match:
+        detail_parts.append(f"IP={ip_match.group(1)}")
+    detail = " | ".join(detail_parts) or compact[:300]
+    raise PortalAccessBlockedError(detail)
+
+
 async def submit_portal_login(page: Page, usuario: str, senha: str, config: FlowConfig) -> None:
     url = "https://iss.fortaleza.ce.gov.br/grpfor/oauth2/login"
     attempts = max(1, min(_env_int("PORTAL_LOGIN_ATTEMPTS", 2), 4))
     nav_timeout = max(10_000, min(_env_int("PORTAL_LOGIN_NAV_TIMEOUT_MS", 45_000), config.nav_timeout_ms))
     idle_timeout = max(1_000, min(_env_int("PORTAL_LOGIN_IDLE_TIMEOUT_MS", 8_000), 20_000))
+    selector_timeout = max(config.selector_timeout_ms, _env_int("PORTAL_LOGIN_SELECTOR_TIMEOUT_MS", 60_000))
     last: Optional[BaseException] = None
 
     for attempt in range(1, attempts + 1):
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
-            await page.wait_for_selector("#username", state="visible", timeout=config.selector_timeout_ms)
+            await detect_portal_access_block(page)
+            await page.wait_for_selector("#username", state="visible", timeout=selector_timeout)
             await page.fill("#username", usuario)
             await page.fill("#password", senha)
-            await page.wait_for_selector("#botao-entrar", state="visible", timeout=config.selector_timeout_ms)
-            await page.click("#botao-entrar", timeout=config.selector_timeout_ms)
+            await page.wait_for_selector("#botao-entrar", state="visible", timeout=selector_timeout)
+            await page.click("#botao-entrar", timeout=selector_timeout)
 
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=10_000)

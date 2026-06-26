@@ -1,6 +1,6 @@
 # Prumo ISS Fortaleza
 
-Versão: **1.0.13 - Turbo Modal Browserless**
+Versão: **1.0.16 - Login ISS Estável e Proxy Preparado**
 
 Central operacional da Prumo Sistemas para executar automações de ISS Fortaleza com isolamento por empresa e colaborador.
 
@@ -107,13 +107,15 @@ O Browserless e a API ficam disponíveis apenas no loopback do Ubuntu. Publique 
 
 O Compose configura 15 sessões concorrentes, fila para 30 conexões aguardando e timeout de 10 minutos. Esses limites evitam rejeições `429` prematuras; acompanhe CPU, RAM e fila no painel master antes de ampliar a concorrência. A referência oficial das variáveis está na [documentação Docker do Browserless](https://docs.browserless.io/enterprise/docker/config).
 
-Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|32|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, a configuração testada é `15 local + 32 Modal = 47 navegadores`, protegida por `MAX_BROWSER_LIMIT`.
+Para somar capacidade externa sem sobrecarregar o Browserless local, configure `BROWSER_CDP_POOL` no formato `label|capacidade|url`, separado por `;;`. Exemplo: `browserless-local|15|ws://browserless:3000?token=...;;modal-turbo|16|wss://...modal.run?token=...`. Quando o pool estiver ativo, a API distribui novas sessões por peso e a tela ISS Fortaleza mostra o total com o chip `+N turbo`. Em produção, o limite seguro atual permanece `15 local = 15 navegadores operacionais`, protegido por `MAX_BROWSER_LIMIT`.
+
+Se um alvo externo precisar sair por proxy, configure `BROWSER_PROXY_MAP` com `label|proxy_url`, separado por `;;`. Exemplo: `modal-turbo|http://USUARIO:SENHA@HOST:PORTA`. A senha fica somente no `.env` do servidor; o app mascara logs e registra apenas `proxy=on`.
 
 O app Modal versionado em `deploy/modal_browserless.py` usa a mesma imagem Browserless digestada do servidor e espera um Secret Modal chamado `prumo-browserless` contendo `TOKEN=<token>`. Publique com `modal deploy deploy/modal_browserless.py`.
 
 #### Turbo Modal Browserless
 
-O limite operacional escolhido agora é +32 navegadores no Modal, com 4 containers e 8 sessões por container. O teste sintético do app `prumo-browserless-loadtest-multi` validou estes pontos sem falhas de CDP:
+O limite operacional seguro fica no Browserless local. O Modal direto foi mantido como experimento documentado, mas nao deve entrar no pool de producao enquanto o portal bloquear a origem no login. O teste sintético do app `prumo-browserless-loadtest-multi` validou estes pontos sem falhas de CDP:
 
 | Configuração | Paralelo | Resultado | Tempo total | p95 |
 | --- | ---: | --- | ---: | ---: |
@@ -126,7 +128,7 @@ O limite operacional escolhido agora é +32 navegadores no Modal, com 4 containe
 | 4 containers x 8 | 64 | 64/64 OK | 16.25s | 15.81s |
 | 4 containers x 8 | 96 | 96/96 OK | 22.95s | 22.13s |
 
-O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Para rollback imediato, deixe `MAX_BROWSERS=15` e limpe `BROWSER_CDP_POOL`; para reduzir sem remover, troque a capacidade `modal-turbo|32|...` por um número menor.
+O custo observado no ciclo Jun 1 - Jul 1, 2026 para o loadtest foi US$ 0.02 de CPU. Para manter estabilidade, deixe `MAX_BROWSERS=15` e `BROWSER_CDP_POOL` vazio. So habilite `modal-turbo|16|...` se houver proxy ou IP de saida aceito pelo portal.
 
 ### 4. Instalar Monitoramento
 
@@ -177,3 +179,15 @@ No painel master, a área **Logs** mostra CPU, RAM, disco, containers, navegador
 - Use valores distintos para `BROWSERLESS_TOKEN` e `ISS_INTERNAL_SECRET`.
 - Restrinja o proxy HTTPS da API para uso do Worker.
 - Mantenha o monitor agent no host; não monte o socket Docker dentro do container da API.
+
+
+### Bloqueio GEO-IP no Login
+
+O login do ISS Fortaleza pode devolver uma tela `Forbidden` com `GEO-IP Filter Alert` para IPs de cloud. A API classifica esse caso como `PORTAL_ACCESS_BLOCKED`, em vez de esperar o seletor de login ate virar `TIMEOUT`. Enquanto esse bloqueio existir, nao habilite `modal-turbo` no `BROWSER_CDP_POOL` sem proxy ou IP de saida aceito pelo portal.
+
+Teste de rede em 2026-06-25:
+
+- Modal direto conectou no Browserless, mas o portal bloqueou o IP de origem cloud no login.
+- Proxy HTTP CONNECT no servidor funcionou localmente no host, mas a porta direta `31380` nao ficou acessivel de fora.
+- Cloudflare Tunnel HTTP nao repassa `CONNECT` como proxy HTTP comum.
+- Um Cloudflare Tunnel TCP separado foi criado para prova, mas ainda depende de Access/service-token operacional no cliente antes de entrar no Browserless Modal.

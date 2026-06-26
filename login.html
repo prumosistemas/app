@@ -416,6 +416,7 @@
     const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || "";
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+    const REQUEST_TIMEOUT_MS = 45000;
 
     const $ = id => document.getElementById(id);
 
@@ -447,6 +448,9 @@
     async function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
       const hasBody = options.body !== undefined && options.body !== null;
+      const controller = new AbortController();
+      const timeoutMs = Number(options.timeoutMs || REQUEST_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       if (hasBody && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
@@ -460,11 +464,25 @@
         headers.set("Authorization", "Bearer " + sessionToken);
       }
 
-      const res = await fetch(WORKER_URL + path, {
+      const fetchOptions = {
         credentials: "include",
         ...options,
-        headers
-      });
+        headers,
+        signal: options.signal || controller.signal
+      };
+      delete fetchOptions.timeoutMs;
+
+      let res;
+      try {
+        res = await fetch(WORKER_URL + path, fetchOptions);
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          throw new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const contentType = res.headers.get("content-type") || "";
       let data;
@@ -537,7 +555,10 @@
         return;
       }
 
-      $("btnLogin").disabled = true;
+      const loginButton = $("btnLogin");
+      const originalText = loginButton.textContent;
+      loginButton.disabled = true;
+      loginButton.textContent = "Entrando...";
 
       try {
         const data = await api("/api/login", {
@@ -560,7 +581,8 @@
       } catch (err) {
         setMsg("err", err.message || "Falha no login.");
       } finally {
-        $("btnLogin").disabled = false;
+        loginButton.disabled = false;
+        loginButton.textContent = originalText;
       }
     }
 

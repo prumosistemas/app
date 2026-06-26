@@ -1300,6 +1300,7 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     logsTailTimer=null, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
 const SESSION_TOKEN_KEY = "session_token";
 let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+const REQUEST_TIMEOUT_MS = 60000;
 let runsPage=1, resultsPage=1, datasetPage=1, flowPage=1;
 const PAGE_SIZE = 25;
 const flowSelectionByDataset = {};
@@ -1594,11 +1595,29 @@ async function apiFetch(path, options={}){
       headers.set("Authorization", "Bearer " + SESSION_TOKEN);
     }
 
-    const res = await fetch(base + path, {
+    const controller = new AbortController();
+    const timeoutMs = Number(options.__timeoutMs || REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const fetchOptions = {
       credentials: "include",
       ...options,
-      headers
-    });
+      headers,
+      signal: options.signal || controller.signal
+    };
+    delete fetchOptions.__showLoader;
+    delete fetchOptions.__timeoutMs;
+
+    let res;
+    try {
+      res = await fetch(base + path, fetchOptions);
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        throw new Error("A conexão demorou demais. Verifique a internet e tente novamente.");
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const ct  = res.headers.get("content-type")||"";
     let payload;

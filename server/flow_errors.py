@@ -44,6 +44,18 @@ class LoginError(FlowError):
         )
 
 
+class PortalAccessBlockedError(FlowError):
+    def __init__(self, detail: str = ""):
+        msg = detail.strip() or "Portal ISS bloqueou a origem de rede antes do login."
+        super().__init__(
+            "PORTAL_ACCESS_BLOCKED",
+            msg,
+            short_message="Portal ISS bloqueou o IP/origem antes do login.",
+            action="Usar Browserless local ou um proxy/IP liberado pelo portal; nao usar Modal direto para login enquanto a SEFIN bloquear a origem.",
+            retryable=False,
+        )
+
+
 class CnpjInexistenteError(FlowError):
     def __init__(self, cnpj: str):
         super().__init__(
