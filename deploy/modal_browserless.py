@@ -91,8 +91,8 @@ def _start_proxy_tunnel() -> None:
         "MAX_CONCURRENT_SESSIONS": str(CAPACITY_PER_CONTAINER),
         "QUEUED": str(QUEUE_LENGTH),
         "QUEUE_LENGTH": str(QUEUE_LENGTH),
-        "TIMEOUT": "600000",
-        "CONNECTION_TIMEOUT": "600000",
+        "TIMEOUT": "1200000",
+        "CONNECTION_TIMEOUT": "1200000",
         "DEFAULT_LAUNCH_ARGS": _default_launch_args(),
     },
 )

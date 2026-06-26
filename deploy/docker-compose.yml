@@ -14,8 +14,8 @@ services:
       MAX_CONCURRENT_SESSIONS: "15"
       QUEUED: "30"
       QUEUE_LENGTH: "30"
-      TIMEOUT: "600000"
-      CONNECTION_TIMEOUT: "600000"
+      TIMEOUT: "1200000"
+      CONNECTION_TIMEOUT: "1200000"
       DEFAULT_LAUNCH_ARGS: '["--no-sandbox"]'
     networks: [prumo-net]
 

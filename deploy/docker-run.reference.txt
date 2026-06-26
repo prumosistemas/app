@@ -14,8 +14,8 @@ docker run -d \
   -e MAX_CONCURRENT_SESSIONS=15 \
   -e QUEUED=30 \
   -e QUEUE_LENGTH=30 \
-  -e TIMEOUT=600000 \
-  -e CONNECTION_TIMEOUT=600000 \
+  -e TIMEOUT=1200000 \
+  -e CONNECTION_TIMEOUT=1200000 \
   -e DEFAULT_LAUNCH_ARGS='["--no-sandbox"]' \
   browserless/chrome@sha256:<DIGEST_TESTADO>
 
