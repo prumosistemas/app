@@ -114,6 +114,15 @@ def classify_exception(exc: Exception) -> ErrorSpec:
 
     text = str(exc or "").strip()
     text_low = text.lower()
+    exc_name = type(exc).__name__.lower()
+
+    if exc_name == "timeouterror":
+        return ErrorSpec(
+            code="TIMEOUT",
+            short_message="Tempo excedido durante a execução do fluxo.",
+            action="Verificar lentidão do portal e considerar aumentar os timeouts.",
+            retryable=True,
+        )
 
     if "net::err_connection_timed_out" in text_low or "net::err_timed_out" in text_low:
         return ErrorSpec(
