@@ -87,6 +87,15 @@ Rede:
 ss -ltnup
 ```
 
+Proxy Modal usando IP do servidor:
+
+```bash
+curl -I --max-time 20 -x http://127.0.0.1:31381 https://iss.fortaleza.ce.gov.br/
+curl -I --max-time 20 -x http://127.0.0.1:31381 https://idp2.sefin.fortaleza.ce.gov.br/
+```
+
+Use hosts do portal/IDP nesse teste. Hosts auxiliares como `api.ipify.org` podem retornar `403` se nao estiverem na allowlist do processo ativo.
+
 Atualizar deploy:
 
 ```bash
