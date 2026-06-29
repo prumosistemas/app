@@ -5,6 +5,8 @@ pydantic
 openpyxl
 python-dotenv
 playwright
+requests
+beautifulsoup4
 websockets
 gunicorn
 cryptography

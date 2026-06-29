@@ -41,10 +41,12 @@ from flow_core import (
     ensure_dir,
     log_flow,
     resilient_goto,
+    requests_bootstrap_enabled,
     run_step,
     sanitize_folder_name,
     somente_digitos,
     submit_portal_login,
+    try_requests_bootstrap_company,
 )
 from flow_errors import (
     CnpjInexistenteError,
@@ -847,13 +849,31 @@ async def job_notas(
         context, closer = await create_browser_context(config)
         page = await context.new_page()
 
-        await run_step(ctx, "Login", login(page, usuario, senha, config))
+        bootstrap = None
+        if requests_bootstrap_enabled():
+            bootstrap = await run_step(
+                ctx,
+                "Login/Empresa requests",
+                try_requests_bootstrap_company(
+                    context,
+                    page,
+                    usuario,
+                    senha,
+                    cnpj_norm,
+                    ctx,
+                ),
+            )
 
-        nome_emp = await run_step(
-            ctx,
-            "Pesquisar Empresa",
-            pesquisar_empresa(page, cnpj_norm, ctx),
-        )
+        if bootstrap:
+            nome_emp = bootstrap.empresa
+        else:
+            await run_step(ctx, "Login", login(page, usuario, senha, config))
+
+            nome_emp = await run_step(
+                ctx,
+                "Pesquisar Empresa",
+                pesquisar_empresa(page, cnpj_norm, ctx),
+            )
 
         pasta_base, pasta_prestadas, pasta_tomadas = _build_notas_company_dirs(
             run_dir,

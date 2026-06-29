@@ -31,9 +31,11 @@ from flow_core import (
     log_flow,
     rename_cnpj_dir_with_company,
     resilient_goto,
+    requests_bootstrap_enabled,
     run_step,
     somente_digitos,
     submit_portal_login,
+    try_requests_bootstrap_company,
 )
 from flow_errors import (
     CnpjInexistenteError,
@@ -1028,8 +1030,28 @@ async def job_dam(
         context, closer = await create_browser_context(config)
         page = await context.new_page()
 
-        await run_step(ctx, "Login", login(page, usuario, senha, config))
-        nome_emp, pasta_saida = await run_step(ctx, "Pesquisar Empresa", pesquisar_empresa(page, cnpj_norm, ctx))
+        bootstrap = None
+        if requests_bootstrap_enabled():
+            bootstrap = await run_step(
+                ctx,
+                "Login/Empresa requests",
+                try_requests_bootstrap_company(
+                    context,
+                    page,
+                    usuario,
+                    senha,
+                    cnpj_norm,
+                    ctx,
+                    rename_dir=True,
+                ),
+            )
+
+        if bootstrap:
+            nome_emp = bootstrap.empresa
+            pasta_saida = bootstrap.pasta
+        else:
+            await run_step(ctx, "Login", login(page, usuario, senha, config))
+            nome_emp, pasta_saida = await run_step(ctx, "Pesquisar Empresa", pesquisar_empresa(page, cnpj_norm, ctx))
 
         dam_dir = os.path.join(pasta_saida, "dam")
         ensure_dir(dam_dir)

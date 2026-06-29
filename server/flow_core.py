@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover
         pass
 
 from flow_errors import FlowError, PortalAccessBlockedError
+from portal_bootstrap import bootstrap_portal_requests
 
 logger = logging.getLogger("iss")
 
@@ -61,6 +62,13 @@ class FlowContext:
     config: FlowConfig
     step: str = ""
     empresa: str = ""
+
+
+@dataclass(frozen=True)
+class BootstrapCompany:
+    empresa: str
+    cid: str
+    pasta: str
 
 
 def somente_digitos(s: str) -> str:
@@ -479,6 +487,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off", "nao", "não"}
+
+
+def requests_bootstrap_enabled() -> bool:
+    return _env_bool("PORTAL_REQUESTS_BOOTSTRAP", True)
+
+
 async def detect_portal_access_block(page: Page) -> None:
     try:
         title = await page.title()
@@ -546,6 +565,114 @@ async def submit_portal_login(page: Page, usuario: str, senha: str, config: Flow
                 await asyncio.sleep(min(3.0, 0.8 * attempt))
 
     raise last or RuntimeError("Falha no login do portal")
+
+
+def _update_ctx_company(ctx: FlowContext, cnpj: str, empresa: str, *, rename_dir: bool) -> str:
+    ctx.empresa = empresa
+    if not rename_dir:
+        return ""
+
+    pasta_final = rename_cnpj_dir_with_company(ctx.config.run_dir, cnpj, empresa)
+    ctx.config = FlowConfig(
+        run_id=ctx.config.run_id,
+        run_dir=ctx.config.run_dir,
+        run_log_file=ctx.config.run_log_file,
+        cnpj_dir=pasta_final,
+        step_timeout_sec=ctx.config.step_timeout_sec,
+        nav_timeout_ms=ctx.config.nav_timeout_ms,
+        selector_timeout_ms=ctx.config.selector_timeout_ms,
+        close_timeout_sec=ctx.config.close_timeout_sec,
+        goto_retries=ctx.config.goto_retries,
+        headless=ctx.config.headless,
+    )
+    return pasta_final
+
+
+async def try_requests_bootstrap_company(
+    context: Any,
+    page: Page,
+    usuario: str,
+    senha: str,
+    cnpj: str,
+    ctx: FlowContext,
+    *,
+    rename_dir: bool = False,
+) -> Optional[BootstrapCompany]:
+    if not requests_bootstrap_enabled():
+        return None
+
+    timeout = max(10, min(_env_int("PORTAL_REQUESTS_BOOTSTRAP_TIMEOUT_SEC", 60), 180))
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                bootstrap_portal_requests,
+                usuario,
+                senha,
+                cnpj,
+                timeout=timeout,
+            ),
+            timeout=timeout + 10,
+        )
+        if not result.cookies:
+            raise FlowError(
+                "REQUESTS_BOOTSTRAP_NO_COOKIES",
+                "Bootstrap requests nao retornou cookies.",
+                short_message="Login requests nao retornou cookies aproveitaveis.",
+                action="Usar fallback pelo navegador.",
+                retryable=True,
+            )
+
+        await context.add_cookies(result.cookies)
+        await resilient_goto(page, result.home_url, config=ctx.config)
+        await detect_portal_access_block(page)
+
+        content = await page.content()
+        if re.search(r"kc-form-login|login-actions/authenticate|Por favor,\s*identifique-se", content, re.I):
+            raise FlowError(
+                "REQUESTS_BOOTSTRAP_COOKIE_REJECTED",
+                "Portal redirecionou para login apos injetar cookies.",
+                short_message="Sessao requests nao foi aceita pelo navegador.",
+                action="Usar fallback pelo navegador ou alinhar proxy/IP.",
+                retryable=True,
+            )
+        if "homeForm" not in content:
+            raise FlowError(
+                "REQUESTS_BOOTSTRAP_HOME_INVALID",
+                f"Home da empresa nao validou apos bootstrap. URL={page.url}",
+                short_message="Home da empresa nao ficou pronta apos bootstrap.",
+                action="Usar fallback pelo navegador.",
+                retryable=True,
+            )
+
+        pasta = _update_ctx_company(ctx, cnpj, result.empresa, rename_dir=rename_dir)
+        await log_flow(
+            ctx,
+            f"Bootstrap requests OK: empresa={result.empresa} cid={result.cid}",
+            event="INFO",
+        )
+        return BootstrapCompany(empresa=result.empresa, cid=result.cid, pasta=pasta)
+
+    except FlowError as exc:
+        if not exc.retryable:
+            raise
+        await log_flow(
+            ctx,
+            f"Bootstrap requests falhou; usando login normal. {type(exc).__name__}: {exc}",
+            event="WARN",
+            level=logging.WARNING,
+            code="REQUESTS_BOOTSTRAP_FALLBACK",
+        )
+        return None
+
+    except Exception as exc:
+        await log_flow(
+            ctx,
+            f"Bootstrap requests falhou; usando login normal. {type(exc).__name__}: {exc}",
+            event="WARN",
+            level=logging.WARNING,
+            code="REQUESTS_BOOTSTRAP_FALLBACK",
+        )
+        return None
 
 
 async def run_step(ctx: FlowContext, name: str, coro: Awaitable[Any]) -> Any:
