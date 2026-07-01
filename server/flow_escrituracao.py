@@ -371,28 +371,7 @@ async def _esperar_resultado_consulta_escrituracao(page, timeout_ms: int = 35_00
     except Exception:
         pass
 
-    await _wait_for_function_retrying_navigation(
-        page,
-        """() => {
-            const visible = (el) => {
-                if (!el) return false;
-                const st = window.getComputedStyle(el);
-                const box = el.getBoundingClientRect();
-                return st.display !== 'none' && st.visibility !== 'hidden' &&
-                       Number(st.opacity || '1') > 0 &&
-                       (box.width > 0 || box.height > 0);
-            };
-            const busy = Array.from(document.querySelectorAll(
-                '#mpProgressoContainer, #mpProgressoDiv, [id$="mpProgressoContainer"], [id$="mpProgressoDiv"]'
-            )).some(visible);
-            if (busy) return false;
-            return !!document.querySelector("a[id$=':linkEscriturar']") ||
-                   !!document.querySelector("span[id$=':linkEscriturarDesabilitado']") ||
-                   !!document.querySelector("a[id$=':linkReabrir']");
-        }""",
-        timeout_ms=timeout_ms,
-    )
-    await asyncio.sleep(0.4)
+    await _wait_for_stable_escrituracao_state(page, timeout_ms=timeout_ms)
 
 
 def _is_navigation_race(exc: Exception) -> bool:
@@ -400,24 +379,101 @@ def _is_navigation_race(exc: Exception) -> bool:
     return "execution context was destroyed" in text or "most likely because of a navigation" in text
 
 
-async def _wait_for_function_retrying_navigation(page, script: str, *, timeout_ms: int) -> None:
+async def _escrituracao_aberta(page) -> bool:
+    try:
+        return bool(
+            await page.evaluate(
+                """() => {
+                    const body = document.body ? (document.body.innerText || '') : '';
+                    return !!document.querySelector("form#abaEncerramentoForm") ||
+                           !!document.querySelector("[id='abaEncerramentoForm:btnEncerrarEscrituracao']") ||
+                           !!document.querySelector("#abaEncerramento_shifted") ||
+                           body.includes('Escrituração Fiscal');
+                }"""
+            )
+        )
+    except Exception as exc:
+        if _is_navigation_race(exc):
+            return False
+        raise
+
+
+async def _escrituracao_resultado_pronto(page) -> bool:
+    try:
+        return bool(
+            await page.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const st = window.getComputedStyle(el);
+                        const box = el.getBoundingClientRect();
+                        return st.display !== 'none' && st.visibility !== 'hidden' &&
+                               Number(st.opacity || '1') > 0 &&
+                               (box.width > 0 || box.height > 0);
+                    };
+                    const busy = Array.from(document.querySelectorAll(
+                        '#mpProgressoContainer, #mpProgressoDiv, [id$="mpProgressoContainer"], [id$="mpProgressoDiv"]'
+                    )).some(visible);
+                    if (busy) return false;
+                    const body = document.body ? (document.body.innerText || '') : '';
+                    return !!document.querySelector("a[id$=':linkEscriturar']") ||
+                           !!document.querySelector("span[id$=':linkEscriturarDesabilitado']") ||
+                           !!document.querySelector("a[id$=':linkReabrir']") ||
+                           !!document.querySelector("form#abaEncerramentoForm") ||
+                           body.includes('Escrituração Fiscal');
+                }"""
+            )
+        )
+    except Exception as exc:
+        if _is_navigation_race(exc):
+            return False
+        raise
+
+
+async def _wait_for_stable_escrituracao_state(page, *, timeout_ms: int) -> None:
     deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    stable_hits = 0
     last_exc: Exception | None = None
     while asyncio.get_running_loop().time() < deadline:
-        remaining_ms = max(1_000, int((deadline - asyncio.get_running_loop().time()) * 1000))
         try:
-            await page.wait_for_function(script, timeout=min(3_000, remaining_ms))
-            return
-        except PWTimeoutError as exc:
-            last_exc = exc
+            if await _escrituracao_resultado_pronto(page):
+                stable_hits += 1
+                if stable_hits >= 3:
+                    return
+            else:
+                stable_hits = 0
         except Exception as exc:
             last_exc = exc
             if not _is_navigation_race(exc):
                 raise
-        await asyncio.sleep(0.35)
+            stable_hits = 0
+        await asyncio.sleep(0.45)
     if last_exc:
         raise last_exc
-    raise PWTimeoutError("Timeout aguardando função no portal")
+    raise PWTimeoutError("Timeout aguardando resultado da consulta de escrituração")
+
+
+async def _wait_escrituracao_aberta(page, *, timeout_ms: int = 35_000) -> None:
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    stable_hits = 0
+    last_exc: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            if await _escrituracao_aberta(page):
+                stable_hits += 1
+                if stable_hits >= 2:
+                    return
+            else:
+                stable_hits = 0
+        except Exception as exc:
+            last_exc = exc
+            if not _is_navigation_race(exc):
+                raise
+            stable_hits = 0
+        await asyncio.sleep(0.45)
+    if last_exc:
+        raise last_exc
+    raise PWTimeoutError("Timeout aguardando abertura da escrituração")
 
 
 async def _query_selector_retrying_navigation(page, selector: str, *, timeout_ms: int = 10_000):
@@ -439,7 +495,17 @@ async def _query_selector_retrying_navigation(page, selector: str, *, timeout_ms
 async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechada: bool = True) -> None:
     await log_flow(ctx, "Escriturar/Reabrir", event="STEP_DETAIL")
 
-    desab = await _query_selector_retrying_navigation(page, "span[id$=':linkEscriturarDesabilitado']")
+    if await _escrituracao_aberta(page):
+        return
+
+    desab = await _query_selector_retrying_navigation(
+        page,
+        "span[id$=':linkEscriturarDesabilitado']",
+        timeout_ms=35_000,
+    )
+    if await _escrituracao_aberta(page):
+        return
+
     if desab:
         if not reabrir_fechada:
             await log_flow(
@@ -462,11 +528,8 @@ async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechad
             pass
 
     await page.click("a[id$=':linkEscriturar']")
-    try:
-        await page.wait_for_load_state("networkidle", timeout=12_000)
-    except Exception:
-        pass
-    await asyncio.sleep(0.8)
+    await _wait_escrituracao_aberta(page)
+    await asyncio.sleep(0.5)
 
 
 async def aba_servicos_existe(page) -> bool:
