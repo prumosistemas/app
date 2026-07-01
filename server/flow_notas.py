@@ -44,6 +44,7 @@ from flow_core import (
     requests_bootstrap_enabled,
     run_step,
     sanitize_folder_name,
+    settle_portal_page,
     somente_digitos,
     submit_portal_login,
     try_requests_bootstrap_company,
@@ -540,6 +541,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> str:
         """
     )
     await asyncio.sleep(2)
+    await settle_portal_page(page, ctx, reason="selecionar empresa notas")
 
     ctx.empresa = nome_emp
     return nome_emp
@@ -562,6 +564,7 @@ async def esperar_overlay_sumir(page, timeout_ms: int = 20_000) -> None:
 
 async def acessar_menu_nfse_consulta(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando NFS-e → Consultar NFS-e", event="STEP_DETAIL")
+    await settle_portal_page(page, ctx, reason="antes menu NFS-e")
 
     try:
         await page.click("a.dropdown-toggle:has-text('NFS-e')", timeout=10_000)

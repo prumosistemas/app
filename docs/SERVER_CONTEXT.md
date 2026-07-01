@@ -1,7 +1,7 @@
 # Contexto do servidor Prumo
 
-Versao operacional: `1.0.25`
-Data de organizacao: `2026-06-29`
+Versao operacional: `1.0.26`
+Data de atualizacao: `2026-07-01`
 Host: `server@ssh.prumosistemas.com.br` via Cloudflare Access
 
 ## Acesso
@@ -22,6 +22,10 @@ O SSH depende do servico `cloudflared.service`, configurado em `/etc/cloudflared
 - App publico/HTMLs: Netlify a partir dos HTMLs versionados no repo.
 - Dados persistentes da API: `/opt/prumo/data`.
 - Deploy Compose: `/opt/prumo/app/deploy`.
+
+## Observacao da versao 1.0.26
+
+A API faz uma limpeza controlada da home do ISS antes de entrar nos menus de topo. O modal benigno `Pesquisa Sefin` e respondido com `Nao`; modais reais de mensagem pendente continuam gerando `MENSAGEM_NA_TELA`; mascaras RichFaces/AJAX sem conteudo util sao removidas antes de acessar Escrituração, NFS-e e DAM.
 - Codigo espelho no servidor: `/home/server/prumo-src`.
 - Proxy do IP do servidor para Modal: `/home/server/prumo-proxy`.
 

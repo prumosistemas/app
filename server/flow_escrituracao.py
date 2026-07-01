@@ -42,6 +42,7 @@ from flow_core import (
     resilient_goto,
     requests_bootstrap_enabled,
     run_step,
+    settle_portal_page,
     somente_digitos,
     submit_portal_login,
     try_requests_bootstrap_company,
@@ -272,6 +273,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
 
 async def acessar_escrituracao(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando menu Escrituração", event="STEP_DETAIL")
+    await settle_portal_page(page, ctx, reason="antes menu Escrituração")
 
     try:
         await page.hover("text=Escrituração", timeout=10_000)

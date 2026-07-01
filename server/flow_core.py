@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover
     class TargetClosedError(PlaywrightError):  # type: ignore
         pass
 
-from flow_errors import FlowError, PortalAccessBlockedError
+from flow_errors import FlowError, MensagemTelaError, PortalAccessBlockedError
 from portal_bootstrap import bootstrap_portal_requests
 
 logger = logging.getLogger("iss")
@@ -531,6 +531,250 @@ async def detect_portal_access_block(page: Page) -> None:
     raise PortalAccessBlockedError(detail)
 
 
+async def _wait_portal_processing(page: Page, timeout_ms: int = 12_000) -> None:
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            busy = await page.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const st = window.getComputedStyle(el);
+                        const box = el.getBoundingClientRect();
+                        return st.display !== 'none' && st.visibility !== 'hidden' &&
+                               Number(st.opacity || '1') > 0 &&
+                               (box.width > 0 || box.height > 0);
+                    };
+                    const selectors = [
+                        '#mpProgressoContainer',
+                        '#mpProgressoDiv',
+                        '[id$="mpProgressoContainer"]',
+                        '[id$="mpProgressoDiv"]'
+                    ];
+                    return selectors.some((sel) =>
+                        Array.from(document.querySelectorAll(sel)).some(visible)
+                    );
+                }"""
+            )
+            if not busy:
+                return
+        except Exception:
+            return
+        await asyncio.sleep(0.35)
+
+
+async def _portal_modal_state(page: Page) -> dict[str, Any]:
+    try:
+        state = await page.evaluate(
+            """() => {
+                const norm = (s) => (s || '')
+                    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                    .toLowerCase().replace(/\\s+/g, ' ').trim();
+                const visible = (el) => {
+                    if (!el) return false;
+                    const st = window.getComputedStyle(el);
+                    const box = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' &&
+                           Number(st.opacity || '1') > 0 &&
+                           (box.width > 0 || box.height > 0);
+                };
+                const bodyRaw = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+                const body = norm(bodyRaw);
+                const panels = Array.from(document.querySelectorAll([
+                    '#mensagensModalContainer',
+                    '#mensagensModalContentDiv',
+                    '#mensagensModalCDiv',
+                    '.rich-modalpanel',
+                    '.rich-mpnl-panel'
+                ].join(','))).filter(visible);
+                const panelRaw = panels.map((el) => el.innerText || el.textContent || '').join(' ');
+                const panel = norm(panelRaw);
+                const text = `${body} ${panel}`;
+                const blockers = Array.from(document.querySelectorAll([
+                    '#mensagensModalDiv',
+                    '#mensagensModalContainer',
+                    '#mensagensModalCDiv',
+                    '#mensagensModalContentDiv',
+                    '.rich-mpnl-mask-div',
+                    '.rich-mpnl-mask-div-opaque',
+                    '.rich-modalpanel',
+                    '.rich-mpnl-panel',
+                    '.modal-backdrop'
+                ].join(','))).filter(visible);
+                const ajaxResidue = /insert_command|partial-response|<update|<eval|a4j\\.ajax|richfaces/i.test(bodyRaw);
+                return {
+                    hasPesquisaSefin: text.includes('pesquisa sefin'),
+                    hasManualMessage: (
+                        text.includes('visualizar mensagens') ||
+                        text.includes('dar ciencia') ||
+                        text.includes('tomar ciencia')
+                    ),
+                    hasMenu: !!document.querySelector("[id='formMenuTopo'], [id^='formMenuTopo:']"),
+                    ajaxResidue,
+                    blockerCount: blockers.length,
+                    panelText: panelRaw.replace(/\\s+/g, ' ').trim().slice(0, 180),
+                    bodyText: bodyRaw.replace(/\\s+/g, ' ').trim().slice(0, 180)
+                };
+            }"""
+        )
+        return dict(state or {})
+    except Exception:
+        return {}
+
+
+async def _click_pesquisa_sefin_nao(page: Page) -> bool:
+    try:
+        clicked = await page.evaluate(
+            """() => {
+                const norm = (s) => (s || '')
+                    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                    .toLowerCase().replace(/\\s+/g, ' ').trim();
+                const body = norm(document.body ? (document.body.innerText || document.body.textContent || '') : '');
+                if (!body.includes('pesquisa sefin')) return false;
+                const controls = Array.from(document.querySelectorAll('input, button, a'));
+                const isNo = (el) => {
+                    const text = norm(
+                        el.value || el.innerText || el.textContent || el.title ||
+                        el.getAttribute('aria-label') || el.getAttribute('alt') || ''
+                    );
+                    return text === 'nao' || text === 'n' || text.startsWith('nao ') ||
+                           text.includes(' nao') || text.includes('nao,') || text.includes('nao.');
+                };
+                const btn = controls.find(isNo);
+                if (!btn) return false;
+                btn.click();
+                return true;
+            }"""
+        )
+        return bool(clicked)
+    except Exception:
+        return False
+
+
+async def _remove_broken_portal_blockers(page: Page) -> int:
+    try:
+        removed = await page.evaluate(
+            """() => {
+                const norm = (s) => (s || '')
+                    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                    .toLowerCase().replace(/\\s+/g, ' ').trim();
+                const visible = (el) => {
+                    if (!el) return false;
+                    const st = window.getComputedStyle(el);
+                    const box = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' &&
+                           Number(st.opacity || '1') > 0 &&
+                           (box.width > 0 || box.height > 0);
+                };
+                const bodyRaw = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+                const panels = Array.from(document.querySelectorAll([
+                    '#mensagensModalContainer',
+                    '#mensagensModalContentDiv',
+                    '#mensagensModalCDiv',
+                    '.rich-modalpanel',
+                    '.rich-mpnl-panel'
+                ].join(','))).filter(visible);
+                const panelText = norm(panels.map((el) => el.innerText || el.textContent || '').join(' '));
+                const fullText = `${norm(bodyRaw)} ${panelText}`;
+                const manualMessage = (
+                    fullText.includes('visualizar mensagens') ||
+                    fullText.includes('dar ciencia') ||
+                    fullText.includes('tomar ciencia')
+                );
+                if (manualMessage) return 0;
+                const ajaxResidue = /insert_command|partial-response|<update|<eval|a4j\\.ajax|richfaces/i.test(bodyRaw);
+                const sefin = fullText.includes('pesquisa sefin');
+                const blockers = Array.from(document.querySelectorAll([
+                    '#mensagensModalDiv',
+                    '#mensagensModalContainer',
+                    '#mensagensModalCDiv',
+                    '#mensagensModalContentDiv',
+                    '#mensagensModalShadowDiv',
+                    '#mensagensModalCursorDiv',
+                    '.rich-mpnl-mask-div',
+                    '.rich-mpnl-mask-div-opaque',
+                    '.rich-modalpanel',
+                    '.rich-mpnl-panel',
+                    '.modal-backdrop'
+                ].join(','))).filter(visible);
+                if (!blockers.length) return 0;
+                if (!ajaxResidue && !sefin && panelText.length > 20) return 0;
+                blockers.forEach((el) => el.remove());
+                document.body && (document.body.style.overflow = '');
+                return blockers.length;
+            }"""
+        )
+        return int(removed or 0)
+    except Exception:
+        return 0
+
+
+async def settle_portal_page(page: Page, ctx: FlowContext, *, reason: str = "") -> None:
+    await _wait_portal_processing(page)
+
+    for _ in range(2):
+        clicked = await _click_pesquisa_sefin_nao(page)
+        if not clicked:
+            break
+        await log_flow(
+            ctx,
+            f"Modal Pesquisa Sefin fechado com Nao ({reason or 'portal'}).",
+            event="INFO",
+        )
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=5_000)
+        except PWTimeoutError:
+            pass
+        await _wait_portal_processing(page)
+        await asyncio.sleep(0.5)
+
+    state = await _portal_modal_state(page)
+    if state.get("hasManualMessage"):
+        raise MensagemTelaError("Mensagem na tela")
+
+    removed = await _remove_broken_portal_blockers(page)
+    if removed:
+        await log_flow(
+            ctx,
+            f"Removidos {removed} bloqueador(es) RichFaces/AJAX travados ({reason or 'portal'}).",
+            event="WARN",
+            level=logging.WARNING,
+            code="PORTAL_BLOCKER_CLEANUP",
+        )
+        await asyncio.sleep(0.4)
+
+    state = await _portal_modal_state(page)
+    if state.get("hasManualMessage"):
+        raise MensagemTelaError("Mensagem na tela")
+
+    needs_reload = bool(state.get("ajaxResidue")) and not bool(state.get("hasMenu"))
+    if needs_reload:
+        await log_flow(
+            ctx,
+            f"Resposta AJAX parcial detectada; recarregando home.seam ({reason or 'portal'}).",
+            event="WARN",
+            level=logging.WARNING,
+            code="PORTAL_AJAX_RECOVERY",
+        )
+        await resilient_goto(page, "https://iss.fortaleza.ce.gov.br/grpfor/home.seam", config=ctx.config)
+        await detect_portal_access_block(page)
+        await _wait_portal_processing(page)
+        if await _click_pesquisa_sefin_nao(page):
+            await _wait_portal_processing(page)
+        state = await _portal_modal_state(page)
+        if state.get("hasManualMessage"):
+            raise MensagemTelaError("Mensagem na tela")
+        removed = await _remove_broken_portal_blockers(page)
+        if removed:
+            await log_flow(
+                ctx,
+                f"Removidos {removed} bloqueador(es) apos recarregar home.seam.",
+                event="WARN",
+                level=logging.WARNING,
+                code="PORTAL_BLOCKER_CLEANUP",
+            )
+
+
 async def submit_portal_login(page: Page, usuario: str, senha: str, config: FlowConfig) -> None:
     url = "https://iss.fortaleza.ce.gov.br/grpfor/oauth2/login"
     attempts = max(1, min(_env_int("PORTAL_LOGIN_ATTEMPTS", 2), 4))
@@ -625,6 +869,7 @@ async def try_requests_bootstrap_company(
         await context.add_cookies(result.cookies)
         await resilient_goto(page, result.home_url, config=ctx.config)
         await detect_portal_access_block(page)
+        await settle_portal_page(page, ctx, reason="bootstrap requests")
 
         content = await page.content()
         if re.search(r"kc-form-login|login-actions/authenticate|Por favor,\s*identifique-se", content, re.I):

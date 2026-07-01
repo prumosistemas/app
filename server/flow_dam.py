@@ -33,6 +33,7 @@ from flow_core import (
     resilient_goto,
     requests_bootstrap_enabled,
     run_step,
+    settle_portal_page,
     somente_digitos,
     submit_portal_login,
     try_requests_bootstrap_company,
@@ -811,6 +812,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
 
 async def acessar_menu_dam(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando menu Recolhimento / Emitir DAM", event="STEP_DETAIL")
+    await settle_portal_page(page, ctx, reason="antes menu DAM")
 
     try:
         await page.hover("text=Recolhimento", timeout=10_000)
