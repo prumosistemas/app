@@ -140,6 +140,14 @@ def classify_exception(exc: Exception) -> ErrorSpec:
             retryable=True,
         )
 
+    if "execution context was destroyed" in text_low or "most likely because of a navigation" in text_low:
+        return ErrorSpec(
+            code="NAVIGATION_RACE",
+            short_message="O portal recarregou a tela durante uma ação da automação.",
+            action="Repetir o fluxo; se persistir, aumentar esperas do passo afetado.",
+            retryable=True,
+        )
+
     if "net::err_name_not_resolved" in text_low:
         return ErrorSpec(
             code="DNS_ERROR",

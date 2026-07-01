@@ -312,6 +312,10 @@ async def acessar_escrituracao(page, ctx: FlowContext) -> None:
         """
     )
     await page.wait_for_load_state("networkidle")
+    await page.wait_for_selector(
+        "#manterEscrituracaoForm\\:dataInicialHeader .rich-calendar-tool-btn",
+        timeout=30_000,
+    )
     await asyncio.sleep(1.0)
 
 
@@ -354,13 +358,88 @@ async def preencher_calendarios(page, mes: str, ctx: FlowContext) -> None:
 async def clicar_consultar(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Consultando escrituração", event="STEP_DETAIL")
     await page.click("#manterEscrituracaoForm\\:btnConsultar")
-    await asyncio.sleep(1.0)
+    await _esperar_resultado_consulta_escrituracao(page)
+
+
+async def _esperar_resultado_consulta_escrituracao(page, timeout_ms: int = 35_000) -> None:
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=5_000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+    except Exception:
+        pass
+
+    await _wait_for_function_retrying_navigation(
+        page,
+        """() => {
+            const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                const box = el.getBoundingClientRect();
+                return st.display !== 'none' && st.visibility !== 'hidden' &&
+                       Number(st.opacity || '1') > 0 &&
+                       (box.width > 0 || box.height > 0);
+            };
+            const busy = Array.from(document.querySelectorAll(
+                '#mpProgressoContainer, #mpProgressoDiv, [id$="mpProgressoContainer"], [id$="mpProgressoDiv"]'
+            )).some(visible);
+            if (busy) return false;
+            return !!document.querySelector("a[id$=':linkEscriturar']") ||
+                   !!document.querySelector("span[id$=':linkEscriturarDesabilitado']") ||
+                   !!document.querySelector("a[id$=':linkReabrir']");
+        }""",
+        timeout_ms=timeout_ms,
+    )
+    await asyncio.sleep(0.4)
+
+
+def _is_navigation_race(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return "execution context was destroyed" in text or "most likely because of a navigation" in text
+
+
+async def _wait_for_function_retrying_navigation(page, script: str, *, timeout_ms: int) -> None:
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    last_exc: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        remaining_ms = max(1_000, int((deadline - asyncio.get_running_loop().time()) * 1000))
+        try:
+            await page.wait_for_function(script, timeout=min(3_000, remaining_ms))
+            return
+        except PWTimeoutError as exc:
+            last_exc = exc
+        except Exception as exc:
+            last_exc = exc
+            if not _is_navigation_race(exc):
+                raise
+        await asyncio.sleep(0.35)
+    if last_exc:
+        raise last_exc
+    raise PWTimeoutError("Timeout aguardando função no portal")
+
+
+async def _query_selector_retrying_navigation(page, selector: str, *, timeout_ms: int = 10_000):
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    last_exc: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            return await page.query_selector(selector)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_navigation_race(exc):
+                raise
+        await asyncio.sleep(0.25)
+    if last_exc:
+        raise last_exc
+    return None
 
 
 async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechada: bool = True) -> None:
     await log_flow(ctx, "Escriturar/Reabrir", event="STEP_DETAIL")
 
-    desab = await page.query_selector("span[id$=':linkEscriturarDesabilitado']")
+    desab = await _query_selector_retrying_navigation(page, "span[id$=':linkEscriturarDesabilitado']")
     if desab:
         if not reabrir_fechada:
             await log_flow(
@@ -378,12 +457,16 @@ async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechad
             )
         try:
             await page.click("a[id$=':linkReabrir']")
-            await asyncio.sleep(1.0)
+            await _esperar_resultado_consulta_escrituracao(page, timeout_ms=20_000)
         except Exception:
             pass
 
     await page.click("a[id$=':linkEscriturar']")
-    await asyncio.sleep(1.0)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+    except Exception:
+        pass
+    await asyncio.sleep(0.8)
 
 
 async def aba_servicos_existe(page) -> bool:
