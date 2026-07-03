@@ -324,6 +324,17 @@
     button.success:hover { box-shadow: 0 2px 8px rgba(22,163,74,0.25); }
     button.sm  { height: 27px; padding: 0 9px; font-size: 11px; border-radius: 6px; }
     button:disabled, .button.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+    button.is-loading, .button.is-loading { opacity: 0.72; cursor: wait; pointer-events: none; }
+    .btn-spinner {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      display: inline-block;
+      animation: spin 0.65s linear infinite;
+      flex-shrink: 0;
+    }
 
     .notice {
       border: 1px solid var(--border2);
@@ -1238,6 +1249,14 @@
         <span class="small" style="color:var(--text3);">Marcado: reabre, executa e fecha novamente · Desmarcado: não reabre competências fechadas</span>
       </div>
 
+      <div id="runAutoRetryOption" class="run-option-box">
+        <label class="compact-check" for="runAutoRetry">
+          <input type="checkbox" id="runAutoRetry" checked />
+          <strong>Retry automático seguro</strong>
+        </label>
+        <span class="small" style="color:var(--text3);">Reexecuta automaticamente apenas falhas técnicas conhecidas como retryable. CNPJ errado, mensagem na tela e mismatch ficam fora.</span>
+      </div>
+
       <div>
         <label>Fluxos desta run</label>
         <div class="table-wrap">
@@ -1360,6 +1379,13 @@
     </div>
     <div class="dlg-body">
       <div class="dlg-message">Escolha como o retry deve funcionar.</div>
+      <div id="retryOnlyRetryableChoice" class="retry-choice">
+        <label class="compact-check" for="retryModalOnlyRetryable">
+          <input id="retryModalOnlyRetryable" type="checkbox" checked />
+          <strong>Somente retry seguro/retryable</strong>
+        </label>
+        <span class="small">Marcado = não repete CNPJ errado, mensagem na tela, mismatch e outros erros definitivos.</span>
+      </div>
       <div id="retryCancelledChoice" class="retry-choice">
         <label class="compact-check" for="retryModalIncludeCancelled">
           <input id="retryModalIncludeCancelled" type="checkbox" checked />
@@ -1497,6 +1523,23 @@ function customConfirm(message, title='Confirmar', type='danger') {
 }
 
 function escapeHtml(v){ return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;") }
+async function withButtonLoading(button, label, action){
+  if(!button || button.dataset.loading==="1") return;
+  const previousHtml = button.innerHTML;
+  const previousDisabled = button.disabled;
+  button.dataset.loading = "1";
+  button.classList.add("is-loading");
+  button.disabled = true;
+  button.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${escapeHtml(label || "Carregando...")}`;
+  try{
+    return await action();
+  }finally{
+    button.innerHTML = previousHtml;
+    button.disabled = previousDisabled;
+    button.classList.remove("is-loading");
+    delete button.dataset.loading;
+  }
+}
 function showBox(el,type,text){ if(!el)return; el.className="notice "+type; el.textContent=text; el.classList.remove("hidden") }
 function hideBox(el){ if(!el)return; el.classList.add("hidden"); el.textContent="" }
 function onlyDigits(v){ return String(v??"").replace(/\D/g,"") }
@@ -1506,6 +1549,7 @@ function isActiveStatus(s){ return ["running","queued"].includes(String(s||"")) 
 function notasModeLabel(run){ return run?.usar_codigo_dominio===false?"Notas: CNPJ+Empresa":"Notas: Código Domínio" }
 function getUsarCodigoDominio(){ return $("runUsarCodigoDominio")?.checked === true }
 function getReabrirEscrituracaoFechada(){ return $("runReabrirEscrituracaoFechada")?.checked !== false }
+function getAutoRetryEnabled(){ return $("runAutoRetry")?.checked !== false }
 function cleanAccountName(v){ return String(v??"").trim().replace(/\s+/g," ") }
 function findAccountByName(name){ const n=normalizeText(name); if(!n)return null; return accounts.find(a=>normalizeText(a.alias)===n)||null }
 function accountAliasExists(alias,exceptId=""){ const n=normalizeText(alias); return !!accounts.find(a=>normalizeText(a.alias)===n&&String(a.id)!==String(exceptId||"")) }
@@ -1889,6 +1933,7 @@ function updateExecutionLocks(){
   document.querySelectorAll("[data-run-flow]").forEach(input=>input.disabled=activeRun);
   $("runUsarCodigoDominio").disabled=activeRun;
   if($("runReabrirEscrituracaoFechada")) $("runReabrirEscrituracaoFechada").disabled=activeRun;
+  if($("runAutoRetry")) $("runAutoRetry").disabled=activeRun;
   $("activeRunNotice").classList.toggle("hidden",!activeRun);
   updateDatasetEditorLock();
 }
@@ -2777,7 +2822,8 @@ $("btnCreateRun").addEventListener("click",async()=>{
         dataset_id:$("runDataset").value,
         flow_selection:flowSelection,
         usar_codigo_dominio:getUsarCodigoDominio(),
-        reabrir_escrituracao_fechada:getReabrirEscrituracaoFechada()
+        reabrir_escrituracao_fechada:getReabrirEscrituracaoFechada(),
+        auto_retry_enabled:getAutoRetryEnabled()
       })
     });
     closeCreateRunModal();
@@ -2793,7 +2839,7 @@ $("btnZipRun").addEventListener("click",async event=>{
   const selected=selectedRunFull||runs.find(r=>r.run_id===selectedRunId);
   if(isActiveStatus(selected?.status)){ toast("Não é possível baixar o ZIP durante execução.", "warn"); return; }
   if(!selectedRunId)return;
-  await downloadProtectedRunZip(selectedRunId);
+  await withButtonLoading(event.currentTarget, "Gerando ZIP...", () => downloadProtectedRunZip(selectedRunId));
 });
 
 $("btnStopRun").addEventListener("click",async()=>{
@@ -2851,7 +2897,7 @@ $("btnRetryRun").addEventListener("click",async()=>{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        only_retryable:false,
+        only_retryable:retryOptions.onlyRetryable,
         include_cancelled:retryOptions.includeCancelled,
         include_interrupted:retryOptions.includeInterrupted
       })
@@ -2870,6 +2916,7 @@ function openRetryDialog(){
     if(!root){ resolve(null); return; }
     const onCancel=()=>close(null);
     const onConfirm=()=>close({
+      onlyRetryable:Boolean($("retryModalOnlyRetryable")?.checked),
       includeCancelled:Boolean($("retryModalIncludeCancelled")?.checked),
       includeInterrupted:Boolean($("retryModalIncludeInterrupted")?.checked)
     });
@@ -2886,6 +2933,7 @@ function openRetryDialog(){
     const hasInterrupted=Number(run.interrompidas||0)>0;
     $("retryCancelledChoice").classList.toggle("hidden",!hasCancelled);
     $("retryInterruptedChoice").classList.toggle("hidden",!hasInterrupted);
+    $("retryModalOnlyRetryable").checked=true;
     $("retryModalIncludeCancelled").checked=hasCancelled;
     $("retryModalIncludeInterrupted").checked=false;
     $("retryDlgCancel").addEventListener("click",onCancel);
@@ -3051,7 +3099,7 @@ function renderCnpjModal(){
       return `<div class="file-pill"><div><div class="file-pill-name">${escapeHtml(fileDisplayName(file.relative_path))}</div><div class="file-pill-size">${escapeHtml(fileFlowLabel(file.relative_path))} · ${fmtBytes(file.size)}</div></div><button
   type="button"
   class="button secondary sm"
-  onclick="downloadProtectedFile('${encodeURIComponent(file.run_id)}','${encodeURIComponent(file.relative_path)}')"
+  onclick="downloadProtectedFile('${encodeURIComponent(file.run_id)}','${encodeURIComponent(file.relative_path)}',{button:this})"
 >
   ⬇ Baixar
 </button></div>`;
@@ -3075,7 +3123,7 @@ $("btnDownloadCnpj").addEventListener("click",async()=>{
   if(!selectedRunId||!selectedModalCnpj)return;
   const files=allFilesForCnpj(selectedModalCnpj);
   if(!files.length){ toast("Nenhum arquivo para baixar.","warn"); return; }
-  await downloadProtectedCnpjZip(selectedRunId, selectedModalCnpj);
+  await withButtonLoading($("btnDownloadCnpj"), "Gerando ZIP...", () => downloadProtectedCnpjZip(selectedRunId, selectedModalCnpj));
 });
 
 $("btnStopFlow").addEventListener("click",async()=>{
@@ -3162,6 +3210,7 @@ async function downloadProtectedCnpjZip(runId, cnpj) {
 }
 
 async function downloadProtectedFile(runId, path, options = {}) {
+  const action = async () => {
   try {
     const url =
       API_BASE +
@@ -3178,6 +3227,9 @@ async function downloadProtectedFile(runId, path, options = {}) {
     console.error(err);
     if (!options.quiet) toast(err.message || "Erro ao baixar arquivo", "err");
   }
+  };
+  if(options.button) return withButtonLoading(options.button, "Baixando...", action);
+  return action();
 }
 function renderDatasets(){
   const box=$("datasetsList");
@@ -3365,12 +3417,14 @@ $("btnExportDataset").addEventListener("click",()=>{
 $("resultsPrev").addEventListener("click",async()=>{
   if(!selectedRunId || resultsPage<=1)return;
   resultsPage=Math.max(1, resultsPage-1);
-  await refreshSelectedRunDetail(true);
+  await withButtonLoading($("resultsPrev"), "Carregando...", () => refreshSelectedRunDetail(true));
+  updatePager("results", selectedRunPagination.page || resultsPage, selectedRunPagination.totalPages || 1);
 });
 $("resultsNext").addEventListener("click",async()=>{
   if(!selectedRunId || resultsPage>=selectedRunPagination.totalPages)return;
   resultsPage+=1;
-  await refreshSelectedRunDetail(true);
+  await withButtonLoading($("resultsNext"), "Carregando...", () => refreshSelectedRunDetail(true));
+  updatePager("results", selectedRunPagination.page || resultsPage, selectedRunPagination.totalPages || 1);
 });
 $("datasetPrev").addEventListener("click",()=>{ datasetPage=Math.max(1, datasetPage-1); renderDatasetRows({items:currentDatasetRows}); });
 $("datasetNext").addEventListener("click",()=>{ datasetPage+=1; renderDatasetRows({items:currentDatasetRows}); });

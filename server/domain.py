@@ -21,6 +21,7 @@ from flow_core import somente_digitos
 from db import (
     ACTIVE_STATUSES,
     ALLOW_DIRECT_LOCAL,
+    AUTO_RETRY_MAX_ATTEMPTS,
     BASE_BROWSER_SLOTS,
     BROWSER_POOL_CONFIGURED,
     BROWSER_TURBO_EXTRA,
@@ -86,10 +87,11 @@ class RunCreateRequest(BaseModel):
     flow_selection: Dict[str, Dict[str, bool]] = Field(default_factory=dict)
     usar_codigo_dominio: bool = True
     reabrir_escrituracao_fechada: bool = True
+    auto_retry_enabled: bool = True
 
 
 class RetryRequest(BaseModel):
-    only_retryable: bool = False
+    only_retryable: bool = True
     include_cancelled: bool = True
     include_interrupted: bool = False
 
@@ -1930,7 +1932,8 @@ def build_state_sync(ctx: WorkerContext) -> Dict[str, Any]:
             ],
             "retry_options": {
                 "include_cancelled": True,
-                "only_retryable": False,
+                "only_retryable": True,
+                "auto_retry_max_attempts": AUTO_RETRY_MAX_ATTEMPTS,
             },
             "zip_unificado_sem_tentativas": True,
             "zip_blocked_while_running": True,

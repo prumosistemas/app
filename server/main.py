@@ -54,7 +54,6 @@ from domain import (
     StopFlowRequest,
     WorkerContext,
     account_usage,
-    aggregate_results_for_root,
     assert_no_active_run,
     assert_root_not_active,
     build_mes,
@@ -73,7 +72,6 @@ from domain import (
     get_dataset_or_404,
     get_worker_context,
     hydrate_tasks_with_current_accounts,
-    hydrate_tasks_with_retry_snapshot,
     load_accounts_public,
     load_accounts_raw,
     load_datasets,
@@ -112,6 +110,7 @@ from run_queue import (
     active_jobs_for_scope,
     build_state,
     create_attempt_record,
+    create_retry_attempt_for_root,
     queue_state_for_ctx,
     runtime_queue_metrics,
     startup_queue_workers,
@@ -120,7 +119,7 @@ from run_queue import (
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.28",
+    version="1.0.29",
     description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
 )
 
@@ -371,7 +370,7 @@ def build_company_admin_summary(company_id: str, *, include_account_secrets: boo
                     continue
                 user["user_email"] = user["user_email"] or str(run.get("user_email") or "")
                 latest_attempts.append(run)
-                if run.get("attempt_type") == "retry":
+                if run.get("attempt_type") in {"retry", "auto_retry"}:
                     retries += 1
                 if run.get("visible", True) and (run.get("run_id") == (run.get("root_id") or run.get("run_id"))):
                     visible_roots.append(run)
@@ -468,7 +467,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "ISS Automação API",
-        "version": "1.0.28",
+        "version": "1.0.29",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
@@ -1069,6 +1068,7 @@ async def create_run(payload: RunCreateRequest, ctx: WorkerContext = Depends(get
         inherit_credential_snapshots_from_root=None,
         usar_codigo_dominio=payload.usar_codigo_dominio,
         reabrir_escrituracao_fechada=payload.reabrir_escrituracao_fechada,
+        auto_retry_enabled=payload.auto_retry_enabled,
     )
 
 
@@ -1192,6 +1192,8 @@ async def duplicate_run(run_id: str, ctx: WorkerContext = Depends(get_worker_con
     runtime_tasks = hydrate_tasks_with_current_accounts(ctx, root_run.get("input_tasks", []))
     usar_codigo_dominio = bool(root_run.get("usar_codigo_dominio", True))
     reabrir_escrituracao_fechada = bool(root_run.get("reabrir_escrituracao_fechada", True))
+    auto_retry_enabled = bool(root_run.get("auto_retry_enabled", True))
+    auto_retry_max_attempts = int(root_run.get("auto_retry_max_attempts") or 3)
 
     return await create_attempt_record(
         ctx,
@@ -1206,6 +1208,8 @@ async def duplicate_run(run_id: str, ctx: WorkerContext = Depends(get_worker_con
         inherit_credential_snapshots_from_root=None,
         usar_codigo_dominio=usar_codigo_dominio,
         reabrir_escrituracao_fechada=reabrir_escrituracao_fechada,
+        auto_retry_enabled=auto_retry_enabled,
+        auto_retry_max_attempts=auto_retry_max_attempts,
     )
 
 
@@ -1228,55 +1232,13 @@ async def retry_run(
     if not root_run:
         raise HTTPException(status_code=404, detail="Run raiz não encontrada.")
 
-    retry_statuses = {"erro"}
-
-    if payload.include_cancelled:
-        retry_statuses.add("cancelled")
-
-    if payload.include_interrupted:
-        retry_statuses.add("interrompida")
-
-    aggregate_results = aggregate_results_for_root(ctx, root_id)
-
-    error_results = [
-        r
-        for r in aggregate_results
-        if r.get("status") in retry_statuses
-        and (not payload.only_retryable or r.get("retryable"))
-    ]
-
-    if not error_results:
-        extras = []
-        if payload.include_cancelled:
-            extras.append("cancelamentos")
-        if payload.include_interrupted:
-            extras.append("interrompidas")
-        msg = "Não há erros" + (", " + " ou ".join(extras) if extras else "") + " elegíveis para retry."
-        raise HTTPException(status_code=400, detail=msg)
-
-    error_keys = {task_key(r) for r in error_results}
-    retry_state_tasks = [item for item in root_run.get("input_tasks", []) if task_key(item) in error_keys]
-
-    if not retry_state_tasks:
-        raise HTTPException(status_code=400, detail="Não foi possível montar os itens de retry.")
-
-    runtime_tasks = hydrate_tasks_with_retry_snapshot(ctx, root_run, retry_state_tasks)
-    usar_codigo_dominio = bool(root_run.get("usar_codigo_dominio", True))
-    reabrir_escrituracao_fechada = bool(root_run.get("reabrir_escrituracao_fechada", True))
-
-    return await create_attempt_record(
+    return await create_retry_attempt_for_root(
         ctx,
-        mes=root_run.get("mes", ""),
-        dataset_id=root_run.get("dataset_id"),
-        dataset_alias=root_run.get("dataset_alias", ""),
-        runtime_tasks=runtime_tasks,
         root_id=root_id,
         parent_run_id=run_id,
-        attempt_type="retry",
-        visible=False,
-        inherit_credential_snapshots_from_root=root_run.get("credential_snapshots", {}),
-        usar_codigo_dominio=usar_codigo_dominio,
-        reabrir_escrituracao_fechada=reabrir_escrituracao_fechada,
+        only_retryable=payload.only_retryable,
+        include_cancelled=payload.include_cancelled,
+        include_interrupted=payload.include_interrupted,
     )
 
 

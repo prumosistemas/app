@@ -1,7 +1,7 @@
 # Contexto do servidor Prumo
 
-Versao operacional: `1.0.28`
-Data de atualizacao: `2026-07-01`
+Versao operacional: `1.0.29`
+Data de atualizacao: `2026-07-03`
 Host: `server@ssh.prumosistemas.com.br` via Cloudflare Access
 
 ## Acesso
@@ -23,11 +23,13 @@ O SSH depende do servico `cloudflared.service`, configurado em `/etc/cloudflared
 - Dados persistentes da API: `/opt/prumo/data`.
 - Deploy Compose: `/opt/prumo/app/deploy`.
 
-## Observacao da versao 1.0.28
+## Observacao da versao 1.0.29
 
 A API faz uma limpeza controlada da home do ISS antes de entrar nos menus de topo. O modal benigno `Pesquisa Sefin` e respondido com `Nao`; modais reais de mensagem pendente continuam gerando `MENSAGEM_NA_TELA`; mascaras RichFaces/AJAX sem conteudo util sao removidas antes de acessar Escrituração, NFS-e e DAM.
 
 Na Escrituração, a API tambem aguarda o resultado de `Consultar` antes de ler os links de `Escriturar/Reabrir`, aceita a tela `Escrituração Fiscal` já aberta como sucesso e exige estabilidade por leituras consecutivas para evitar falso erro quando o portal navega ou troca o DOM durante a automação.
+
+A UI cria runs com retry automatico seguro preselecionado. O servidor limita a cadeia por `AUTO_RETRY_MAX_ATTEMPTS` e so agenda nova tentativa para erros marcados como retryable que nao sejam finais de negocio/portal, como `CNPJ_INEXISTENTE`, `CNPJ_MISMATCH`, `MENSAGEM_NA_TELA`, `LOGIN_ERROR` e `PORTAL_ACCESS_BLOCKED`. Os botoes de ZIP/download e a paginacao da run selecionada mostram loader local durante a acao.
 - Codigo espelho no servidor: `/home/server/prumo-src`.
 - Proxy do IP do servidor para Modal: `/home/server/prumo-proxy`.
 

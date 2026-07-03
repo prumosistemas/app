@@ -16,6 +16,7 @@ from flow_notas import job_notas
 
 from db import (
     ACTIVE_STATUSES,
+    AUTO_RETRY_MAX_ATTEMPTS,
     FLOW_EXECUTION_ORDER,
     FLOW_LABELS,
     HEADLESS,
@@ -31,12 +32,14 @@ from domain import (
     WorkerContext,
     assert_no_active_run,
     attempt_dir,
+    aggregate_results_for_root,
     build_state_sync,
     cancel_item_before_start,
     compact_root_run,
     credential_snapshot_from_tasks,
     flow_dir_for_task,
     group_tasks_by_cnpj,
+    hydrate_tasks_with_retry_snapshot,
     item_stop_requested,
     list_run_files,
     local_run_key,
@@ -49,10 +52,32 @@ from domain import (
     save_runs_state,
     scope_id,
     strip_runtime_tasks,
+    task_key,
     upsert_run_result,
     validate_output_integrity,
     write_run_log,
 )
+
+
+AUTO_RETRY_BLOCKED_CODES = {
+    "CNPJ_INEXISTENTE",
+    "CNPJ_MISMATCH",
+    "MENSAGEM_NA_TELA",
+    "LOGIN_ERROR",
+    "PORTAL_ACCESS_BLOCKED",
+    "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA",
+}
+
+
+def is_safe_retryable_result(result: Dict[str, Any]) -> bool:
+    code = str(result.get("erro_code") or result.get("code") or "").strip().upper()
+    return bool(result.get("retryable")) and code not in AUTO_RETRY_BLOCKED_CODES
+
+
+def _attempts_for_root(ctx: WorkerContext, root_id: str) -> List[Dict[str, Any]]:
+    attempts = [run for run in runs_for_member(ctx) if root_id_of(run) == root_id]
+    attempts.sort(key=lambda item: int(item.get("created_at") or 0))
+    return attempts
 
 
 @dataclass(frozen=True)
@@ -349,7 +374,8 @@ async def run_one_item_unlocked(
         )
 
         flow_retry = 0
-        max_flow_retries = _transient_flow_retries()
+        run_auto_retry = bool(RUNS.get(run_key, {}).get("auto_retry_enabled", True))
+        max_flow_retries = _transient_flow_retries() if run_auto_retry else 0
         while True:
             try:
                 result = await execute_flow(
@@ -654,6 +680,8 @@ async def mark_run_group_started(ctx: WorkerContext, run_key: str, group_key: st
 
 
 async def mark_run_group_finished(ctx: WorkerContext, run_key: str, group_key: str) -> None:
+    should_auto_retry = False
+
     async with RUN_LOCK:
         run = RUNS.get(run_key)
 
@@ -688,8 +716,12 @@ async def mark_run_group_finished(ctx: WorkerContext, run_key: str, group_key: s
                     f"status={run['status']} ok={run.get('ok', 0)} erros={run.get('erros', 0)}"
                 ),
             )
+            should_auto_retry = final_status == "finished"
 
         save_runs_state(ctx)
+
+    if should_auto_retry:
+        await maybe_schedule_auto_retry(ctx, run_key)
 
 
 async def queue_worker(worker_index: int) -> None:
@@ -787,6 +819,121 @@ def next_attempt_number(ctx: WorkerContext, root_id: str) -> int:
     return len(attempts) + 1
 
 
+async def create_retry_attempt_for_root(
+    ctx: WorkerContext,
+    root_id: str,
+    *,
+    parent_run_id: str,
+    only_retryable: bool = True,
+    include_cancelled: bool = False,
+    include_interrupted: bool = False,
+    auto: bool = False,
+) -> Dict[str, Any]:
+    root_run = next((r for r in runs_for_member(ctx) if r.get("run_id") == root_id), None)
+
+    if not root_run:
+        raise HTTPException(status_code=404, detail="Run raiz não encontrada.")
+
+    retry_statuses = {"erro"}
+
+    if include_cancelled:
+        retry_statuses.add("cancelled")
+
+    if include_interrupted:
+        retry_statuses.add("interrompida")
+
+    error_results = []
+
+    for result in aggregate_results_for_root(ctx, root_id):
+        if result.get("status") not in retry_statuses:
+            continue
+        if only_retryable and not is_safe_retryable_result(result):
+            continue
+        error_results.append(result)
+
+    if not error_results:
+        extras = []
+        if include_cancelled:
+            extras.append("cancelamentos")
+        if include_interrupted:
+            extras.append("interrompidas")
+        qualifier = " seguros/retryable" if only_retryable else ""
+        msg = "Não há erros" + qualifier + (", " + " ou ".join(extras) if extras else "") + " elegíveis para retry."
+        raise HTTPException(status_code=400, detail=msg)
+
+    error_keys = {task_key(result) for result in error_results}
+    retry_state_tasks = [item for item in root_run.get("input_tasks", []) if task_key(item) in error_keys]
+
+    if not retry_state_tasks:
+        raise HTTPException(status_code=400, detail="Não foi possível montar os itens de retry.")
+
+    runtime_tasks = hydrate_tasks_with_retry_snapshot(ctx, root_run, retry_state_tasks)
+
+    return await create_attempt_record(
+        ctx,
+        mes=root_run.get("mes", ""),
+        dataset_id=root_run.get("dataset_id"),
+        dataset_alias=root_run.get("dataset_alias", ""),
+        runtime_tasks=runtime_tasks,
+        root_id=root_id,
+        parent_run_id=parent_run_id,
+        attempt_type="auto_retry" if auto else "retry",
+        visible=False,
+        inherit_credential_snapshots_from_root=root_run.get("credential_snapshots", {}),
+        usar_codigo_dominio=bool(root_run.get("usar_codigo_dominio", True)),
+        reabrir_escrituracao_fechada=bool(root_run.get("reabrir_escrituracao_fechada", True)),
+        auto_retry_enabled=bool(root_run.get("auto_retry_enabled", True)),
+        auto_retry_max_attempts=int(root_run.get("auto_retry_max_attempts") or AUTO_RETRY_MAX_ATTEMPTS),
+    )
+
+
+async def maybe_schedule_auto_retry(ctx: WorkerContext, run_key: str) -> None:
+    run = RUNS.get(run_key)
+
+    if not run or run.get("status") != "finished":
+        return
+
+    root_id = root_id_of(run)
+    root_run = next((r for r in runs_for_member(ctx) if r.get("run_id") == root_id), None)
+
+    if not root_run or not bool(root_run.get("auto_retry_enabled", True)):
+        return
+
+    max_attempts = max(1, int(root_run.get("auto_retry_max_attempts") or AUTO_RETRY_MAX_ATTEMPTS))
+    attempts = _attempts_for_root(ctx, root_id)
+    run_log_file = run.get("run_log_file") or os.path.join(run.get("run_dir", ""), "logs.txt")
+
+    if len(attempts) >= max_attempts:
+        write_run_log(
+            run_log_file,
+            f"[AUTO_RETRY_SKIP] run={root_id} motivo=max_attempts attempts={len(attempts)} max={max_attempts}",
+        )
+        return
+
+    try:
+        payload = await create_retry_attempt_for_root(
+            ctx,
+            root_id,
+            parent_run_id=run.get("run_id"),
+            only_retryable=True,
+            include_cancelled=False,
+            include_interrupted=False,
+            auto=True,
+        )
+        write_run_log(
+            run_log_file,
+            (
+                f"[AUTO_RETRY_START] run={root_id} "
+                f"attempt_run_id={payload.get('attempt_run_id')} max_attempts={max_attempts}"
+            ),
+        )
+    except HTTPException as exc:
+        write_run_log(run_log_file, f"[AUTO_RETRY_SKIP] run={root_id} motivo={exc.detail}")
+    except Exception as exc:
+        logger.exception("[AUTO_RETRY_ERROR] run=%s", root_id)
+        write_run_log(run_log_file, f"[AUTO_RETRY_ERROR] run={root_id} erro={type(exc).__name__}: {exc}")
+
+
 async def create_attempt_record(
     ctx: WorkerContext,
     *,
@@ -801,6 +948,8 @@ async def create_attempt_record(
     inherit_credential_snapshots_from_root: Optional[Dict[str, Any]] = None,
     usar_codigo_dominio: bool = True,
     reabrir_escrituracao_fechada: bool = True,
+    auto_retry_enabled: bool = True,
+    auto_retry_max_attempts: int = AUTO_RETRY_MAX_ATTEMPTS,
 ) -> Dict[str, Any]:
     groups = group_tasks_by_cnpj(runtime_tasks)
 
@@ -859,6 +1008,8 @@ async def create_attempt_record(
             "stop_requested_keys": [],
             "usar_codigo_dominio": bool(usar_codigo_dominio),
             "reabrir_escrituracao_fechada": bool(reabrir_escrituracao_fechada),
+            "auto_retry_enabled": bool(auto_retry_enabled),
+            "auto_retry_max_attempts": max(1, int(auto_retry_max_attempts or AUTO_RETRY_MAX_ATTEMPTS)),
             "created_by_user_id": ctx.user_id,
             "created_by_user_email": ctx.user_email,
             "groups_total": len(groups),
