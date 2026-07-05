@@ -1,3 +1,4 @@
+import indexHtml from "../index.html";
 import portalNacionalHtml from "../portal-nacional.html";
 
 // worker.js
@@ -60,6 +61,10 @@ export default {
     try {
       if (request.method === "OPTIONS") {
         return optionsResponse(request, env);
+      }
+
+      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "")) {
+        return htmlResponse(indexHtml);
       }
 
       if (request.method === "GET" && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {

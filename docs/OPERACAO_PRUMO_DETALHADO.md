@@ -142,7 +142,7 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 - selecao de certificado no runtime, sem upload de arquivo de certificado.
 - sessao gerada via proxy do servidor quando a producao Linux precisa usar cookies criados no Windows.
 
-Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A rota limpa `/portal-nacional` foi mantida ativa por uma rota especifica do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/portal-nacional*`), que entrega `portal-nacional.html` diretamente.
+Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A central `/` e a rota limpa `/portal-nacional` foram mantidas ativas por rotas especificas do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`), que entregam `index.html` e `portal-nacional.html` diretamente.
 
 Arquivos principais:
 

@@ -288,7 +288,7 @@ As URLs publicas usam redirects do `netlify.toml`, entao o usuario acessa sem `.
 
 Todos os HTMLs apontam para o Worker de producao `https://morning-credit-8a59.prumo-sistema.workers.dev`.
 
-Observacao de 2026-07-05: o Netlify bloqueou novos deploys por credito da conta. Para manter o Portal Nacional acessivel sem `.html`, o Worker `morning-credit-8a59` tambem atende a rota Cloudflare `app.prumosistemas.com.br/portal-nacional*` e entrega `portal-nacional.html` diretamente. Quando o Netlify voltar a aceitar deploys, o `netlify.toml` continua sendo a fonte normal das rotas limpas.
+Observacao de 2026-07-05: o Netlify bloqueou novos deploys por credito da conta. Para manter a Central atualizada e o Portal Nacional acessivel sem `.html`, o Worker `morning-credit-8a59` tambem atende as rotas Cloudflare `app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`, entregando `index.html` e `portal-nacional.html` diretamente. Quando o Netlify voltar a aceitar deploys, o `netlify.toml` continua sendo a fonte normal das rotas limpas.
 
 ## Master
 
