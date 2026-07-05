@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Notas Portal Nacional - Prumo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#f0f2f7; --panel:#fff; --panel2:#f7f8fc; --border:#e4e6ef; --border2:#cdd0df;
+      --text:#111827; --text2:#4b5563; --text3:#8b95a7; --accent:#4f46e5; --accent2:#6366f1;
+      --green:#16a34a; --red:#dc2626; --amber:#d97706; --blue:#0f766e;
+      --radius:12px; --shadow:0 1px 4px rgba(0,0,0,.07),0 0 0 1px rgba(0,0,0,.04);
+      --font:'Plus Jakarta Sans',system-ui,sans-serif; --mono:'JetBrains Mono',monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font);font-size:13.5px;line-height:1.5}
+    .app{min-height:100vh;display:grid;grid-template-columns:232px minmax(0,1fr)}
+    aside{background:var(--panel);border-right:1px solid var(--border);position:sticky;top:0;height:100vh;display:flex;flex-direction:column}
+    .brand{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+    .brand-logo{display:flex;align-items:center;gap:10px}.brand-image{width:34px;height:34px;object-fit:contain}
+    .brand h1{font-size:15px}.brand p{margin:5px 0 0 44px;color:var(--text3);font-size:11px}
+    nav{flex:1;padding:10px 8px;display:grid;align-content:start;gap:2px}.nav-label{padding:10px 8px 4px;color:var(--text3);font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
+    .nav-btn{height:36px;width:100%;border:0;border-radius:7px;background:transparent;color:var(--text2);display:flex;align-items:center;gap:9px;padding:0 10px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none}
+    .nav-btn:hover,.nav-btn.active{background:#eef2ff;color:var(--accent)}.nav-icon{width:15px;height:15px;flex-shrink:0}
+    .sidebar-footer{padding:10px 8px;border-top:1px solid var(--border);display:grid;gap:7px}
+    main{padding:24px 26px;min-height:100vh}.topline{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:18px}.topline h2{font-size:20px;letter-spacing:-.03em}.topline p{margin-top:4px;color:var(--text3)}
+    .grid{display:grid;gap:16px;max-width:1220px}.grid.two{grid-template-columns:360px minmax(0,1fr)}.grid.cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+    .card-head{padding:14px 16px;border-bottom:1px solid var(--border);background:var(--panel2);display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .card-head h3{font-size:13.5px}.card-body{padding:16px}.stack{display:grid;gap:12px}
+    label{display:block;margin-bottom:5px;color:var(--text2);font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
+    input,select,textarea{width:100%;border:1px solid var(--border2);border-radius:8px;background:#fff;color:var(--text);padding:0 11px;font:inherit;outline:none}
+    input,select{height:38px}textarea{min-height:96px;padding:10px 11px;resize:vertical;font-family:var(--mono);font-size:12px}
+    input:focus,select:focus,textarea:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(99,102,241,.13)}
+    button,.button{height:34px;border:1px solid transparent;border-radius:7px;padding:0 13px;background:var(--accent);color:#fff;font:inherit;font-size:12px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:fit-content}
+    button:hover,.button:hover{opacity:.88}button.secondary,.button.secondary{background:#fff;color:var(--text2);border-color:var(--border2)}button.danger{background:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}
+    .actions{display:flex;flex-wrap:wrap;gap:8px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.full{grid-column:1/-1}
+    .notice{border:1px solid var(--border2);background:var(--panel2);border-radius:8px;padding:10px 12px;color:var(--text2);font-size:12.5px;white-space:pre-line}.notice.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.notice.err{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.notice.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
+    .metric{border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
+    .pill{display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:800;white-space:nowrap}.pill.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.pill.bad{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.pill.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}
+    code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <div class="brand-logo"><img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas"><div><h1>Prumo Sistemas</h1></div></div>
+        <p>Central de aplicações</p>
+      </div>
+      <nav>
+        <div class="nav-label">Ferramentas</div>
+        <a class="nav-btn" href="/"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Central</a>
+        <a class="nav-btn" href="/iss-fortaleza"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9h1"/><path d="M9 13h1"/><path d="M9 17h1"/></svg>ISS Fortaleza</a>
+        <a class="nav-btn active" href="/portal-nacional"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>Notas Portal Nacional</a>
+      </nav>
+      <div class="sidebar-footer"><button class="nav-btn" id="btnLogout" type="button">Sair</button></div>
+    </aside>
+    <main>
+      <div class="topline">
+        <div>
+          <h2>Notas Portal Nacional</h2>
+          <p>XML e DANFSe de notas recebidas e emitidas.</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnRefresh" type="button">Atualizar</button>
+          <button class="secondary" id="btnStop" type="button">Parar run</button>
+        </div>
+      </div>
+      <div id="msg"></div>
+      <div class="grid cards" id="metrics"></div>
+      <div class="grid two" style="margin-top:16px;">
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><h3>Nova run</h3><span class="pill" id="solverPill">Solver</span></div>
+            <div class="card-body stack">
+              <form id="runForm" class="stack">
+                <div>
+                  <label>Certificado</label>
+                  <select name="cert_index" id="certSelect"></select>
+                </div>
+                <div class="form-grid">
+                  <div><label>Data inicial</label><input name="data_inicial" id="dataInicial" type="date" required></div>
+                  <div><label>Data final</label><input name="data_final" id="dataFinal" type="date" required></div>
+                  <div><label>Notas</label><select name="modo"><option value="recebidas">Recebidas</option><option value="emitidas">Emitidas</option><option value="ambos">Recebidas e emitidas</option></select></div>
+                  <div><label>Arquivos</label><select name="tipo_download"><option value="ambos">XML e PDF</option><option value="xml">Só XML</option><option value="pdf">Só PDF</option></select></div>
+                  <div><label>Limite teste</label><input name="max_items" type="number" min="0" max="5000" value="0"></div>
+                  <div><label>Concorrência</label><input name="concorrencia" type="number" min="1" max="16" value="4"></div>
+                  <div><label>Tentativas</label><input name="retries" type="number" min="1" max="20" value="6"></div>
+                  <div><label>Sessão</label><select name="renovar_sessao"><option value="true">Renovar pelo certificado</option><option value="false">Usar sessão salva</option></select></div>
+                </div>
+                <div class="actions"><button id="btnStart" type="submit">Iniciar run</button></div>
+              </form>
+              <div id="certNotice"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Sessão salva</h3><button class="secondary" id="btnImportSession" type="button">Importar</button></div>
+            <div class="card-body stack">
+              <div id="sessionBox" class="small">Carregando...</div>
+              <textarea id="sessionJson" placeholder='Cole aqui o JSON de sessao_nfse.txt quando a geração por certificado estiver em outro PC.'></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-head"><h3>Runs</h3><button class="secondary" id="btnDownloadRun" type="button">Baixar ZIP</button></div>
+            <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Detalhe</h3><button class="secondary" id="btnRetry" type="button">Retry</button></div>
+            <div class="card-body stack">
+              <div id="detailBox" class="small">Selecione uma run.</div>
+              <div id="filesBox"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const API = PROD_WORKER_URL;
+    const SESSION_TOKEN_KEY = "session_token";
+    let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
+    let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+    let selectedRunId = "";
+    let activeRunId = "";
+
+    const $ = id => document.getElementById(id);
+    const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+    const apiPath = path => API + path;
+    function setMsg(type,text){ $("msg").innerHTML = text ? `<div class="notice ${type}">${esc(text)}</div>` : ""; }
+    function saveSessionToken(value){ if(!value) return; sessionToken=value; sessionStorage.setItem(SESSION_TOKEN_KEY,value); localStorage.setItem(SESSION_TOKEN_KEY,value); }
+    function saveCsrf(value){ if(!value) return; csrf=value; sessionStorage.setItem("csrf",value); localStorage.setItem("csrf",value); }
+    function toLogin(){ window.location.href="/login"; }
+    async function api(path, options={}){
+      const headers = new Headers(options.headers || {});
+      if(options.body !== undefined && options.body !== null && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
+      if(csrf) headers.set("X-CSRF-Token", csrf);
+      if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
+      const res = await fetch(apiPath(path), {credentials:"include", ...options, headers});
+      const type = res.headers.get("content-type") || "";
+      const data = type.includes("application/json") ? await res.json() : await res.text();
+      if(data?.csrf) saveCsrf(data.csrf);
+      if(data?.session_token) saveSessionToken(data.session_token);
+      if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
+      if(!res.ok){ const detail=data?.error || data?.detail || data?.message || data; throw new Error(typeof detail==="string"?detail:JSON.stringify(detail)); }
+      return data;
+    }
+    function dateIso(d){ return d.toISOString().slice(0,10); }
+    function formatTs(value){ if(!value) return "-"; const d=new Date(value); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
+    function bytes(n){ n=Number(n||0); if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
+    function statusPill(status){
+      const s=String(status||"-");
+      const cls = /finalizado/.test(s) ? "ok" : /erro|interrompida|parado|falha/.test(s) ? "bad" : /rodando|criada/.test(s) ? "warn" : "";
+      return `<span class="pill ${cls}">${esc(s)}</span>`;
+    }
+    function buttonLoading(btn, loading, label){
+      if(!btn) return;
+      if(loading){ btn.dataset.label = btn.textContent; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${esc(label || "Aguarde")}`; }
+      else { btn.disabled = false; btn.textContent = btn.dataset.label || label || btn.textContent; }
+    }
+    function formPayload(){
+      const fd = new FormData($("runForm"));
+      return {
+        cert_index: Number(fd.get("cert_index") || 0),
+        data_inicial: fd.get("data_inicial"),
+        data_final: fd.get("data_final"),
+        modo: fd.get("modo"),
+        tipo_download: fd.get("tipo_download"),
+        max_items: Number(fd.get("max_items") || 0),
+        concorrencia: Number(fd.get("concorrencia") || 4),
+        retries: Number(fd.get("retries") || 6),
+        renovar_sessao: fd.get("renovar_sessao") === "true"
+      };
+    }
+    function renderMetrics(state){
+      const runs = state.runs || [];
+      const active = runs.find(r => r.run_id === state.active_run_id);
+      const latest = runs[0] || {};
+      const summary = latest.summary || {};
+      $("metrics").innerHTML = `
+        <div class="metric"><span>Run ativa</span><b>${state.active_run_id ? "Sim" : "Não"}</b></div>
+        <div class="metric"><span>Última run</span><b>${esc(latest.status || "-")}</b></div>
+        <div class="metric"><span>Baixados</span><b>${Number(summary.baixados || 0)}</b></div>
+        <div class="metric"><span>Erros</span><b>${Number(summary.erros || 0)}</b></div>
+      `;
+      $("solverPill").textContent = state.solver_url ? "Modal solver" : "Solver ausente";
+      $("solverPill").className = "pill " + (state.solver_url ? "ok" : "bad");
+      $("btnStop").disabled = !active;
+    }
+    function renderCertificates(state){
+      const select = $("certSelect");
+      const certs = state.certificates || [];
+      select.innerHTML = certs.length ? certs.map(c => `<option value="${Number(c.index)}">${esc(c.label)}</option>`).join("") : `<option value="0">Certificado não disponível neste servidor</option>`;
+      $("certNotice").innerHTML = state.certificate_error
+        ? `<div class="notice warn">Certificados não listados neste runtime. ${esc(state.certificate_error)}</div>`
+        : "";
+    }
+    function renderSession(session){
+      if(!session?.exists){
+        $("sessionBox").innerHTML = `<span class="pill warn">Sem sessão salva</span>`;
+        return;
+      }
+      $("sessionBox").innerHTML = `
+        <div class="notice ok">Sessão disponível
+Certificado: ${esc(session.certificate_subject || "-")}
+Cookies: ${Number(session.cookies_count || 0)}
+Atualizada: ${esc(formatTs(session.updated_at))}</div>`;
+    }
+    function renderRuns(runs){
+      if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
+      $("runsTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Run</th><th>Resumo</th><th>Criada</th></tr></thead><tbody>${runs.map(run => {
+        const s = run.summary || {};
+        return `<tr data-run="${esc(run.run_id)}" style="cursor:pointer">
+          <td>${statusPill(run.status)}</td>
+          <td><code>${esc(run.run_id)}</code><br><span class="small">${esc(run.config?.modo || "-")} · ${esc(run.config?.tipo_download || "-")}</span></td>
+          <td>${Number(s.baixados || 0)}/${Number(s.portal_registros || s.capturados || 0)} ok<br><span class="small">${Number(s.erros || 0)} erro · ${Number(s.pendentes || 0)} pendente</span></td>
+          <td>${esc(formatTs(run.created_at))}</td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`;
+      $("runsTable").querySelectorAll("[data-run]").forEach(row => row.onclick = () => loadRun(row.dataset.run));
+    }
+    function renderDetail(run, index){
+      selectedRunId = run?.run_id || "";
+      const s = run?.summary || {};
+      $("detailBox").innerHTML = run ? `
+        <div class="notice ${/erro|parado|interrompida/.test(run.status||"") ? "warn" : "ok"}">
+${esc(run.run_id)}
+Status: ${esc(run.status || "-")}
+Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Pendentes: ${Number(s.pendentes || 0)}
+Último evento: ${esc(s.ultimo_evento?.event || "-")}</div>` : "Selecione uma run.";
+      const files = run?.files || [];
+      $("filesBox").innerHTML = files.length ? `<div class="table-wrap"><table><thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead><tbody>${files.map(file => `<tr><td>${esc(file.relative_path)}</td><td>${bytes(file.size)}</td><td><button class="secondary" data-file="${esc(file.relative_path)}" type="button">Baixar</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="small">Nenhum arquivo disponível.</div>`;
+      $("filesBox").querySelectorAll("[data-file]").forEach(btn => btn.onclick = () => downloadFile(run.run_id, btn.dataset.file, btn));
+    }
+    async function downloadBlob(path, fallbackName){
+      const headers = new Headers();
+      if(csrf) headers.set("X-CSRF-Token", csrf);
+      if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
+      const res = await fetch(apiPath(path), {credentials:"include", headers});
+      if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
+      if(!res.ok){
+        const text = await res.text().catch(() => "");
+        throw new Error(text || "Falha no download.");
+      }
+      const blob = await res.blob();
+      const disp = res.headers.get("content-disposition") || "";
+      const match = disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+      const name = match ? decodeURIComponent(match[1].replaceAll('"',"")) : fallbackName;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }
+    async function downloadFile(runId, filePath, btn){
+      buttonLoading(btn, true, "Baixando");
+      try{ await downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}/file?path=${encodeURIComponent(filePath)}`, filePath.split("/").pop() || "arquivo"); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading(btn, false, "Baixar"); }
+    }
+    async function loadState(){
+      const state = await api("/py/api/portal-nacional/state");
+      activeRunId = state.active_run_id || "";
+      renderMetrics(state); renderCertificates(state); renderSession(state.session); renderRuns(state.runs || []);
+      if(selectedRunId && (state.runs || []).some(r => r.run_id === selectedRunId)) await loadRun(selectedRunId, false);
+      else if((state.runs || [])[0]) await loadRun(state.runs[0].run_id, false);
+    }
+    async function loadRun(runId, showErr=true){
+      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); renderDetail(data.run, data.index); }
+      catch(err){ if(showErr) setMsg("err", err.message); }
+    }
+    $("runForm").onsubmit = async ev => {
+      ev.preventDefault(); setMsg("", ""); buttonLoading($("btnStart"), true, "Iniciando");
+      try{ const data = await api("/py/api/portal-nacional/runs", {method:"POST", body:JSON.stringify(formPayload())}); selectedRunId = data.run_id; await loadState(); setMsg("ok", "Run iniciada."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnStart"), false, "Iniciar run"); }
+    };
+    $("btnImportSession").onclick = async () => {
+      const raw = $("sessionJson").value.trim();
+      if(!raw){ setMsg("warn", "Cole o JSON da sessão antes de importar."); return; }
+      buttonLoading($("btnImportSession"), true, "Importando");
+      try{ await api("/py/api/portal-nacional/sessions/import", {method:"POST", body:JSON.stringify({session:JSON.parse(raw)})}); $("sessionJson").value=""; await loadState(); setMsg("ok", "Sessão importada."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnImportSession"), false, "Importar"); }
+    };
+    $("btnRetry").onclick = async () => {
+      if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
+      buttonLoading($("btnRetry"), true, "Retentando");
+      try{ const p=formPayload(); await api(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/retry`, {method:"POST", body:JSON.stringify(p)}); await loadState(); setMsg("ok", "Retry iniciado."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnRetry"), false, "Retry"); }
+    };
+    $("btnStop").onclick = async () => {
+      const runId = activeRunId || selectedRunId;
+      if(!runId) return;
+      buttonLoading($("btnStop"), true, "Parando");
+      try{ await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}/stop`, {method:"POST", body:"{}"}); await loadState(); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnStop"), false, "Parar run"); }
+    };
+    $("btnDownloadRun").onclick = () => {
+      if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
+      buttonLoading($("btnDownloadRun"), true, "Preparando");
+      downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/download`, `${selectedRunId}.zip`)
+        .catch(err => setMsg("err", err.message))
+        .finally(() => buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"));
+    };
+    $("btnRefresh").onclick = () => loadState().catch(err => setMsg("err", err.message));
+    $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
+    (() => {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      $("dataInicial").value = dateIso(first);
+      $("dataFinal").value = dateIso(now);
+      loadState().catch(err => setMsg("err", err.message));
+      setInterval(() => loadState().catch(() => {}), 5000);
+    })();
+  </script>
+</body>
+</html>

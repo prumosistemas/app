@@ -20,6 +20,12 @@
   force = true
 
 [[redirects]]
+  from = "/portal-nacional.html"
+  to = "/portal-nacional"
+  status = 301
+  force = true
+
+[[redirects]]
   from = "/admin.html"
   to = "/admin"
   status = 301
@@ -45,6 +51,11 @@
 [[redirects]]
   from = "/iss-fortaleza"
   to = "/iss-fortaleza.html"
+  status = 200
+
+[[redirects]]
+  from = "/portal-nacional"
+  to = "/portal-nacional.html"
   status = 200
 
 [[redirects]]

@@ -118,13 +118,16 @@ from run_queue import (
     runtime_queue_metrics,
     startup_queue_workers,
 )
+from portal_nacional import router as portal_nacional_router
 
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.31",
-    description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
+    version="1.0.32",
+    description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
 )
+
+app.include_router(portal_nacional_router)
 
 MONITOR_ROOT = os.path.join(OUTPUT_ROOT, "_monitor")
 MONITOR_DB_FILE = os.path.join(MONITOR_ROOT, "metrics.sqlite3")
@@ -469,8 +472,8 @@ async def websocket_state(websocket: WebSocket):
 async def health() -> Dict[str, Any]:
     return {
         "ok": True,
-        "service": "ISS Automação API",
-        "version": "1.0.31",
+        "service": "Prumo API",
+        "version": "1.0.32",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,

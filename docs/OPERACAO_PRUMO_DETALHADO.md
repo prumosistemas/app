@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.31.
+Este documento e a fonte de contexto operacional da versao 1.0.32.
 
 ## Estado desejado
 
@@ -13,6 +13,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.31.
 - `prumo-api` como unico container principal da Prumo.
 - Browserless local desligado.
 - Modal `prumo-browserless` com 40 sessoes turbo.
+- Modal `prumo-portal-nacional-solver` separado, usado so para resolver hCaptcha do Portal Nacional.
 - GitHub, pasta local e servidor na mesma versao.
 
 ## Onde fica cada coisa
@@ -46,8 +47,10 @@ Netlify:
 Modal:
 
 - Perfil CLI: `jorhinhogames`
-- App: `prumo-browserless`
-- Arquivo: `deploy/modal_browserless.py`
+- App ISS: `prumo-browserless`
+- Arquivo ISS: `deploy/modal_browserless.py`
+- App Portal Nacional: `prumo-portal-nacional-solver`
+- Arquivo Portal Nacional: `deploy/modal_portal_nacional_solver.py`
 
 ## Dados e volatilidade
 
@@ -57,6 +60,9 @@ Nao sao volateis:
 - Contas ISS, conjuntos, runs e arquivos ficam em `/opt/prumo/data`.
 - O SQLite da API fica em `/opt/prumo/data/_api_data/iss_automacao.db`.
 - O container monta `/opt/prumo/data:/app/output`.
+- Portal Nacional fica em `/opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/portal_nacional`.
+- Sessoes do Portal Nacional ficam em `portal_nacional/sessions/sessao_nfse.txt`.
+- Runs do Portal Nacional ficam em `portal_nacional/runs/<run_id>`, com `downloads/`, `logs/`, `indice.json` e `run.json`.
 
 Sao volateis:
 
@@ -73,7 +79,9 @@ Se o servidor desligar:
 
 ## Modal e custo
 
-O painel master consulta `/py/api/admin/modal-billing`, que usa a API `modal.billing.workspace_billing_report` dentro da API Python.
+O painel master mostra creditos Modal na secao `Logs`, nao em `Pagamentos`.
+
+O Worker expoe `/api/master/modal-billing` para o master e encaminha para a API Python. A API Python consulta a API `modal.billing.workspace_billing_report`.
 
 Variaveis necessarias no servidor:
 
@@ -114,7 +122,7 @@ Ao excluir pagamento:
 
 ## Homologacao
 
-A homologacao foi removida da versao 1.0.31. Os arquivos HTML sempre apontam para producao.
+A homologacao foi removida da versao 1.0.32. Os arquivos HTML sempre apontam para producao.
 
 Se existir recurso antigo no Cloudflare:
 
@@ -122,6 +130,48 @@ Se existir recurso antigo no Cloudflare:
 - D1 antigo: `db-homologacao`
 
 Eles nao sao usados pelo codigo atual.
+
+## App Notas Portal Nacional
+
+Pagina publica: `/portal-nacional`.
+
+O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
+
+- servidor Python para guardar usuario, sessao, indice, runs e arquivos;
+- Modal `prumo-portal-nacional-solver` apenas para hCaptcha;
+- selecao de certificado no runtime, sem upload de arquivo de certificado.
+
+Arquivos principais:
+
+```text
+portal-nacional.html
+server/portal_nacional.py
+server/portal_nacional_automation.py
+server/portal_nacional_session.py
+deploy/modal_portal_nacional_solver.py
+deploy/portal_nacional_solver.py
+```
+
+Teste local confirmado em 2026-07-05:
+
+- indexacao por requests: 86 notas recebidas;
+- download: 1 XML e 1 PDF validos;
+- PDF com cabecalho `%PDF-1.4`;
+- XML com raiz `NFSe`;
+- segundo item travou em `solver:token_nao_voltou`, entao o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240`.
+
+Health do solver:
+
+```powershell
+Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health
+```
+
+Deploy do solver:
+
+```powershell
+modal profile use jorhinhogames
+modal deploy deploy\modal_portal_nacional_solver.py
+```
 
 ## Fallback local de navegador
 

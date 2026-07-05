@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.31
+Versao: 1.0.32
 Data: 2026-07-05
 Modo atual: producao unica, sem homologacao ativa
 
@@ -12,6 +12,7 @@ A Prumo roda em quatro partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando de login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 40 sessoes turbo.
+5. API resolvedora do Portal Nacional no Modal, app `prumo-portal-nacional-solver`, usada apenas para hCaptcha.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -79,7 +80,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.31",
+  "version": "1.0.32",
   "max_browsers": 40,
   "base_browsers": 0,
   "browser_turbo_extra": 40,
@@ -125,6 +126,42 @@ MODAL_BILLING_APP_NAME=prumo-browserless
 ```
 
 Nunca versionar esses tokens.
+
+## Modal do Portal Nacional
+
+O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
+
+- Nome: `prumo-portal-nacional-solver`
+- URL: `https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/solve`
+- Health: `https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health`
+- Arquivos locais:
+  - `deploy/modal_portal_nacional_solver.py`
+  - `deploy/portal_nacional_solver.py`
+- Secret esperado: `prumo-portal-nacional-solver`
+- Secret deve conter `COHERE_API_KEY`.
+
+Deploy:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+modal profile use jorhinhogames
+modal deploy deploy\modal_portal_nacional_solver.py
+```
+
+Validar:
+
+```powershell
+Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health
+```
+
+Configuracao da API Python:
+
+```env
+PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/solve
+PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240
+```
+
+O solver e stateless. Ele nao recebe cookies do usuario, nao grava arquivos finais e nao deve misturar dados de usuarios. Ele so recebe `sitekey/request_id`, resolve o hCaptcha e devolve token. Os XML/PDF ficam no servidor, dentro da arvore do colaborador.
 
 ## Fallback Browserless local
 
@@ -186,6 +223,7 @@ Dados que nao somem se o PC ou servidor reiniciar:
 - SQLite local da API: `/opt/prumo/data/_api_data/iss_automacao.db`.
 - Runs por colaborador: `/opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/runs`.
 - Arquivos gerados por run ficam na mesma arvore de `/opt/prumo/data`.
+- Portal Nacional por colaborador: `/opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/portal_nacional`.
 
 O container `prumo-api` usa `restart: unless-stopped`; se o servidor voltar apos queda de energia, o Docker deve subir a API novamente. O Modal e stateless: containers sobem sob demanda.
 
@@ -234,6 +272,7 @@ Os HTMLs ficam na raiz do repo:
 - `index.html`
 - `admin.html`
 - `iss-fortaleza.html`
+- `portal-nacional.html`
 - `master.html`
 - `master-company.html`
 - `404.html`
@@ -243,6 +282,7 @@ As URLs publicas usam redirects do `netlify.toml`, entao o usuario acessa sem `.
 - `/login`
 - `/admin`
 - `/iss-fortaleza`
+- `/portal-nacional`
 - `/master`
 - `/master-company`
 
@@ -287,6 +327,72 @@ Ordem operacional quando todos estao marcados:
 3. DAM
 4. Notas
 
+## Notas Portal Nacional
+
+Pagina: `/portal-nacional`.
+
+Objetivo:
+
+- Baixar XML e PDF/DANFSe de notas recebidas e emitidas no Portal Nacional.
+- Manter dados separados por empresa e colaborador, usando o mesmo contexto autenticado da Prumo.
+- Usar o servidor para persistencia e o Modal apenas para resolver hCaptcha quando o portal exige captcha no download.
+
+Arquivos:
+
+- UI: `portal-nacional.html`
+- Router FastAPI: `server/portal_nacional.py`
+- Automacao por requests/browser: `server/portal_nacional_automation.py`
+- Gerador de sessao por certificado: `server/portal_nacional_session.py`
+- Solver Modal: `deploy/modal_portal_nacional_solver.py` e `deploy/portal_nacional_solver.py`
+
+Endpoints Python:
+
+- `GET /api/portal-nacional/state`
+- `POST /api/portal-nacional/sessions/import`
+- `POST /api/portal-nacional/runs`
+- `GET /api/portal-nacional/runs`
+- `GET /api/portal-nacional/runs/{run_id}`
+- `POST /api/portal-nacional/runs/{run_id}/retry`
+- `POST /api/portal-nacional/runs/{run_id}/stop`
+- `GET /api/portal-nacional/runs/{run_id}/download`
+- `GET /api/portal-nacional/runs/{run_id}/file?path=...`
+
+Arvore de dados:
+
+```text
+/opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/portal_nacional/
+  sessions/sessao_nfse.txt
+  runs/<run_id>/run.json
+  runs/<run_id>/indice.json
+  runs/<run_id>/downloads/
+  runs/<run_id>/logs/
+```
+
+O download individual e o ZIP so expoem `downloads/`, `logs/`, `indice.json` e `run.json`. O arquivo `sessions/sessao_nfse.txt` nao e servido para download pela API.
+
+Certificado digital:
+
+- A UI pede para selecionar o certificado disponivel no runtime que esta gerando a sessao.
+- Nao ha upload de arquivo de certificado.
+- No Windows local, a sessao pode ser gerada usando a store de certificados do usuario.
+- No servidor Linux, a store Windows nao existe. Para producao sem certificado no servidor, importar uma sessao `sessao_nfse.txt` gerada em maquina autorizada e usar "usar sessao salva".
+
+Teste confirmado em 2026-07-05:
+
+- Run local `20260705-161546-recebidas-20260601-20260630-cert03-ambos`.
+- Indexou 86 notas recebidas de 01/06/2026 a 30/06/2026.
+- Baixou 1 XML valido e 1 PDF valido via Modal solver.
+- PDF validado pelo cabecalho `%PDF-1.4`.
+- XML validado como documento `NFSe`.
+- O segundo item ficou preso em captcha `solver:token_nao_voltou`; por isso o timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS`.
+
+Status:
+
+- `finalizado`: tudo baixado.
+- `finalizado_parcial`: run limitada por `max_items`, sem erro real.
+- `finalizado_com_erros`: houve erro real ou pendencias sem limite de teste.
+- `parado`: parado manualmente.
+
 ## Deploy completo
 
 No PC:
@@ -316,8 +422,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -t ryang20/prumo-api:1.0.31 server
-docker push ryang20/prumo-api:1.0.31
+docker build -t ryang20/prumo-api:1.0.32 server
+docker push ryang20/prumo-api:1.0.32
 ```
 
 Atualizar servidor:
@@ -328,7 +434,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.31 e pool Modal 40
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.32 e pool Modal 40
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/
