@@ -16,21 +16,3 @@ PYTHON_API_URL = "https://api.prumosistemas.com.br"
 
 [triggers]
 crons = ["* * * * *"]
-
-[env.homologacao]
-name = "morning-credit-8a59-homologacao"
-workers_dev = true
-
-[[env.homologacao.d1_databases]]
-binding = "db"
-database_name = "db-homologacao"
-database_id = "1c279092-2f87-4dce-9c56-aa12b8df38b6"
-
-[env.homologacao.vars]
-COMPANY_NAME = "Prumo Sistemas Homologacao"
-COOKIE_MODE = "prod"
-FRONTEND_ORIGINS = "https://homologacao--appprumo.netlify.app,http://localhost:8888,http://localhost:8080,http://127.0.0.1:8888,http://127.0.0.1:8080"
-PYTHON_API_URL = "https://api.prumosistemas.com.br"
-
-[env.homologacao.triggers]
-crons = ["* * * * *"]

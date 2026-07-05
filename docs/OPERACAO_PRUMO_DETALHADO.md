@@ -1,358 +1,166 @@
-# Operacao Prumo Sistemas
+# Operacao Prumo Detalhada
 
-Versao operacional: `1.0.30`
-Data: `2026-07-05`
+Este documento e a fonte de contexto operacional da versao 1.0.31.
 
-Este documento e a referencia operacional do app Prumo/ISS Fortaleza. Ele descreve o que roda no PC local, no GitHub, no Netlify, na Cloudflare, no servidor Linux e no Modal. Segredos, tokens e senhas nao devem ser gravados aqui nem no Git.
+## Estado desejado
 
-## Locais oficiais
+- Producao unica.
+- Sem homologacao no codigo.
+- HTMLs no Netlify com URLs limpas.
+- Worker de producao `morning-credit-8a59`.
+- D1 de producao `db`.
+- API Python no servidor local Linux.
+- `prumo-api` como unico container principal da Prumo.
+- Browserless local desligado.
+- Modal `prumo-browserless` com 40 sessoes turbo.
+- GitHub, pasta local e servidor na mesma versao.
 
-- Pasta local Windows: `C:\Users\ryang\Desktop\projetosv2\projeto`
-- GitHub: `https://github.com/prumosistemas/app`
-- Branch de producao: `main`
-- Espelho/build no servidor: `/home/server/prumo-src`
-- Deploy Compose no servidor: `/opt/prumo/app/deploy`
-- Dados persistentes no servidor: `/opt/prumo/data`
-- Documentacao operacional resumida: `docs/SERVER_CONTEXT.md`
-- Documentacao operacional detalhada: `docs/OPERACAO_PRUMO_DETALHADO.md`
+## Onde fica cada coisa
 
-## URLs publicas
+Local Windows:
 
-- Producao: `https://app.prumosistemas.com.br`
-- ISS Fortaleza: `https://app.prumosistemas.com.br/iss-fortaleza`
-- Login: `https://app.prumosistemas.com.br/login`
-- Admin: `https://app.prumosistemas.com.br/admin`
-- Master: `https://app.prumosistemas.com.br/master`
-- Master empresa: `https://app.prumosistemas.com.br/master-company?id=<company_id>`
-- Homologacao Netlify: `https://homologacao--appprumo.netlify.app`
-
-Os arquivos continuam existindo como `login.html`, `iss-fortaleza.html`, etc. O Netlify usa `netlify.toml` para redirecionar URLs antigas com `.html` para URLs limpas e reescrever as URLs limpas para os HTMLs correspondentes.
-
-## Contas e acessos
-
-- Cloudflare/Wrangler: conta `prumo.sistema@gmail.com`
-- Netlify CLI: conta `prumo.sistema@gmail.com`, time `PRUMO`, site `appprumo`
-- Netlify site id: `dd609699-b9df-497e-b83a-5b961a35a321`
-- SSH servidor: usuario `server`, via Cloudflare Access
-- Usuarios do app: ficam no D1 (`users`) e sao gerenciados pelo painel master/admin
-- Senhas do app, tokens do Worker, tokens Browserless e secrets Modal: nunca versionar
-
-Comando SSH:
-
-```bash
-ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
-```
-
-## Ambientes
-
-### Producao
-
-- Netlify: `https://app.prumosistemas.com.br`
-- Worker: `morning-credit-8a59`
-- Worker URL: `https://morning-credit-8a59.prumo-sistema.workers.dev`
-- D1: `db`
-- D1 id: `e69428e3-6524-427c-bae3-d32190e5c229`
-- FastAPI: `https://api.prumosistemas.com.br`
-- Docker API: container `prumo-api`
-- Browserless local: container `browserless`
-
-### Homologacao
-
-- Netlify alias esperado: `https://homologacao--appprumo.netlify.app`
-- Worker: `morning-credit-8a59-homologacao`
-- Worker URL: `https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev`
-- D1: `db-homologacao`
-- D1 id: `1c279092-2f87-4dce-9c56-aa12b8df38b6`
-- FastAPI: por enquanto usa `https://api.prumosistemas.com.br`
-
-O frontend resolve o Worker automaticamente:
-
-- Host `app.prumosistemas.com.br`: producao
-- Host com `homolog`, `deploy-preview` ou `branch-deploy`: homologacao
-- `localhost` e `127.0.0.1`: homologacao
-- Query `?env=prod`: forca producao
-- Query `?env=homologacao`: forca homologacao
-
-## Netlify
-
-O Netlify esta linkado localmente pelo CLI:
-
-```bash
-netlify status
-```
-
-Deploy de producao normalmente acontece pelo push no GitHub `main`. Deploy manual de homologacao:
-
-```bash
-netlify deploy --alias homologacao --dir .
-```
-
-Deploy manual de producao, se for necessario:
-
-```bash
-netlify deploy --prod --dir .
-```
-
-O arquivo `.netlify/` e local e fica ignorado no Git.
-
-## Cloudflare Worker
-
-Arquivo principal: `cloudflare/worker.js`
-
-Configuracao Wrangler versionada: `cloudflare/wrangler.toml`
-
-Deploy producao, explicitando o ambiente raiz:
-
-```bash
-cd cloudflare
-wrangler deploy --env=""
-```
-
-Deploy homologacao:
-
-```bash
-cd cloudflare
-wrangler deploy --env homologacao
-```
-
-Secrets necessarios:
-
-- `ISS_INTERNAL_SECRET`: usado para o proxy seguro com a FastAPI
-- `SETUP_TOKEN`: necessario apenas durante setup inicial de um D1 novo
-- `ADMIN_EMAIL`: necessario apenas durante setup inicial
-- `ADMIN_PASSWORD`: necessario apenas durante setup inicial
-
-Aplicar segredo em producao:
-
-```bash
-wrangler secret put ISS_INTERNAL_SECRET --env=""
-```
-
-Aplicar segredo em homologacao:
-
-```bash
-wrangler secret put ISS_INTERNAL_SECRET --env homologacao
-```
-
-O Worker faz:
-
-- Login, logout e `/api/me`
-- Roles `master`, `owner`, `member`
-- Empresas, usuarios, billing simples e logs
-- Proxy `/py/*` para a FastAPI com `ISS_INTERNAL_SECRET`
-- Reconciliacao de exclusoes por cron
-- CORS para os hosts configurados em `FRONTEND_ORIGINS`
-
-Na versao `1.0.30`, o caminho de login foi aliviado:
-
-- `migrate()` nao roda mais em toda requisicao; fica cacheado por instancia do Worker
-- limpeza de `rate_limits`, sessoes expiradas, logs antigos e jobs concluidos saiu do caminho direto do login
-- billing state fica cacheado por empresa por 60 segundos no Worker
-- `/api/me` so regrava CSRF quando o token enviado nao bate com o hash atual
-- logout e best-effort: mesmo com CSRF/sessao expirada, limpa cookie e tenta revogar a sessao
-- erros internos retornam `request_id` para facilitar busca no `wrangler tail`
-
-Diagnostico de erro interno:
-
-```bash
-cd cloudflare
-wrangler tail morning-credit-8a59
-wrangler d1 execute db --remote --command "SELECT COUNT(*) AS users FROM users;"
-wrangler d1 execute db --remote --command "SELECT (SELECT COUNT(*) FROM sessions) AS sessions, (SELECT COUNT(*) FROM rate_limits) AS rate_limits, (SELECT COUNT(*) FROM logs) AS logs;"
-```
-
-Estado observado em `2026-07-05`: D1 de producao com 7 usuarios, 1 sessao, 1 sessao ativa, 0 rate limits, 208 logs e 0 deletion jobs. As consultas responderam em menos de 1 ms, entao o gargalo de login nao era banco inchado.
-
-## D1
-
-Tabelas principais:
-
-- `companies`
-- `users`
-- `sessions`
-- `rate_limits`
-- `logs`
-- `deletion_jobs`
-- `billing_settings`
-- `payments`
-
-Indices importantes:
-
-- `idx_users_email`
-- `idx_users_company_id`
-- `idx_sessions_user_id`
-- `idx_sessions_absolute_expires_at`
-- `idx_sessions_revoked_at`
-- `idx_rate_limits_reset_at`
-- `idx_logs_created_at`
-- `idx_logs_company_id`
-
-Homologacao com D1 novo fica vazia ate rodar setup. Nao misturar dados de producao no D1 de homologacao.
-
-## FastAPI e automacoes
-
-Container: `prumo-api`
-
-Health local no servidor:
-
-```bash
-curl -s http://127.0.0.1:8000/
-```
-
-Health externo via tunnel:
-
-```bash
-curl -s https://api.prumosistemas.com.br/
-```
-
-Pastas importantes:
-
-- Codigo espelho: `/home/server/prumo-src`
-- Compose: `/opt/prumo/app/deploy/docker-compose.yml`
-- Env Compose: `/opt/prumo/app/deploy/.env`
-- Dados persistentes: `/opt/prumo/data`
-- SQLite API: `/opt/prumo/data/_api_data/iss_automacao.db`
-- Monitor: `/opt/prumo/data/_monitor/metrics.sqlite3`
-- Runs: `/opt/prumo/data/empresas/<company_id>/colaboradores/<user_id>/runs/`
-
-O container monta `/opt/prumo/data` em `/app/output`. Nao apagar esse volume.
-
-## Capacidade de navegadores
-
-Configuracao alvo `1.0.30`:
-
-- Browserless local: 5 sessoes
-- Modal turbo: 32 sessoes
-- Total da API: 37 navegadores
-
-Variaveis esperadas em `/opt/prumo/app/deploy/.env`:
-
-```env
-BASE_BROWSER_SLOTS=5
-MAX_BROWSERS=37
-BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|32|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
-MAX_BROWSER_LIMIT=96
-```
-
-No Compose:
-
-```yaml
-CONCURRENT: "5"
-MAX_CONCURRENT_SESSIONS: "5"
-```
-
-## Modal turbo
-
-Arquivo: `deploy/modal_browserless.py`
-
-O Modal usa Browserless com proxy pelo IP do servidor, via tunnel/proxy em:
-
-- `/home/server/prumo-proxy`
-- tunnel `modal-proxy.prumosistemas.com.br`
-- proxy local do servidor exposto dentro do Modal como `127.0.0.1:31480`
-
-Esse desenho existe porque o portal ISS pode bloquear IPs de cloud. O Modal direto ja foi testado; o modo aprovado e Modal + proxy pelo servidor.
-
-## Retry automatico
-
-O retry automatico vem preselecionado na criacao da run, mas so roda para erros tecnicos marcados como retryable. Erros finais nao entram:
-
-- `CNPJ_INEXISTENTE`
-- `CNPJ_MISMATCH`
-- `MENSAGEM_NA_TELA`
-- `LOGIN_ERROR`
-- `PORTAL_ACCESS_BLOCKED`
-
-Garantia anti-loop infinito:
-
-- `AUTO_RETRY_HARD_MAX_ATTEMPTS = 3` em `server/db.py`
-- qualquer valor vindo de env, run antiga, duplicacao ou retry passa por `clamp_auto_retry_max_attempts()`
-- `maybe_schedule_auto_retry()` verifica quantidade de tentativas do root antes de criar nova tentativa
-- retry automatico inclui somente erros seguros/retryable e nao inclui cancelados/interrompidos
-- retry manual continua existindo como acao consciente do usuario
-
-## Regras de retencao
-
-- Runs ficam disponiveis por ate 30 dias
-- Cada colaborador mantem no maximo 8 runs recentes
-- Ao passar do limite, runs antigas sao removidas automaticamente
-- Contas e conjuntos nao tem limite de quantidade
-- Cada colaborador ve apenas as proprias contas, conjuntos e runs dentro da empresa
-- Master ve empresas e logs administrativos
-- Owner gerencia colaboradores e pagamento da propria empresa
-
-## Deploy completo
-
-Fluxo recomendado:
-
-```bash
-cd C:\Users\ryang\Desktop\projetosv2\projeto
-git status
-python -m py_compile server\db.py server\main.py server\run_queue.py
-node --check cloudflare\worker.js
-cd cloudflare
-wrangler deploy --dry-run --outdir .wrangler\dry-run-prod --env=""
-wrangler deploy --env homologacao --dry-run --outdir .wrangler\dry-run-homologacao
-cd ..
-git add .
-git commit -m "Prepara homologacao e otimiza login"
-git push origin main
-```
-
-Worker:
-
-```bash
-cd cloudflare
-wrangler deploy --env=""
-wrangler deploy --env homologacao
+```powershell
+C:\Users\ryang\Desktop\projetosv2\projeto
 ```
 
 Servidor:
 
 ```bash
-ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
-cd /home/server/prumo-src
-git pull --ff-only origin main
-docker build -t ryang20/prumo-api:1.0.30 -f server/Dockerfile server
-cd /opt/prumo/app/deploy
-docker compose --env-file .env up -d
-curl -s http://127.0.0.1:8000/
+/home/server/prumo-src
+/opt/prumo/app/deploy
+/opt/prumo/data
 ```
 
-Antes do `docker compose up`, conferir `.env`:
+Cloudflare:
+
+- Worker: `morning-credit-8a59`
+- D1: `db`
+- Tunnel SSH: `ssh.prumosistemas.com.br`
+- API publica: `https://api.prumosistemas.com.br`
+
+Netlify:
+
+- Site: `appprumo`
+- Dominio: `https://app.prumosistemas.com.br`
+
+Modal:
+
+- Perfil CLI: `jorhinhogames`
+- App: `prumo-browserless`
+- Arquivo: `deploy/modal_browserless.py`
+
+## Dados e volatilidade
+
+Nao sao volateis:
+
+- Empresas, usuarios, pagamentos e logs do app ficam no D1.
+- Contas ISS, conjuntos, runs e arquivos ficam em `/opt/prumo/data`.
+- O SQLite da API fica em `/opt/prumo/data/_api_data/iss_automacao.db`.
+- O container monta `/opt/prumo/data:/app/output`.
+
+Sao volateis:
+
+- Containers Modal: sobem e descem sob demanda.
+- Estado em RAM da fila durante uma execucao.
+- Sessao de navegador de uma run em andamento.
+
+Se o servidor desligar:
+
+1. D1 continua intacto.
+2. `/opt/prumo/data` continua no disco.
+3. Docker reinicia `prumo-api` por `restart: unless-stopped`.
+4. Runs em andamento podem precisar de retry, mas arquivos/dados salvos nao somem.
+
+## Modal e custo
+
+O painel master consulta `/py/api/admin/modal-billing`, que usa a API `modal.billing.workspace_billing_report` dentro da API Python.
+
+Variaveis necessarias no servidor:
+
+```env
+MODAL_TOKEN_ID=...
+MODAL_TOKEN_SECRET=...
+MODAL_MONTHLY_CREDIT_USD=30.00
+MODAL_BILLING_APP_NAME=prumo-browserless
+```
+
+O saldo exibido e calculado assim:
+
+```text
+credito_restante = MODAL_MONTHLY_CREDIT_USD - custo_modal_no_mes
+```
+
+Em 2026-07-05, o custo retornado pelo Modal para julho foi aproximadamente `1.79333653` USD; com credito mensal de `30.00`, o saldo estimado ficou `28.21`.
+
+## Pagamentos
+
+O master gerencia pagamentos manualmente em `/master`.
+
+Operacoes:
+
+- cadastrar PIX;
+- lancar pagamento por empresa;
+- excluir pagamento lancado errado;
+- acompanhar historico.
+
+Ao excluir pagamento:
+
+1. O Worker valida role `master`.
+2. Valida CSRF.
+3. Exige `confirm: "DELETE"`.
+4. Remove o pagamento.
+5. Recalcula billing da empresa.
+6. Registra log `billing_payment_deleted`.
+
+## Homologacao
+
+A homologacao foi removida da versao 1.0.31. Os arquivos HTML sempre apontam para producao.
+
+Se existir recurso antigo no Cloudflare:
+
+- Worker antigo: `morning-credit-8a59-homologacao`
+- D1 antigo: `db-homologacao`
+
+Eles nao sao usados pelo codigo atual.
+
+## Fallback local de navegador
+
+Producao normal nao usa navegador local. Se Modal cair, subir fallback conforme `docs/SERVER_CONTEXT.md`.
+
+Resumo minimo:
 
 ```bash
-grep -E '^(PRUMO_API_IMAGE|BASE_BROWSER_SLOTS|MAX_BROWSERS|BROWSER_CDP_POOL|MAX_BROWSER_LIMIT)=' /opt/prumo/app/deploy/.env
+docker run -d --name browserless --restart unless-stopped \
+  --cpus 8 --memory 12g --shm-size 2g \
+  -p 127.0.0.1:3000:3000 \
+  -e TOKEN="$BROWSERLESS_TOKEN" \
+  -e CONCURRENT=5 \
+  -e MAX_CONCURRENT_SESSIONS=5 \
+  -e QUEUED=30 \
+  -e QUEUE_LENGTH=30 \
+  -e TIMEOUT=1200000 \
+  -e CONNECTION_TIMEOUT=1200000 \
+  -e DEFAULT_LAUNCH_ARGS='["--no-sandbox"]' \
+  browserless/chrome@sha256:57d19e414d9fe4ae9d2ab12ba768c97f38d51246c5b31af55a009205c136012f
 ```
 
-## Servicos que nao podem ser removidos
+Depois ajustar `BROWSER_CDP_POOL` no `.env` e reiniciar `prumo-api`.
 
-- `docker.service`
-- `containerd.service`
-- `cloudflared.service`
-- `fail2ban.service`
-- `prumo-monitor.service`
-- `ssh.service`
-- `cron.service`
-- container `browserless`
-- container `prumo-api`
-- pasta `/opt/prumo/data`
-- pasta `/home/server/prumo-proxy`
-- tunnel principal de `/etc/cloudflared/config.yml`
-- tunnel/proxy Modal em `/home/server/prumo-proxy/tunnel-config.yml`
+## Comandos de auditoria
 
-## Checklist de verificacao
+```powershell
+git status
+git rev-parse HEAD
+git ls-remote origin refs/heads/main
+wrangler deployments list --name morning-credit-8a59
+modal billing report --for "this month" --json
+```
 
-- `git status` limpo localmente
-- GitHub `main` no mesmo commit local
-- `/home/server/prumo-src` no mesmo commit GitHub
-- `curl http://127.0.0.1:8000/` retorna `version=1.0.30`
-- health mostra `max_browsers=37`, `base_browsers=5`, `browser_turbo_extra=32`
-- `docker compose ps` mostra `browserless` e `prumo-api` saudaveis
-- `wrangler deployments list --name morning-credit-8a59` mostra deploy novo
-- `wrangler deployments list --name morning-credit-8a59-homologacao` mostra deploy novo
-- `https://app.prumosistemas.com.br/login` abre sem `.html`
-- `https://app.prumosistemas.com.br/login.html` redireciona para `/login`
-- `https://app.prumosistemas.com.br/iss-fortaleza` abre a tela ISS
-- login/logout nao ficam presos em loader
-- tela ISS nao exibe `browserTurboBox`
+Servidor:
+
+```bash
+docker ps
+docker compose ps
+curl -fsS http://127.0.0.1:8000/
+docker logs --tail 100 prumo-api
+```

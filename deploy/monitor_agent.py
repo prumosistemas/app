@@ -26,7 +26,11 @@ BROWSERLESS_PRESSURE_URL = os.getenv("BROWSERLESS_PRESSURE_URL", "").strip()
 COLLECT_INTERVAL = max(5, int(os.getenv("MONITOR_COLLECT_INTERVAL", "10")))
 PERSIST_INTERVAL = max(10, int(os.getenv("MONITOR_PERSIST_INTERVAL", "30")))
 RETENTION_SECONDS = 5 * 24 * 60 * 60
-CONTAINERS = ("browserless", "prumo-api")
+CONTAINERS = tuple(
+    item.strip()
+    for item in os.getenv("PRUMO_MONITOR_CONTAINERS", "prumo-api").split(",")
+    if item.strip()
+)
 
 _last_cpu: Optional[Tuple[int, int]] = None
 

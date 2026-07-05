@@ -146,6 +146,10 @@ export default {
         return handleMasterBillingPaymentCreate(request, env);
       }
 
+      if (url.pathname === "/api/master/billing/payments/delete" && request.method === "POST") {
+        return handleMasterBillingPaymentDelete(request, env);
+      }
+
       if (url.pathname === "/api/users" && request.method === "GET") {
         return handleListUsers(request, env);
       }
@@ -829,6 +833,7 @@ async function handleMasterBillingPaymentCreate(request, env) {
   ).run();
 
   await applyBillingStateForCompany(env.db, companyId);
+  billingStateCache.delete(String(companyId));
 
   await logEvent(env, request, {
     actor: auth.user,
@@ -840,6 +845,52 @@ async function handleMasterBillingPaymentCreate(request, env) {
   });
 
   return jsonResponse(request, env, { ok: true, payment, summary: summarizeBilling(await getBillingPayments(env.db, { companyId, limit: 200 })) });
+}
+
+async function handleMasterBillingPaymentDelete(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+
+  const csrfOk = await verifyRequestCsrf(request, auth.session.csrf_hash);
+  if (!csrfOk) return jsonResponse(request, env, { ok: false, error: "CSRF inválido." }, 403);
+
+  const body = await readBody(request);
+  const paymentId = String(body.payment_id || "").trim();
+  if (!isSafeId(paymentId)) return jsonResponse(request, env, { ok: false, error: "Pagamento inválido." }, 400);
+  if (String(body.confirm || "") !== "DELETE") {
+    return jsonResponse(request, env, { ok: false, error: "Confirmação inválida." }, 400);
+  }
+
+  const payment = await env.db.prepare(`
+    SELECT p.*, c.name AS company_name
+    FROM payments p
+    LEFT JOIN companies c ON c.id = p.company_id
+    WHERE p.id = ?
+    LIMIT 1
+  `).bind(paymentId).first();
+
+  if (!payment) return jsonResponse(request, env, { ok: false, error: "Pagamento não encontrado." }, 404);
+
+  await env.db.prepare("DELETE FROM payments WHERE id = ?").bind(paymentId).run();
+  billingStateCache.delete(String(payment.company_id));
+  await applyBillingStateForCompany(env.db, payment.company_id);
+
+  await logEvent(env, request, {
+    actor: auth.user,
+    companyId: payment.company_id,
+    action: "billing_payment_deleted",
+    targetType: "payment",
+    targetId: payment.id,
+    message: `Pagamento excluído: ${payment.company_name || payment.company_id} ${payment.period_start || ""}.`,
+  });
+
+  const payments = await getBillingPayments(env.db, { companyId: payment.company_id, limit: 200 });
+  return jsonResponse(request, env, {
+    ok: true,
+    deleted_payment_id: payment.id,
+    company_id: payment.company_id,
+    summary: summarizeBilling(payments),
+  });
 }
 
 async function handleMasterCreateCompany(request, env) {

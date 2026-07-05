@@ -82,7 +82,7 @@ def _browser_pool_capacity_from_env(default: int = 15) -> int:
     return total or default
 
 
-BASE_BROWSER_SLOTS = _env_int("BASE_BROWSER_SLOTS", 15, min_value=1)
+BASE_BROWSER_SLOTS = _env_int("BASE_BROWSER_SLOTS", 15, min_value=0)
 MAX_BROWSERS = int(os.getenv("MAX_BROWSERS", str(_browser_pool_capacity_from_env(BASE_BROWSER_SLOTS))))
 MAX_BROWSER_LIMIT = _env_int("MAX_BROWSER_LIMIT", 96, min_value=1)
 MAX_BROWSERS = max(1, min(MAX_BROWSERS, MAX_BROWSER_LIMIT))

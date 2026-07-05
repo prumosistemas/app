@@ -12,6 +12,8 @@ import shutil
 import sqlite3
 import time
 from contextlib import closing
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -120,7 +122,7 @@ from run_queue import (
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.30",
+    version="1.0.31",
     description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
 )
 
@@ -468,7 +470,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "ISS Automação API",
-        "version": "1.0.30",
+        "version": "1.0.31",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
@@ -555,6 +557,87 @@ def _load_monitor_metrics(range_key: str) -> Dict[str, Any]:
             "last_seen_at": latest_ts or None,
         },
     }
+
+
+def _env_decimal(name: str, default: str = "0") -> Decimal:
+    raw = str(os.getenv(name, default) or default).strip().replace(",", ".")
+    try:
+        return Decimal(raw)
+    except Exception:
+        return Decimal(default)
+
+
+def _modal_billing_snapshot() -> Dict[str, Any]:
+    monthly_credit = _env_decimal("MODAL_MONTHLY_CREDIT_USD", "30.00")
+    target_app = str(os.getenv("MODAL_BILLING_APP_NAME", "prumo-browserless") or "").strip()
+    now_dt = datetime.now(timezone.utc)
+    month_start = datetime(now_dt.year, now_dt.month, 1, tzinfo=timezone.utc)
+
+    try:
+        from modal import billing as modal_billing
+
+        rows = modal_billing.workspace_billing_report(
+            start=month_start,
+            end=now_dt,
+            resolution="d",
+        )
+        normalized_rows = []
+        total_cost = Decimal("0")
+        target_cost = Decimal("0")
+
+        for row in rows:
+            cost = Decimal(str(row.get("cost", "0")))
+            description = str(row.get("description") or "")
+            total_cost += cost
+            if not target_app or description == target_app:
+                target_cost += cost
+            interval = row.get("interval_start")
+            normalized_rows.append({
+                "object_id": row.get("object_id"),
+                "description": description,
+                "environment": row.get("environment_name") or row.get("environment"),
+                "interval_start": interval.isoformat() if hasattr(interval, "isoformat") else str(interval or ""),
+                "cost_usd": float(cost),
+            })
+
+        remaining = monthly_credit - total_cost
+        if remaining < Decimal("0"):
+            remaining = Decimal("0")
+
+        return {
+            "ok": True,
+            "source": "modal.billing.workspace_billing_report",
+            "workspace": os.getenv("MODAL_WORKSPACE", ""),
+            "target_app": target_app,
+            "period_start": month_start.isoformat(),
+            "period_end": now_dt.isoformat(),
+            "monthly_credit_usd": float(monthly_credit),
+            "month_to_date_cost_usd": float(total_cost),
+            "target_app_cost_usd": float(target_cost),
+            "credits_remaining_usd": float(remaining),
+            "rows": normalized_rows,
+        }
+    except Exception as exc:
+        manual_remaining = os.getenv("MODAL_CREDITS_REMAINING_USD", "").strip()
+        if manual_remaining:
+            remaining = _env_decimal("MODAL_CREDITS_REMAINING_USD", "0")
+            return {
+                "ok": True,
+                "source": "manual_env_fallback",
+                "error": f"{type(exc).__name__}: {exc}",
+                "monthly_credit_usd": float(monthly_credit),
+                "month_to_date_cost_usd": None,
+                "target_app_cost_usd": None,
+                "credits_remaining_usd": float(remaining),
+                "rows": [],
+            }
+        return {
+            "ok": False,
+            "source": "modal.billing.workspace_billing_report",
+            "error": f"{type(exc).__name__}: {exc}",
+            "monthly_credit_usd": float(monthly_credit),
+            "rows": [],
+        }
 
 
 def _require_internal_secret(x_internal_secret: str) -> None:
@@ -1517,6 +1600,13 @@ async def admin_system_metrics(
 
     range_key = range if range in {"1h", "6h", "24h", "5d"} else "6h"
     return {"ok": True, **await asyncio.to_thread(_load_monitor_metrics, range_key)}
+
+
+@app.get("/api/admin/modal-billing")
+async def admin_modal_billing(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    if ctx.user_role != "master":
+        raise HTTPException(status_code=403, detail="Permissão negada.")
+    return await asyncio.to_thread(_modal_billing_snapshot)
 
 
 @app.get("/api/internal/runtime-metrics")

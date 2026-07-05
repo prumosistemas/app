@@ -17,27 +17,5 @@ COMPANY_NAME = "Prumo Sistemas"
 [triggers]
 crons = ["* * * * *"]
 
-[env.homologacao]
-name = "morning-credit-8a59-homologacao"
-workers_dev = true
-
-[[env.homologacao.d1_databases]]
-binding = "db"
-database_name = "db-homologacao"
-database_id = "SUBSTITUA_PELO_DATABASE_ID_HOMOLOGACAO"
-
-[env.homologacao.vars]
-PYTHON_API_URL = "https://api.prumosistemas.com.br"
-FRONTEND_ORIGINS = "https://homologacao--appprumo.netlify.app,http://localhost:8888,http://localhost:8080"
-COOKIE_MODE = "prod"
-COMPANY_NAME = "Prumo Sistemas Homologacao"
-
-[env.homologacao.triggers]
-crons = ["* * * * *"]
-
 # Configurar como secrets, sem versionar valores:
 # wrangler secret put ISS_INTERNAL_SECRET --env=""
-# wrangler secret put ISS_INTERNAL_SECRET --env homologacao
-# wrangler secret put SETUP_TOKEN --env homologacao
-# wrangler secret put ADMIN_EMAIL --env homologacao
-# wrangler secret put ADMIN_PASSWORD --env homologacao

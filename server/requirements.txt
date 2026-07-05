@@ -10,3 +10,4 @@ beautifulsoup4
 websockets
 gunicorn
 cryptography
+modal

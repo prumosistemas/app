@@ -129,6 +129,7 @@
     </section>
     <section id="billingSection" class="section">
       <div class="grid two">
+        <div class="card" style="grid-column:1 / -1;"><div class="card-head"><h3>Créditos Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox"><span class="small">Carregando créditos...</span></div></div>
         <div class="card"><div class="card-head"><h3>PIX da empresa</h3></div><div class="card-body stack">
           <form id="billingSettingsForm" class="stack">
             <div><label>Chave PIX</label><input name="pix_key" placeholder="email, telefone, CPF/CNPJ ou chave aleatória"></div>
@@ -181,15 +182,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
-const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
 function resolveWorkerUrl(){
-  const host = String(window.location.hostname || "").toLowerCase();
-  const params = new URLSearchParams(window.location.search);
-  const forced = String(params.get("env") || "").toLowerCase();
-  if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
-  if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
-  if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
-  if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
   return PROD_WORKER_URL;
 }
 const API = resolveWorkerUrl();
@@ -225,7 +218,7 @@ function switchSection(id){
   document.querySelectorAll("[data-section]").forEach(el=>el.classList.toggle("active",el.dataset.section===id));
   $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",billingSection:"Pagamentos",logsSection:"Logs"}[id] || "Master";
   if(id==="companiesSection") loadCompanies();
-  if(id==="billingSection") loadBilling();
+  if(id==="billingSection"){ loadBilling(); loadModalBilling(); }
   if(id==="logsSection"){ loadLogs(); loadMetrics(); startMetricsPolling(); }
   else { stopMetricsPolling(); }
 }
@@ -286,6 +279,34 @@ function refreshBillingCompanySelect(){
   $("billingCompanySelect").innerHTML = `<option value="">Selecione</option>` + companiesCache.map(c=>`<option value="${esc(c.id)}">${esc(c.name)} — ${esc(c.owner_email || "")}</option>`).join("");
 }
 function money(cents){ const value=Number(cents||0)/100; return value?value.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}):"-"; }
+function usd(value){ return Number(value||0).toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}); }
+async function loadModalBilling(){
+  const box=$("modalBillingBox");
+  if(!box) return;
+  box.innerHTML="<span class='small'>Consultando Modal...</span>";
+  try{
+    const data=await api("/py/api/admin/modal-billing");
+    if(!data.ok){
+      box.innerHTML=`<div class="notice warn">Não foi possível consultar o Modal agora.<br><span class="small">${esc(data.error||"Sem detalhe.")}</span></div>`;
+      return;
+    }
+    const rows=data.rows || [];
+    const start=Date.parse(data.period_start||"");
+    const end=Date.parse(data.period_end||"");
+    box.innerHTML=`
+      <div class="metric-grid">
+        <div class="metric"><span>Crédito restante</span><b>${esc(usd(data.credits_remaining_usd))}</b></div>
+        <div class="metric"><span>Gasto no mês</span><b>${esc(usd(data.month_to_date_cost_usd))}</b></div>
+        <div class="metric"><span>Crédito mensal</span><b>${esc(usd(data.monthly_credit_usd))}</b></div>
+        <div class="metric"><span>App Modal</span><b>${esc(data.target_app||"-")}</b></div>
+      </div>
+      <div class="small">Fonte: ${esc(data.source||"-")} · período: ${esc(Number.isFinite(start)?ts(start/1000):"-")} até ${esc(Number.isFinite(end)?ts(end/1000):"-")}</div>
+      ${rows.length?`<details><summary class="small">Linhas do relatório (${rows.length})</summary><div class="detail-stack">${rows.slice(-20).map(row=>`<div class="notice info"><b>${esc(row.description||"-")}</b><br><span class="small">${esc(row.interval_start||"-")} · ${esc(usd(row.cost_usd))}</span></div>`).join("")}</div></details>`:""}
+    `;
+  }catch(err){
+    box.innerHTML=`<div class="notice err">${esc(err.message)}</div>`;
+  }
+}
 async function loadBilling(){
   if(!companiesCache.length) await loadCompanies();
   const companyId=$("billingCompanySelect")?.value || "";
@@ -298,7 +319,14 @@ async function loadBilling(){
     form.qr_code_url.value=settings.qr_code_url||"";
   }
   const rows=data.payments || [];
-  $("billingTable").innerHTML=rows.length?`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Usuário</th><th>Mês</th><th>Meses</th><th>Ativo até</th><th>Valor</th><th>Pago em</th><th>Obs.</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${esc(p.company_name||p.company_id||"-")}</td><td>${esc(p.user_email||"Empresa inteira")}</td><td>${esc(p.period_start||"-")}</td><td>${Number(p.months||1)}</td><td>${esc(ts(p.active_until))}</td><td>${esc(money(p.amount_cents))}</td><td>${esc(ts(p.paid_at))}</td><td>${esc(p.note||p.description||"")}</td></tr>`).join("")}</tbody></table></div>`:`<span class="small">Nenhum pagamento lançado.</span>`;
+  $("billingTable").innerHTML=rows.length?`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Usuário</th><th>Mês</th><th>Meses</th><th>Ativo até</th><th>Valor</th><th>Pago em</th><th>Obs.</th><th>Ação</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${esc(p.company_name||p.company_id||"-")}</td><td>${esc(p.user_email||"Empresa inteira")}</td><td>${esc(p.period_start||"-")}</td><td>${Number(p.months||1)}</td><td>${esc(ts(p.active_until))}</td><td>${esc(money(p.amount_cents))}</td><td>${esc(ts(p.paid_at))}</td><td>${esc(p.note||p.description||"")}</td><td><button class="danger" data-delete-payment="${esc(p.id)}" data-payment-label="${esc((p.company_name||p.company_id||"-")+" "+(p.period_start||""))}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`:`<span class="small">Nenhum pagamento lançado.</span>`;
+  $("billingTable").querySelectorAll("[data-delete-payment]").forEach(btn=>btn.onclick=()=>deletePayment(btn.dataset.deletePayment,btn.dataset.paymentLabel||""));
+}
+async function deletePayment(id,label){
+  if(!confirm(`Excluir este pagamento?\n\n${label}\n\nIsso recalcula imediatamente o status de acesso da empresa.`)) return;
+  await api("/api/master/billing/payments/delete",{method:"POST",body:JSON.stringify({payment_id:id,confirm:"DELETE"})});
+  message("ok","Pagamento excluído.");
+  await loadBilling();
 }
 async function loadLogs(){
   try{
@@ -310,7 +338,7 @@ async function loadLogs(){
 function metricValue(value,suffix=""){ const number=Number(value||0); return `${number.toFixed(number>=10?0:1)}${suffix}`; }
 function renderMetricCards(latest){
   const host=latest.host || {}; const runtime=latest.runtime || {}; const queue=runtime.queue || {}; const containers=latest.containers || {};
-  const browserless=containers.browserless || {}; const apiContainer=containers["prumo-api"] || {};
+  const apiContainer=containers["prumo-api"] || {};
   $("metricCards").innerHTML=[
     ["CPU do host",metricValue(host.cpu_percent,"%")],
     ["Memória RAM",metricValue(host.memory_percent,"%")],
@@ -320,7 +348,6 @@ function renderMetricCards(latest){
     ["OOM / memória",String(Number(latest.errors?.oom||0))],
     ["Processos mortos",String(Number(latest.errors?.killed||0))],
     ["Timeouts",String(Number(latest.errors?.timeout||0))],
-    ["Browserless",browserless.status||"indisponível"],
     ["Prumo API",apiContainer.status||"indisponível"],
     ["Disco usado",metricValue(host.disk_percent,"%")],
   ].map(([label,value])=>`<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
@@ -372,6 +399,7 @@ $("btnReloadCompanies").onclick=loadCompanies; $("btnReloadLogs").onclick=loadLo
 $("metricsRange").onchange=loadMetrics;
 $("billingCompanySelect")?.addEventListener("change",()=>{ loadBilling().catch(err=>message("err",err.message)); });
 $("btnReloadBilling")?.addEventListener("click",()=>loadBilling().catch(err=>message("err",err.message)));
+$("btnReloadModalBilling")?.addEventListener("click",()=>loadModalBilling().catch(err=>message("err",err.message)));
 $("billingSettingsForm")?.addEventListener("submit",async event=>{
   event.preventDefault();
   try{

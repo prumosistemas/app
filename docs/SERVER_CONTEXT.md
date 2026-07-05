@@ -1,137 +1,360 @@
-# Contexto do servidor Prumo
+# Contexto do Servidor Prumo
 
-Versao operacional: `1.0.30`
-Data de atualizacao: `2026-07-05`
-Host: `server@ssh.prumosistemas.com.br` via Cloudflare Access
+Versao: 1.0.31
+Data: 2026-07-05
+Modo atual: producao unica, sem homologacao ativa
 
-## Acesso
+## Resumo rapido
 
-Use:
+A Prumo roda em quatro partes:
 
-```bash
+1. HTMLs estaticos no Netlify, servidos em `https://app.prumosistemas.com.br`.
+2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando de login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
+3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
+4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 40 sessoes turbo.
+
+Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
+
+## Acesso ao servidor
+
+Entrar no servidor:
+
+```powershell
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 ```
 
-O SSH depende do servico `cloudflared.service`, configurado em `/etc/cloudflared/config.yml`. Nao remover esse servico.
-
-## Topologia atual
-
-- API FastAPI: container `prumo-api`, porta local `127.0.0.1:8000`.
-- Browserless local: container `browserless`, porta local `127.0.0.1:3000`.
-- Worker publico: `https://morning-credit-8a59.prumo-sistema.workers.dev`.
-- App publico/HTMLs: Netlify a partir dos HTMLs versionados no repo.
-- Dados persistentes da API: `/opt/prumo/data`.
-- Deploy Compose: `/opt/prumo/app/deploy`.
-
-## Observacao da versao 1.0.30
-
-A API faz uma limpeza controlada da home do ISS antes de entrar nos menus de topo. O modal benigno `Pesquisa Sefin` e respondido com `Nao`; modais reais de mensagem pendente continuam gerando `MENSAGEM_NA_TELA`; mascaras RichFaces/AJAX sem conteudo util sao removidas antes de acessar Escrituração, NFS-e e DAM.
-
-Na Escrituração, a API tambem aguarda o resultado de `Consultar` antes de ler os links de `Escriturar/Reabrir`, aceita a tela `Escrituração Fiscal` já aberta como sucesso e exige estabilidade por leituras consecutivas para evitar falso erro quando o portal navega ou troca o DOM durante a automação.
-
-A UI cria runs com retry automatico seguro preselecionado. O servidor limita a cadeia por `AUTO_RETRY_MAX_ATTEMPTS` e por uma trava dura de codigo de 3 tentativas, agendando nova tentativa somente para erros marcados como retryable que nao sejam finais de negocio/portal, como `CNPJ_INEXISTENTE`, `CNPJ_MISMATCH`, `MENSAGEM_NA_TELA`, `LOGIN_ERROR` e `PORTAL_ACCESS_BLOCKED`. Os botoes de ZIP/download e a paginacao da run selecionada mostram loader local durante a acao.
-
-A versao 1.0.30 tambem separa producao e homologacao no Worker/D1, remove `.html` das URLs publicas via Netlify, deixa o caminho de login/logout mais leve no Worker e remove o box visual `browserTurboBox` da tela ISS Fortaleza.
-- Codigo espelho no servidor: `/home/server/prumo-src`.
-- Proxy do IP do servidor para Modal: `/home/server/prumo-proxy`.
-
-## Cloudflare e tuneis
-
-Ha dois conjuntos importantes:
-
-- `/etc/cloudflared/config.yml`: tunel principal para:
-  - `ssh.prumosistemas.com.br` -> `ssh://localhost:22`
-  - `browser.prumosistemas.com.br` -> `http://localhost:3000`
-  - `api.prumosistemas.com.br` -> `http://localhost:8000`
-- `/home/server/prumo-proxy/tunnel-config.yml`: tunel TCP `modal-proxy.prumosistemas.com.br` para `tcp://localhost:31381`.
-
-O `prumo-proxy` permite que o Browserless do Modal saia para o portal ISS usando o IP do servidor. Ele nao faz parte do Docker Compose principal, mas e intencional.
-
-## Capacidade de navegadores
-
-Configuracao de producao apos a organizacao:
-
-- Browserless local: `5` sessoes.
-- Modal turbo: `32` sessoes.
-- Total API: `37` navegadores.
-
-Variaveis relevantes em `/opt/prumo/app/deploy/.env`:
-
-```env
-BASE_BROWSER_SLOTS=5
-MAX_BROWSERS=37
-BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|32|wss://...
-```
-
-No Compose, o Browserless local tambem deve ficar em:
-
-```yaml
-CONCURRENT: "5"
-MAX_CONCURRENT_SESSIONS: "5"
-```
-
-## Servicos para preservar
-
-- `docker.service`
-- `containerd.service`
-- `cloudflared.service`
-- `fail2ban.service`
-- `prumo-monitor.service`
-- `ssh.service`
-- `cron.service`
-
-## Comandos operacionais
-
-Status:
-
-```bash
-docker ps
-curl -s http://127.0.0.1:8000/
-systemctl --no-pager status cloudflared
-systemctl --no-pager status prumo-monitor
-```
-
-Rede:
-
-```bash
-ss -ltnup
-```
-
-Proxy Modal usando IP do servidor:
-
-```bash
-curl -I --max-time 20 -x http://127.0.0.1:31381 https://iss.fortaleza.ce.gov.br/
-curl -I --max-time 20 -x http://127.0.0.1:31381 https://idp2.sefin.fortaleza.ce.gov.br/
-```
-
-Use hosts do portal/IDP nesse teste. Hosts auxiliares como `api.ipify.org` podem retornar `403` se nao estiverem na allowlist do processo ativo.
-
-Atualizar deploy:
+Pasta principal do deploy:
 
 ```bash
 cd /opt/prumo/app/deploy
-docker compose --env-file .env pull
-docker compose --env-file .env up -d
 ```
 
-Logs:
+Codigo espelhado no servidor:
 
 ```bash
-docker logs --tail 200 prumo-api
-docker logs --tail 100 browserless
-journalctl -u cloudflared -n 100 --no-pager
-journalctl -u prumo-monitor -n 100 --no-pager
+cd /home/server/prumo-src
 ```
 
-## O que foi limpo nesta organizacao
+## Containers atuais
 
-- Processos soltos antigos de teste grafico/proxy foram encerrados quando nao estavam ligados aos servicos atuais.
-- Imagens Docker antigas da API e imagens dangling foram removidas, preservando a imagem em uso e a imagem Browserless digestada.
-- Backups/testes antigos de Chromium/Playwright em `/home/server/legado-server-20260626` foram removidos apos verificacao de que nao eram usados pelos servicos atuais.
+O Compose atual deve manter apenas:
 
-## Cuidados
+- `prumo-api`: API FastAPI/Playwright.
 
-- Nao apagar `/opt/prumo/data`: contem SQLite, runs, arquivos e monitoramento.
-- Nao apagar `/opt/prumo/app/deploy/.env`: contem secrets e pool ativo.
-- Nao versionar `.env`, tokens, arquivos `.json` de tunnel ou dumps SQLite.
-- Antes de mexer em Cloudflare, confirmar `wrangler whoami` e o Worker `morning-credit-8a59`.
+O container local `browserless` foi retirado do Compose de producao. Ele pode ser derrubado com:
+
+```bash
+cd /opt/prumo/app/deploy
+docker compose up -d --remove-orphans
+docker ps
+```
+
+O esperado depois disso e aparecer apenas `prumo-api` entre os containers da Prumo.
+
+## Capacidade de navegadores
+
+Configuracao atual de producao:
+
+```env
+BASE_BROWSER_SLOTS=0
+MAX_BROWSERS=40
+MAX_BROWSER_LIMIT=96
+BROWSER_CDP_POOL=modal-turbo|40|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+```
+
+Isso significa:
+
+- 0 navegadores locais.
+- 40 navegadores pelo Modal.
+- A fila da API cria no maximo 40 workers globais.
+- O portal ISS sai pelo IP do servidor porque o Browserless Modal sobe `cloudflared access tcp` e injeta proxy no Chrome.
+
+Conferir pela API:
+
+```bash
+curl -fsS http://127.0.0.1:8000/
+```
+
+O esperado:
+
+```json
+{
+  "version": "1.0.31",
+  "max_browsers": 40,
+  "base_browsers": 0,
+  "browser_turbo_extra": 40,
+  "browser_pool_configured": true
+}
+```
+
+## Modal
+
+Conta/perfil usado no CLI: `jorhinhogames`.
+
+App Modal:
+
+- Nome: `prumo-browserless`
+- Arquivo local: `deploy/modal_browserless.py`
+- Configuracao atual: `10` containers maximos x `4` sessoes por container = `40`.
+- Secret esperado no Modal: `prumo-browserless`
+- Secret deve conter pelo menos `TOKEN=<token_browserless>`.
+
+Deploy do Modal:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+modal profile use jorhinhogames
+modal deploy deploy\modal_browserless.py
+```
+
+Relatorio de custo vivo:
+
+```powershell
+modal billing report --for "this month" --json
+```
+
+Em 2026-07-05 o relatorio retornou custo mensal aproximado de `1.79333653` USD para `prumo-browserless`. Com `MODAL_MONTHLY_CREDIT_USD=30.00`, o painel master calcula credito restante aproximado de `28.21` USD.
+
+Para o painel master consultar o Modal pela API Python, o container `prumo-api` precisa receber:
+
+```env
+MODAL_TOKEN_ID=...
+MODAL_TOKEN_SECRET=...
+MODAL_MONTHLY_CREDIT_USD=30.00
+MODAL_BILLING_APP_NAME=prumo-browserless
+```
+
+Nunca versionar esses tokens.
+
+## Fallback Browserless local
+
+O Browserless local nao fica ativo em producao, mas o caminho esta preservado para emergencia se o Modal cair.
+
+Subir Browserless local manualmente:
+
+```bash
+cd /opt/prumo/app/deploy
+docker run -d \
+  --name browserless \
+  --restart unless-stopped \
+  --cpus 8 \
+  --memory 12g \
+  --shm-size 2g \
+  -p 127.0.0.1:3000:3000 \
+  -e TOKEN="$BROWSERLESS_TOKEN" \
+  -e CONCURRENT=5 \
+  -e MAX_CONCURRENT_SESSIONS=5 \
+  -e QUEUED=30 \
+  -e QUEUE_LENGTH=30 \
+  -e TIMEOUT=1200000 \
+  -e CONNECTION_TIMEOUT=1200000 \
+  -e DEFAULT_LAUNCH_ARGS='["--no-sandbox"]' \
+  browserless/chrome@sha256:57d19e414d9fe4ae9d2ab12ba768c97f38d51246c5b31af55a009205c136012f
+```
+
+Alterar `.env` para fallback misto:
+
+```env
+BASE_BROWSER_SLOTS=5
+MAX_BROWSERS=45
+BROWSER_CDP_URL=ws://browserless:3000?token=...
+BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|40|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+```
+
+Ou, se Modal estiver totalmente fora:
+
+```env
+BASE_BROWSER_SLOTS=5
+MAX_BROWSERS=5
+BROWSER_CDP_URL=ws://browserless:3000?token=...
+BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...
+```
+
+Depois:
+
+```bash
+docker compose up -d
+curl -fsS http://127.0.0.1:8000/
+```
+
+## Persistencia
+
+Dados que nao somem se o PC ou servidor reiniciar:
+
+- Worker/D1: empresas, usuarios, sessoes, pagamentos e logs ficam no Cloudflare D1 `db`.
+- API Python: contas ISS, conjuntos, runs e arquivos ficam em `/opt/prumo/data`, montado no container como `/app/output`.
+- SQLite local da API: `/opt/prumo/data/_api_data/iss_automacao.db`.
+- Runs por colaborador: `/opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/runs`.
+- Arquivos gerados por run ficam na mesma arvore de `/opt/prumo/data`.
+
+O container `prumo-api` usa `restart: unless-stopped`; se o servidor voltar apos queda de energia, o Docker deve subir a API novamente. O Modal e stateless: containers sobem sob demanda.
+
+Se a API cair no meio de uma run, o estado salvo em SQLite/pastas permanece. A run pode ficar como interrompida/running ate a proxima conciliacao manual ou retry seguro.
+
+## Worker e D1
+
+Worker de producao:
+
+```bash
+cd /home/server/prumo-src/cloudflare
+wrangler deploy
+```
+
+D1 de producao:
+
+- Binding: `db`
+- Nome: `db`
+- ID atual: `e69428e3-6524-427c-bae3-d32190e5c229`
+
+Segredos do Worker:
+
+- `ISS_INTERNAL_SECRET`
+- `SETUP_TOKEN`
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+
+Conferir deploys:
+
+```bash
+wrangler deployments list --name morning-credit-8a59
+```
+
+## Netlify e HTMLs
+
+Site:
+
+- Nome Netlify: `appprumo`
+- URL final: `https://app.prumosistemas.com.br`
+- Repo: `https://github.com/prumosistemas/app`
+- Conta: `PRUMO`
+
+Os HTMLs ficam na raiz do repo:
+
+- `login.html`
+- `index.html`
+- `admin.html`
+- `iss-fortaleza.html`
+- `master.html`
+- `master-company.html`
+- `404.html`
+
+As URLs publicas usam redirects do `netlify.toml`, entao o usuario acessa sem `.html`, por exemplo:
+
+- `/login`
+- `/admin`
+- `/iss-fortaleza`
+- `/master`
+- `/master-company`
+
+Todos os HTMLs apontam para o Worker de producao `https://morning-credit-8a59.prumo-sistema.workers.dev`.
+
+## Master
+
+O usuario master e o dono operacional do painel:
+
+- Cria empresas.
+- Reseta senha de admins.
+- Desativa/apaga empresas.
+- Configura PIX.
+- Lanca pagamentos.
+- Exclui pagamentos lancados errado.
+- Ve logs e metricas de infraestrutura.
+- Ve custo/creditos do Modal no mes.
+
+Pagamentos sao manuais. Excluir pagamento recalcula imediatamente o estado de acesso da empresa afetada. Se a empresa ficar sem pagamento ativo, colaboradores podem ser bloqueados por regra de billing.
+
+## ISS Fortaleza
+
+O fluxo ISS usa:
+
+- Login/seleção por requests quando possivel.
+- Fallback por Playwright quando requests nao resolve.
+- Modal benigno `Pesquisa Sefin` respondido com `Nao`.
+- Mensagem real do portal como erro definitivo `MENSAGEM_NA_TELA`.
+- Retry automatico seguro apenas para falhas retryable conhecidas, limitado por `AUTO_RETRY_MAX_ATTEMPTS`.
+
+Fluxos:
+
+- Certidao
+- Escrituracao
+- DAM
+- Notas
+
+Ordem operacional quando todos estao marcados:
+
+1. Certidao
+2. Escrituracao
+3. DAM
+4. Notas
+
+## Deploy completo
+
+No PC:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+git status
+python -m py_compile server\main.py server\db.py server\domain.py server\run_queue.py
+```
+
+Deploy Worker:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto\cloudflare
+wrangler deploy
+```
+
+Deploy Modal:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+modal profile use jorhinhogames
+modal deploy deploy\modal_browserless.py
+```
+
+Build e push da API:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+docker build -t ryang20/prumo-api:1.0.31 server
+docker push ryang20/prumo-api:1.0.31
+```
+
+Atualizar servidor:
+
+```bash
+ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
+cd /home/server/prumo-src
+git pull --ff-only
+cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
+cd /opt/prumo/app/deploy
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.31 e pool Modal 40
+docker compose pull prumo-api
+docker compose up -d --remove-orphans
+curl -fsS http://127.0.0.1:8000/
+```
+
+Deploy Netlify normalmente acontece via push no GitHub `main`. Deploy manual, se necessario:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+netlify deploy --prod --dir .
+```
+
+## Checklist de saude
+
+```bash
+docker ps
+curl -fsS http://127.0.0.1:8000/
+docker logs --tail 100 prumo-api
+```
+
+No PC:
+
+```powershell
+wrangler deployments list --name morning-credit-8a59
+modal billing report --for "this month" --json
+git status
+git rev-parse HEAD
+git ls-remote origin refs/heads/main
+```
