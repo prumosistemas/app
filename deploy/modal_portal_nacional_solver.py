@@ -102,5 +102,6 @@ def solver_server():
             "/usr/bin/google-chrome",
             "--max-browsers",
             str(BROWSERS_PER_CONTAINER),
+            "--recarregar-nao-9",
         ],
     )

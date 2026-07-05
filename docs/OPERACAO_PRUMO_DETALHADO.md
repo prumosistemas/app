@@ -142,6 +142,8 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 - selecao de certificado no runtime, sem upload de arquivo de certificado.
 - sessao gerada via proxy do servidor quando a producao Linux precisa usar cookies criados no Windows.
 
+Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A rota limpa `/portal-nacional` foi mantida ativa por uma rota especifica do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/portal-nacional*`), que entrega `portal-nacional.html` diretamente.
+
 Arquivos principais:
 
 ```text
@@ -158,10 +160,13 @@ Teste local confirmado em 2026-07-05:
 - indexacao por requests: 86 notas recebidas;
 - download local: 1 XML e 1 PDF validos;
 - producao Gabriel: run `20260705-210520-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
+- producao Gabriel: run `20260705-215220-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- desafios hCaptcha ainda podem retornar `solver:token_nao_voltou`, entao o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
+- XML em producao recebeu hCaptcha canvas nao-9 e falhou quando a Cohere retornou `429 Too Many Requests`; o erro agora aparece como `solver:cohere_rate_limited`, sem mascarar como `token_nao_voltou`.
+- O solver Modal `2026-07-05-modal-xvfb-proxy-hybrid-non9` usa proxy do servidor, recarrega desafios nao-9 algumas vezes e depois chama IA uma vez para evitar queima de cota.
+- desafios hCaptcha ainda dependem da API de visao; por isso o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor:
 

@@ -29,9 +29,10 @@ COHERE_MODEL = "command-a-vision-07-2025"
 
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
-SOLVER_API_VERSION = "2026-07-05-modal-xvfb-proxy"
+SOLVER_API_VERSION = "2026-07-05-modal-xvfb-proxy-hybrid-non9"
 SOLVER_PAGE_HOST = os.environ.get("SOLVER_PAGE_HOST", "www.nfse.gov.br").strip() or "www.nfse.gov.br"
 NON_9_SETTLE_SECONDS = float(os.environ.get("SOLVER_NON_9_SETTLE_SECONDS", "5"))
+NON_9_RELOADS_BEFORE_AI = int(os.environ.get("SOLVER_NON_9_RELOADS_BEFORE_AI", "3"))
 PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "").strip()
 PROXY_LISTENER = os.environ.get("PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480").strip()
 SOLVER_PROFILES = API_DIR / "chrome-profiles-hcaptcha"
@@ -57,6 +58,15 @@ def get_solver_error(default_reason: str = "solver_failed") -> dict:
     if isinstance(value, dict) and value.get("reason"):
         return value
     return {"reason": default_reason, "detail": default_reason}
+
+
+def has_solver_error() -> bool:
+    value = getattr(LAST_SOLVER_ERROR, "value", None)
+    return isinstance(value, dict) and bool(value.get("reason"))
+
+
+def should_reload_non_9_before_ai(non_9_reloads: int) -> bool:
+    return FAST_RELOAD_NON_9 and non_9_reloads < max(0, NON_9_RELOADS_BEFORE_AI)
 
 
 class TokenState:
@@ -1387,6 +1397,8 @@ As imagens anexadas vêm nesta ordem:
 
 Regras de decisão:
 - Responda à pergunta original literalmente.
+- Se a pergunta mencionar "imagem de exemplo", primeiro identifique o objeto/alvo mostrado nessa imagem de exemplo e só depois compare cada tile com esse alvo.
+- Em desafios com "imagem de exemplo", nunca selecione quase todos os tiles por precaução. Só selecione os tiles que correspondem claramente ao exemplo.
 - Analise cada tile individualmente usando o recorte do próprio tile como fonte principal.
 - Use a imagem geral só para contexto e para confirmar a numeração.
 - Se o alvo aparecer parcialmente, selecione apenas quando ainda for claramente identificável.
@@ -1458,6 +1470,13 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
         resposta_direta = result_json.get("resposta_direta", "")
         
         indices = parse_task_numbers(resposta_direta)
+        if "imagem de exemplo" in (captcha_question or "").casefold() and len(indices) >= 7:
+            print("[Cohere] Resposta rejeitada: desafio com imagem de exemplo selecionou quase todos os tiles.")
+            set_solver_error(
+                "resposta_ambigua_imagem_exemplo",
+                "IA selecionou quase todos os tiles em desafio com imagem de exemplo; recarregando desafio.",
+            )
+            indices = []
         if challenge_dir:
             (challenge_dir / "resposta.json").write_text(
                 json.dumps(
@@ -1636,6 +1655,13 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
         )
         return None
     except Exception as e:
+        if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 429:
+            set_solver_error(
+                "cohere_rate_limited",
+                "Cohere retornou 429 ao analisar desafio hCaptcha nao-9; tente novamente depois ou reduza paralelismo.",
+            )
+        else:
+            set_solver_error("cohere_non9_error", str(e))
         (challenge_dir / "resposta.json").write_text(
             json.dumps(
                 {
@@ -1714,7 +1740,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
                     set_solver_error("captcha_prompt_mudou", "Pergunta continha 'mudou'; desafio pulado.")
                     refresh_hcaptcha_and_wait(port)
                     continue
-                if FAST_RELOAD_NON_9:
+                if should_reload_non_9_before_ai(non_9_reloads):
                     non_9_reloads += 1
                     reload_non_9_challenge(port, non_9_reloads, max_refreshes)
                     continue
@@ -1752,7 +1778,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
         
         if task_count != 9 or not prompt_text:
             print("[Auto] Formato inesperado.")
-            if FAST_RELOAD_NON_9:
+            if should_reload_non_9_before_ai(non_9_reloads):
                 non_9_reloads += 1
                 reload_non_9_challenge(port, non_9_reloads, max_refreshes)
                 continue
@@ -1824,12 +1850,12 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
         set_solver_error("token_nao_voltou", "hCaptcha nao devolveu token depois do submit.")
         time.sleep(2)
     
-    if not grid_seen:
+    if not grid_seen and not has_solver_error():
         if non_9_reloads:
             set_solver_error("nao_achou_9_tiles", f"Nao conseguiu achar 9 tiles apos {non_9_reloads} recarregamentos.")
         else:
             set_solver_error("grade_9_nao_estabilizou", f"Grade de 9 tiles nao estabilizou apos {max_refreshes} tentativas.")
-    elif cohere_failed:
+    elif cohere_failed and not has_solver_error():
         set_solver_error("nao_consegui_resolver_9_tiles", "Achei 9 tiles, mas nao consegui resolver com a IA dentro do limite.")
     print("[Auto] Falha apos todas as tentativas.")
     return None
@@ -1957,6 +1983,8 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 "version": SOLVER_API_VERSION,
                 "max_browsers": MAX_BROWSERS,
                 "active_browsers": active,
+                "reload_non_9": FAST_RELOAD_NON_9,
+                "non_9_reloads_before_ai": NON_9_RELOADS_BEFORE_AI,
             }).encode())
         else:
             self.send_response(404)
@@ -1996,7 +2024,8 @@ def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request
                 return token
             time.sleep(0.5)
         
-        set_solver_error("token_nao_voltou", "Captcha pode ter resolvido, mas o token nao voltou para a pagina local.")
+        if not has_solver_error():
+            set_solver_error("token_nao_voltou", "Captcha pode ter resolvido, mas o token nao voltou para a pagina local.")
         return None
         
     except Exception as e:

@@ -288,6 +288,8 @@ As URLs publicas usam redirects do `netlify.toml`, entao o usuario acessa sem `.
 
 Todos os HTMLs apontam para o Worker de producao `https://morning-credit-8a59.prumo-sistema.workers.dev`.
 
+Observacao de 2026-07-05: o Netlify bloqueou novos deploys por credito da conta. Para manter o Portal Nacional acessivel sem `.html`, o Worker `morning-credit-8a59` tambem atende a rota Cloudflare `app.prumosistemas.com.br/portal-nacional*` e entrega `portal-nacional.html` diretamente. Quando o Netlify voltar a aceitar deploys, o `netlify.toml` continua sendo a fonte normal das rotas limpas.
+
 ## Master
 
 O usuario master e o dono operacional do painel:
@@ -391,11 +393,13 @@ Teste confirmado em 2026-07-05:
 
 - Run local `20260705-161546-recebidas-20260601-20260630-cert03-ambos`.
 - Run de producao Gabriel `20260705-210520-recebidas-20260601-20260630-cert00-pdf`.
+- Run de producao Gabriel `20260705-215220-recebidas-20260601-20260630-cert00-pdf`.
 - Indexou 86 notas recebidas de 01/06/2026 a 30/06/2026.
-- Baixou 1 XML valido no teste local e 1 PDF valido na producao via Modal solver.
+- Baixou 1 XML valido no teste local e PDFs validos na producao via Modal solver.
 - PDF validado pelo cabecalho `%PDF-1.4`.
 - XML validado como documento `NFSe`.
-- O captcha pode retornar `solver:token_nao_voltou` em alguns desafios; por isso o timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
+- O XML em producao recebeu hCaptcha canvas nao-9 e ficou bloqueado por `solver:cohere_rate_limited` quando a Cohere retornou HTTP 429. O Modal/proxy/browser estavam saudaveis; a dependencia limitante era a API de visao. O solver usa estrategia hibrida: recarrega desafios nao-9 algumas vezes e depois chama IA uma vez, preservando erros especificos.
+- O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
 

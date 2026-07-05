@@ -1,3 +1,5 @@
+import portalNacionalHtml from "../portal-nacional.html";
+
 // worker.js
 // Cloudflare Worker + D1 API auth + empresas + colaboradores + roles + master + logs + proxy FastAPI
 // Binding D1 esperado: env.db
@@ -58,6 +60,14 @@ export default {
     try {
       if (request.method === "OPTIONS") {
         return optionsResponse(request, env);
+      }
+
+      if (request.method === "GET" && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
+        return htmlResponse(portalNacionalHtml);
+      }
+
+      if (request.method === "GET" && url.pathname === "/portal-nacional.html") {
+        return Response.redirect(`${url.origin}/portal-nacional${url.search}`, 301);
       }
 
       if (!env.db) {
@@ -3120,6 +3130,16 @@ function jsonResponse(request, env, data, status = 200, setCookie = null) {
   return new Response(JSON.stringify(data), {
     status,
     headers,
+  });
+}
+
+function htmlResponse(html, status = 200) {
+  return new Response(html, {
+    status,
+    headers: baseSecurityHeaders({
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=60",
+    }),
   });
 }
 
