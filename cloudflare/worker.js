@@ -41,9 +41,18 @@ const MAX_LOGS_ON_SCREEN = 80;
 
 const LOG_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 const SESSION_PASSWORD_CHANGE_TOLERANCE_SECONDS = 2;
+const AUTH_SESSION_TOUCH_INTERVAL_SECONDS = 60;
+const LIGHT_CLEANUP_INTERVAL_SECONDS = 60;
+const HEAVY_CLEANUP_INTERVAL_SECONDS = 3600;
+const BILLING_STATE_REFRESH_SECONDS = 60;
+
+let migrationPromise = null;
+let lastLightCleanupAt = 0;
+let lastHeavyCleanupAt = 0;
+const billingStateCache = new Map();
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     try {
@@ -55,7 +64,7 @@ export default {
         return jsonResponse(request, env, { ok: false, error: "Binding D1 'db' não configurado." }, 500);
       }
 
-      await migrate(env.db);
+      await ensureMigrated(env.db);
 
       if (hasRequestBody(request.method)) {
         const maxBytes = getMaxPostBytes(url.pathname);
@@ -74,11 +83,11 @@ export default {
       }
 
       if (url.pathname === "/api/login" && request.method === "POST") {
-        return handleLoginPost(request, env);
+        return handleLoginPost(request, env, ctx);
       }
 
       if (url.pathname === "/api/logout" && request.method === "POST") {
-        return handleLogout(request, env);
+        return handleLogout(request, env, ctx);
       }
 
       if (url.pathname === "/api/me" && request.method === "GET") {
@@ -163,13 +172,22 @@ export default {
 
       return jsonResponse(request, env, { ok: false, error: "Rota não encontrada." }, 404);
     } catch (err) {
-      console.error("Worker error:", err);
-      return jsonResponse(request, env, { ok: false, error: "Erro interno no Worker." }, 500);
+      const requestId = randomId();
+      console.error("Worker error:", requestId, err);
+      return jsonResponse(request, env, {
+        ok: false,
+        error: "Erro interno no Worker.",
+        request_id: requestId,
+      }, 500);
     }
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(reconcileDeletionJobs(env));
+    ctx.waitUntil((async () => {
+      await ensureMigrated(env.db);
+      await runScheduledCleanup(env.db, { includeHeavy: true });
+      await reconcileDeletionJobs(env);
+    })());
   },
 };
 
@@ -180,7 +198,7 @@ export default {
 async function handleSetup(request, env) {
   const url = new URL(request.url);
 
-  await migrate(env.db);
+  await ensureMigrated(env.db);
 
   const masterExists = await env.db.prepare(`
     SELECT id
@@ -283,9 +301,8 @@ async function handleSetup(request, env) {
    AUTH ROUTES
 ========================= */
 
-async function handleLoginPost(request, env) {
-  await cleanupTemporaryData(env.db, { force: true, includeHeavy: false });
-
+async function handleLoginPost(request, env, ctx) {
+  scheduleCleanup(env, ctx, { includeHeavy: false });
   const body = await readBody(request);
 
   const email = normalizeEmail(body.email || "");
@@ -349,7 +366,7 @@ async function handleLoginPost(request, env) {
   `).bind(email).first();
 
   if (user) {
-    await applyBillingStateForCompany(env.db, user.company_id);
+    await maybeApplyBillingStateForCompany(env.db, user.company_id);
     user = await env.db.prepare(`
       SELECT
         u.id,
@@ -434,26 +451,32 @@ async function handleLoginPost(request, env) {
   );
 }
 
-async function handleLogout(request, env) {
-  const auth = await requireAuth(request, env);
-  if (auth.response) return auth.response;
-
-  const csrfOk = await verifyRequestCsrf(request, auth.session.csrf_hash);
-
-  if (!csrfOk) {
-    return jsonResponse(request, env, { ok: false, error: "CSRF inválido." }, 403);
+async function handleLogout(request, env, ctx) {
+  const rawToken = getSessionTokenFromRequest(request);
+  if (!rawToken) {
+    return jsonResponse(request, env, { ok: true }, 200, clearSessionCookie(env));
   }
 
-  await revokeSession(env.db, auth.session.session_hash);
+  const auth = await getAuth(request, env, { touchSession: false, refreshBilling: false });
 
-  await logEvent(env, request, {
-    actor: auth.user,
-    companyId: auth.user.company_id,
-    action: "logout",
-    targetType: "user",
-    targetId: auth.user.id,
-    message: `Logout: ${auth.user.email}`,
-  });
+  if (auth.ok) {
+    await revokeSession(env.db, auth.session.session_hash);
+    scheduleLogEvent(env, request, ctx, {
+      actor: auth.user,
+      companyId: auth.user.company_id,
+      action: "logout",
+      targetType: "user",
+      targetId: auth.user.id,
+      message: `Logout: ${auth.user.email}`,
+    });
+  } else {
+    const sessionHash = await sha256Hex(rawToken);
+    try {
+      await revokeSession(env.db, sessionHash);
+    } catch (err) {
+      console.error("Logout revoke failed:", err);
+    }
+  }
 
   return jsonResponse(request, env, { ok: true }, 200, clearSessionCookie(env));
 }
@@ -471,7 +494,10 @@ async function handleMe(request, env) {
     );
   }
 
-  const csrf = await issueCsrfForSession(env, auth.session.session_hash);
+  let csrf = request.headers.get("X-CSRF-Token") || "";
+  if (!csrf || !(await verifyCsrf(csrf, auth.session.csrf_hash))) {
+    csrf = await issueCsrfForSession(env, auth.session.session_hash);
+  }
 
   return jsonResponse(request, env, {
     authenticated: true,
@@ -1796,7 +1822,7 @@ async function enqueueDeletionJob(env, actor, { targetType, targetId, companyId,
 }
 
 async function reconcileDeletionJobs(env) {
-  await migrate(env.db);
+  await ensureMigrated(env.db);
   const ts = now();
   await env.db.prepare(`
     DELETE FROM deletion_jobs
@@ -1938,6 +1964,31 @@ async function cleanupTemporaryData(db, options = {}) {
   }
 
   await db.batch(statements);
+}
+
+async function runScheduledCleanup(db, options = {}) {
+  const ts = now();
+  const includeHeavy = options.includeHeavy === true;
+  const force = options.force === true;
+  const lightDue = force || ts - lastLightCleanupAt >= LIGHT_CLEANUP_INTERVAL_SECONDS;
+  const heavyDue = includeHeavy && (force || ts - lastHeavyCleanupAt >= HEAVY_CLEANUP_INTERVAL_SECONDS);
+
+  if (!lightDue && !heavyDue) return;
+
+  if (lightDue || heavyDue) lastLightCleanupAt = ts;
+  if (heavyDue) lastHeavyCleanupAt = ts;
+
+  await cleanupTemporaryData(db, { force: true, includeHeavy: heavyDue });
+}
+
+function scheduleCleanup(env, ctx, options = {}) {
+  const task = runScheduledCleanup(env.db, options).catch((err) => {
+    console.error("cleanupTemporaryData failed:", err);
+  });
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(task);
+  }
 }
 
 /* =========================
@@ -2103,14 +2154,11 @@ async function pruneOldSessionsForUser(db, userId, keepCount) {
   `).bind(userId, userId, keepCount).run();
 }
 
-async function getAuth(request, env) {
+async function getAuth(request, env, options = {}) {
   const cfg = getConfig(env);
-
-  const cookieHeader = request.headers.get("Cookie") || "";
-  const cookies = parseCookies(cookieHeader);
-  const authHeader = request.headers.get("Authorization") || "";
-  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  const rawToken = cookies[SESSION_COOKIE] || (bearerMatch ? bearerMatch[1].trim() : "");
+  const touchSession = options.touchSession !== false;
+  const refreshBilling = options.refreshBilling !== false;
+  const rawToken = getSessionTokenFromRequest(request);
 
   if (!rawToken) {
     return { ok: false, clearCookie: false };
@@ -2153,8 +2201,8 @@ async function getAuth(request, env) {
     return { ok: false, clearCookie: true };
   }
 
-  if (row.role !== "master") {
-    await applyBillingStateForCompany(env.db, row.company_id);
+  if (refreshBilling && row.role !== "master") {
+    await maybeApplyBillingStateForCompany(env.db, row.company_id);
     const userState = await env.db.prepare(`
       SELECT disabled
       FROM users
@@ -2194,7 +2242,7 @@ async function getAuth(request, env) {
     return { ok: false, clearCookie: true };
   }
 
-  if (ts - Number(row.last_seen_at) > 60) {
+  if (touchSession && ts - Number(row.last_seen_at) > AUTH_SESSION_TOUCH_INTERVAL_SECONDS) {
     await env.db.prepare(`
       UPDATE sessions
       SET last_seen_at = ?
@@ -2239,6 +2287,14 @@ async function revokeSession(db, sessionHash) {
     SET revoked_at = ?
     WHERE session_hash = ?
   `).bind(now(), sessionHash).run();
+}
+
+function getSessionTokenFromRequest(request) {
+  const cookieHeader = request.headers.get("Cookie") || "";
+  const cookies = parseCookies(cookieHeader);
+  const authHeader = request.headers.get("Authorization") || "";
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  return cookies[SESSION_COOKIE] || (bearerMatch ? bearerMatch[1].trim() : "");
 }
 
 async function issueCsrfForSession(env, sessionHash) {
@@ -2305,6 +2361,14 @@ async function logEvent(env, request, data) {
     ).run();
   } catch (err) {
     console.error("logEvent failed:", err);
+  }
+}
+
+function scheduleLogEvent(env, request, ctx, data) {
+  const task = logEvent(env, request, data);
+
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(task);
   }
 }
 
@@ -2493,6 +2557,22 @@ async function isCompanyBillingActive(db, companyId) {
       AND status = 'paid'
   `).bind(companyId).first();
   return Number(row?.active_until || 0) >= now();
+}
+
+async function maybeApplyBillingStateForCompany(db, companyId) {
+  if (!companyId) return { active: false };
+
+  const key = String(companyId);
+  const ts = now();
+  const cached = billingStateCache.get(key);
+
+  if (cached && ts - cached.checked_at < BILLING_STATE_REFRESH_SECONDS) {
+    return cached.state;
+  }
+
+  const state = await applyBillingStateForCompany(db, companyId);
+  billingStateCache.set(key, { checked_at: ts, state });
+  return state;
 }
 
 async function applyBillingStateForCompany(db, companyId) {
@@ -2903,6 +2983,17 @@ async function migrate(db) {
       AND manual_disabled = 0
       AND billing_disabled = 0
   `).run();
+}
+
+async function ensureMigrated(db) {
+  if (!migrationPromise) {
+    migrationPromise = migrate(db).catch((err) => {
+      migrationPromise = null;
+      throw err;
+    });
+  }
+
+  return migrationPromise;
 }
 
 async function ensureColumn(db, table, column, definition) {

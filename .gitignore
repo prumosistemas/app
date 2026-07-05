@@ -9,8 +9,10 @@ server/output/
 playwright-report/
 node_modules/
 Nova pasta/
-cloudflare/wrangler.toml
 deploy/monitor-agent.env
 deploy/.env
 *.sqlite3
 latest.json
+
+# Local Netlify folder
+.netlify

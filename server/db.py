@@ -33,7 +33,18 @@ DB_FILE = os.path.join(DATA_ROOT, "iss_automacao.db")
 MAX_DATASETS = int(os.getenv("MAX_DATASETS", "0"))
 MAX_RUNS_PER_MEMBER = int(os.getenv("MAX_RUNS_PER_MEMBER", "8"))
 RUN_RETENTION_DAYS = int(os.getenv("RUN_RETENTION_DAYS", "30"))
-AUTO_RETRY_MAX_ATTEMPTS = int(os.getenv("AUTO_RETRY_MAX_ATTEMPTS", "3"))
+AUTO_RETRY_HARD_MAX_ATTEMPTS = 3
+
+
+def clamp_auto_retry_max_attempts(value: Any = None) -> int:
+    try:
+        parsed = int(value if value is not None else os.getenv("AUTO_RETRY_MAX_ATTEMPTS", "3"))
+    except Exception:
+        parsed = 3
+    return max(1, min(parsed, AUTO_RETRY_HARD_MAX_ATTEMPTS))
+
+
+AUTO_RETRY_MAX_ATTEMPTS = clamp_auto_retry_max_attempts()
 
 
 def _env_int(name: str, default: int, *, min_value: int = 0) -> int:

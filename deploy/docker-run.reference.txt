@@ -10,8 +10,8 @@ docker run -d \
   --shm-size=2g \
   -p 127.0.0.1:3000:3000 \
   -e TOKEN=<BROWSERLESS_TOKEN> \
-  -e CONCURRENT=13 \
-  -e MAX_CONCURRENT_SESSIONS=13 \
+  -e CONCURRENT=5 \
+  -e MAX_CONCURRENT_SESSIONS=5 \
   -e QUEUED=30 \
   -e QUEUE_LENGTH=30 \
   -e TIMEOUT=1200000 \

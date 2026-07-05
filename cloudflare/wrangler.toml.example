@@ -1,23 +1,43 @@
-name = "prumo-sistema"
+name = "morning-credit-8a59"
 main = "worker.js"
 compatibility_date = "2026-06-01"
+workers_dev = true
 
 [[d1_databases]]
 binding = "db"
-database_name = "prumo-sistema"
-database_id = "SUBSTITUA_PELO_DATABASE_ID"
+database_name = "db"
+database_id = "SUBSTITUA_PELO_DATABASE_ID_PRODUCAO"
 
 [vars]
-PYTHON_API_URL = "https://api.seu-dominio.com"
-FRONTEND_ORIGINS = "https://app.seu-dominio.com"
+PYTHON_API_URL = "https://api.prumosistemas.com.br"
+FRONTEND_ORIGINS = "https://app.prumosistemas.com.br"
 COOKIE_MODE = "prod"
-COMPANY_NAME = "Conta Master"
+COMPANY_NAME = "Prumo Sistemas"
 
 [triggers]
 crons = ["* * * * *"]
 
+[env.homologacao]
+name = "morning-credit-8a59-homologacao"
+workers_dev = true
+
+[[env.homologacao.d1_databases]]
+binding = "db"
+database_name = "db-homologacao"
+database_id = "SUBSTITUA_PELO_DATABASE_ID_HOMOLOGACAO"
+
+[env.homologacao.vars]
+PYTHON_API_URL = "https://api.prumosistemas.com.br"
+FRONTEND_ORIGINS = "https://homologacao--appprumo.netlify.app,http://localhost:8888,http://localhost:8080"
+COOKIE_MODE = "prod"
+COMPANY_NAME = "Prumo Sistemas Homologacao"
+
+[env.homologacao.triggers]
+crons = ["* * * * *"]
+
 # Configurar como secrets, sem versionar valores:
-# npx wrangler secret put ISS_INTERNAL_SECRET
-# npx wrangler secret put SETUP_TOKEN
-# npx wrangler secret put ADMIN_EMAIL
-# npx wrangler secret put ADMIN_PASSWORD
+# wrangler secret put ISS_INTERNAL_SECRET --env=""
+# wrangler secret put ISS_INTERNAL_SECRET --env homologacao
+# wrangler secret put SETUP_TOKEN --env homologacao
+# wrangler secret put ADMIN_EMAIL --env homologacao
+# wrangler secret put ADMIN_PASSWORD --env homologacao

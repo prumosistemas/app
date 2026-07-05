@@ -96,7 +96,7 @@
       <button class="nav-btn" data-section="logsSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Logs</button>
     </nav>
     <div class="sidebar-footer">
-      <a class="nav-btn" href="index.html">Voltar</a>
+      <a class="nav-btn" href="/">Voltar</a>
     </div>
   </aside>
   <main>
@@ -180,7 +180,19 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
-const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+function resolveWorkerUrl(){
+  const host = String(window.location.hostname || "").toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const forced = String(params.get("env") || "").toLowerCase();
+  if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+  if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+  if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+  if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+  return PROD_WORKER_URL;
+}
+const API = resolveWorkerUrl();
 const SESSION_TOKEN_KEY = "session_token";
 let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
 let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
@@ -192,7 +204,7 @@ const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 function ts(value){ if(value === null || value === undefined || value === "") return "Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*1000):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
 function message(type,text){ const el=$("globalMsg"); el.className="notice "+type; el.textContent=text; el.classList.remove("hidden"); }
-function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); sessionStorage.removeItem(SESSION_TOKEN_KEY); localStorage.removeItem(SESSION_TOKEN_KEY); window.location.replace("login.html"); }
+function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); sessionStorage.removeItem(SESSION_TOKEN_KEY); localStorage.removeItem(SESSION_TOKEN_KEY); window.location.replace("/login"); }
 async function api(path, options={}){
   const headers = new Headers(options.headers || {});
   if(options.body && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
@@ -221,7 +233,7 @@ async function loadSession(){
   const data=await api("/api/me");
   if(!data.authenticated){ toLogin(); return; }
   const user=data.user || {};
-  if(user.role!=="master"){ window.location.replace(user.role==="owner"?"admin.html":user.role==="member"?"iss-fortaleza.html":"index.html"); return; }
+  if(user.role!=="master"){ window.location.replace(user.role==="owner"?"/admin":user.role==="member"?"/iss-fortaleza":"/"); return; }
   $("meEmail").textContent=user.email || "-";
   $("sessionCreated").textContent=ts(data.session?.created_at); $("sessionSeen").textContent=ts(data.session?.last_seen_at); $("sessionExpires").textContent=ts(data.session?.absolute_expires_at);
 }
@@ -255,7 +267,7 @@ function companyUsersDetails(company){
   if(!users.length) return `<div class="small">Sem usuários.</div>`;
   const sample = users.slice(0, 4).map(user=>`${esc(user.email)} (${esc(roleLabel(user.role))})`).join("<br>");
   const extra = users.length > 4 ? `<br><span class="small">... e mais ${users.length - 4} usuário(s).</span>` : "";
-  return `<div class="small">${sample}${extra}<br><a class="button-link" style="margin-top:8px;" href="master-company.html?id=${encodeURIComponent(company.id)}">Ver usuários e dados</a></div>`;
+  return `<div class="small">${sample}${extra}<br><a class="button-link" style="margin-top:8px;" href="/master-company?id=${encodeURIComponent(company.id)}">Ver usuários e dados</a></div>`;
 }
 async function loadCompanies(){
   try{
@@ -263,7 +275,7 @@ async function loadCompanies(){
     companiesCache = rows;
     refreshBillingCompanySelect();
     if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
-    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${c.deletion_status?'<span class="pill bad">Exclusão pendente</span>':Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="master-company.html?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
+    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${c.deletion_status?'<span class="pill bad">Exclusão pendente</span>':Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="/master-company?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
     $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
     $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
     $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));

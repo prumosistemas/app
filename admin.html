@@ -834,7 +834,7 @@
       </button>
     </nav>
     <div class="sidebar-footer">
-      <a class="nav-btn" href="index.html">
+      <a class="nav-btn" href="/">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5"/>
           <path d="M12 19l-7-7 7-7"/>
@@ -1286,7 +1286,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
-const API_BASE = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+function resolveWorkerUrl(){
+  const host = String(window.location.hostname || "").toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const forced = String(params.get("env") || "").toLowerCase();
+  if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+  if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+  if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+  if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+  return PROD_WORKER_URL;
+}
+const API_BASE = resolveWorkerUrl();
 const AUTH_BASE = API_BASE;
 
 const FLOW_ORDER  = ["certidao","dam","escrituracao","notas"];
@@ -1570,7 +1582,7 @@ function redirectToLogin(message){
   if(message){
     toast(message, "err");
   }
-  setTimeout(()=>{ window.location.href = "login.html"; }, 120);
+  setTimeout(()=>{ window.location.href = "/login"; }, 120);
 }
 
 function methodOf(options){
@@ -1964,15 +1976,15 @@ async function startPolling(){
   try{
     const user = await loadMe();
     if(user.role === "master"){
-      window.location.href = "master.html";
+      window.location.href = "/master";
       return;
     }
     if(user.role !== "owner"){
-      window.location.href = "index.html";
+      window.location.href = "/";
       return;
     }
     if(user.must_change_password){
-      window.location.href = "index.html#account";
+      window.location.href = "/#account";
       return;
     }
     switchSection("adminOverviewSection");
@@ -3121,7 +3133,7 @@ async function logout() {
   } catch(e) {}
   localStorage.removeItem("csrf");
   sessionStorage.removeItem("csrf");
-  window.location.href = "login.html";
+  window.location.href = "/login";
 }
 
 if($("btnLogout")) $("btnLogout").addEventListener("click", logout);

@@ -1,7 +1,7 @@
 # Contexto do servidor Prumo
 
-Versao operacional: `1.0.29`
-Data de atualizacao: `2026-07-03`
+Versao operacional: `1.0.30`
+Data de atualizacao: `2026-07-05`
 Host: `server@ssh.prumosistemas.com.br` via Cloudflare Access
 
 ## Acesso
@@ -23,13 +23,15 @@ O SSH depende do servico `cloudflared.service`, configurado em `/etc/cloudflared
 - Dados persistentes da API: `/opt/prumo/data`.
 - Deploy Compose: `/opt/prumo/app/deploy`.
 
-## Observacao da versao 1.0.29
+## Observacao da versao 1.0.30
 
 A API faz uma limpeza controlada da home do ISS antes de entrar nos menus de topo. O modal benigno `Pesquisa Sefin` e respondido com `Nao`; modais reais de mensagem pendente continuam gerando `MENSAGEM_NA_TELA`; mascaras RichFaces/AJAX sem conteudo util sao removidas antes de acessar Escrituração, NFS-e e DAM.
 
 Na Escrituração, a API tambem aguarda o resultado de `Consultar` antes de ler os links de `Escriturar/Reabrir`, aceita a tela `Escrituração Fiscal` já aberta como sucesso e exige estabilidade por leituras consecutivas para evitar falso erro quando o portal navega ou troca o DOM durante a automação.
 
-A UI cria runs com retry automatico seguro preselecionado. O servidor limita a cadeia por `AUTO_RETRY_MAX_ATTEMPTS` e so agenda nova tentativa para erros marcados como retryable que nao sejam finais de negocio/portal, como `CNPJ_INEXISTENTE`, `CNPJ_MISMATCH`, `MENSAGEM_NA_TELA`, `LOGIN_ERROR` e `PORTAL_ACCESS_BLOCKED`. Os botoes de ZIP/download e a paginacao da run selecionada mostram loader local durante a acao.
+A UI cria runs com retry automatico seguro preselecionado. O servidor limita a cadeia por `AUTO_RETRY_MAX_ATTEMPTS` e por uma trava dura de codigo de 3 tentativas, agendando nova tentativa somente para erros marcados como retryable que nao sejam finais de negocio/portal, como `CNPJ_INEXISTENTE`, `CNPJ_MISMATCH`, `MENSAGEM_NA_TELA`, `LOGIN_ERROR` e `PORTAL_ACCESS_BLOCKED`. Os botoes de ZIP/download e a paginacao da run selecionada mostram loader local durante a acao.
+
+A versao 1.0.30 tambem separa producao e homologacao no Worker/D1, remove `.html` das URLs publicas via Netlify, deixa o caminho de login/logout mais leve no Worker e remove o box visual `browserTurboBox` da tela ISS Fortaleza.
 - Codigo espelho no servidor: `/home/server/prumo-src`.
 - Proxy do IP do servidor para Modal: `/home/server/prumo-proxy`.
 
@@ -49,23 +51,23 @@ O `prumo-proxy` permite que o Browserless do Modal saia para o portal ISS usando
 
 Configuracao de producao apos a organizacao:
 
-- Browserless local: `13` sessoes.
+- Browserless local: `5` sessoes.
 - Modal turbo: `32` sessoes.
-- Total API: `45` navegadores.
+- Total API: `37` navegadores.
 
 Variaveis relevantes em `/opt/prumo/app/deploy/.env`:
 
 ```env
-BASE_BROWSER_SLOTS=13
-MAX_BROWSERS=45
-BROWSER_CDP_POOL=browserless-local|13|ws://browserless:3000?token=...;;modal-turbo|32|wss://...
+BASE_BROWSER_SLOTS=5
+MAX_BROWSERS=37
+BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|32|wss://...
 ```
 
 No Compose, o Browserless local tambem deve ficar em:
 
 ```yaml
-CONCURRENT: "13"
-MAX_CONCURRENT_SESSIONS: "13"
+CONCURRENT: "5"
+MAX_CONCURRENT_SESSIONS: "5"
 ```
 
 ## Servicos para preservar

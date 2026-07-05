@@ -411,7 +411,19 @@
   </div>
 
   <script>
-    const WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+    function resolveWorkerUrl(){
+      const host = String(window.location.hostname || "").toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const forced = String(params.get("env") || "").toLowerCase();
+      if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+      if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+      if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+      if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+      return PROD_WORKER_URL;
+    }
+    const WORKER_URL = resolveWorkerUrl();
 
     const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || "";
@@ -539,7 +551,7 @@
 
           setMsg("ok", "Sessão autenticada.");
           if (redirect) {
-            location.href = "index.html";
+            location.href = "/";
           }
         }
       } catch (err) {
@@ -594,7 +606,7 @@
         }
 
         setMsg("ok", "Login realizado.");
-        location.href = "index.html";
+        location.href = "/";
       } catch (err) {
         setMsg("err", err.message || "Falha no login.");
       } finally {
@@ -634,7 +646,7 @@
 
         setMsg("ok", "Senha alterada. Redirecionando...");
         setTimeout(() => {
-          location.href = "index.html";
+          location.href = "/";
         }, 600);
       } catch (err) {
         setMsg("err", err.message || "Falha ao alterar senha.");

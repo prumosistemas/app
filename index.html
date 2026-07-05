@@ -383,7 +383,19 @@
   </div>
 
   <script>
-    const API = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+    function resolveWorkerUrl(){
+      const host = String(window.location.hostname || "").toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const forced = String(params.get("env") || "").toLowerCase();
+      if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+      if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+      if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+      if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+      return PROD_WORKER_URL;
+    }
+    const API = resolveWorkerUrl();
     const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
@@ -437,7 +449,7 @@
         localStorage.removeItem("csrf");
         sessionStorage.removeItem(SESSION_TOKEN_KEY);
         localStorage.removeItem(SESSION_TOKEN_KEY);
-        window.location.href = "login.html";
+        window.location.href = "/login";
         throw new Error("Sessão expirada.");
       }
 
@@ -492,7 +504,7 @@
           kicker: "Aplicação fiscal",
           title: "ISS Fortaleza",
           desc: "Runs, conjuntos, contas do portal ISS e arquivos de saída.",
-          href: "iss-fortaleza.html",
+          href: "/iss-fortaleza",
           cta: "Abrir ISS Fortaleza",
           badge: "Disponível"
         });
@@ -505,7 +517,7 @@
           desc: role === "master"
             ? "Empresas, administradores, logs e controle de acesso."
             : "Colaboradores, pagamento e controle da empresa.",
-          href: role === "master" ? "master.html" : "admin.html",
+          href: role === "master" ? "/master" : "/admin",
           cta: "Abrir administração",
           badge: roleLabel(role)
         });
@@ -556,7 +568,7 @@
     async function loadMe() {
       const data = await api("/api/me");
       if (!data.authenticated) {
-        window.location.href = "login.html";
+        window.location.href = "/login";
         return;
       }
       mePayload = data;
@@ -571,7 +583,7 @@
       } catch (err) {}
       sessionStorage.removeItem("csrf");
       localStorage.removeItem("csrf");
-      window.location.href = "login.html";
+      window.location.href = "/login";
     }
 
     $("changePasswordForm").addEventListener("submit", async event => {
@@ -611,7 +623,7 @@
     loadMe().catch(() => {
       sessionStorage.removeItem("csrf");
       localStorage.removeItem("csrf");
-      window.location.replace("login.html");
+      window.location.replace("/login");
     });
   </script>
 </body>

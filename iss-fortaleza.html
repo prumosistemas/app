@@ -788,33 +788,6 @@
       display: grid;
       gap: 6px;
     }
-    .browser-turbo-box {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-      min-width: min(100%, 360px);
-      padding: 9px 12px;
-      border: 1px solid rgba(14, 165, 233, .28);
-      border-radius: 8px;
-      background: linear-gradient(135deg, #f0f9ff 0%, #ecfdf5 100%);
-      color: var(--text);
-      font-size: 12px;
-    }
-    .browser-turbo-box strong { font-size: 14px; }
-    .browser-turbo-chip {
-      display: inline-flex;
-      align-items: center;
-      min-height: 26px;
-      padding: 3px 10px;
-      border-radius: 999px;
-      background: #0f172a;
-      color: #fff;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
   </style>
 </head>
 <body>
@@ -876,7 +849,7 @@
       </button>
     </nav>
     <div class="sidebar-footer">
-      <a class="nav-btn" href="index.html">
+      <a class="nav-btn" href="/">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 12H5"/>
           <path d="M12 19l-7-7 7-7"/>
@@ -889,7 +862,6 @@
   <main>
     <div class="topline">
       <h2 id="pageTitle">Runs</h2>
-      <div id="browserTurboBox" class="browser-turbo-box hidden"></div>
     </div>
 
     <section id="runsSection" class="section active">
@@ -1425,7 +1397,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
-const API_BASE = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+function resolveWorkerUrl(){
+  const host = String(window.location.hostname || "").toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const forced = String(params.get("env") || "").toLowerCase();
+  if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+  if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+  if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+  if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+  return PROD_WORKER_URL;
+}
+const API_BASE = resolveWorkerUrl();
 const AUTH_BASE = API_BASE;
 
 const FLOW_ORDER  = ["certidao","dam","escrituracao","notas"];
@@ -1681,7 +1665,7 @@ function companyUsersDetails(c) {
   if (!users.length) return `<div class="small">Sem usuários.</div>`;
   const sample = users.slice(0, 4).map(user=>`${escapeHtml(user.email)} (${escapeHtml(roleLabel(user.role))})`).join("<br>");
   const extra = users.length > 4 ? `<br><span class="small">... e mais ${users.length - 4} usuário(s).</span>` : "";
-  return `<div class="small">${sample}${extra}<br><a class="button secondary sm" style="margin-top:8px;" href="master-company.html?id=${encodeURIComponent(c.id)}">Ver usuários e dados</a></div>`;
+  return `<div class="small">${sample}${extra}<br><a class="button secondary sm" style="margin-top:8px;" href="/master-company?id=${encodeURIComponent(c.id)}">Ver usuários e dados</a></div>`;
 }
 
 function applyRoleUI(user) {
@@ -1736,7 +1720,7 @@ function redirectToLogin(message){
   if(message){
     toast(message, "err");
   }
-  setTimeout(()=>{ window.location.href = "login.html"; }, 120);
+  setTimeout(()=>{ window.location.href = "/login"; }, 120);
 }
 
 function methodOf(options){
@@ -1996,29 +1980,6 @@ async function loadMe(){
   }
 }
 
-function renderBrowserTurbo(state){
-  const box=$("browserTurboBox");
-  if(!box)return;
-  const config=state?.config||{};
-  const total=Number(config.max_browsers||0);
-  const base=Number(config.base_browsers||15);
-  const extra=Number(config.browser_turbo_extra||Math.max(0,total-base));
-  if(!total){
-    box.classList.add("hidden");
-    box.innerHTML="";
-    return;
-  }
-  box.classList.remove("hidden");
-  const chip=extra>0
-    ? `<span class="browser-turbo-chip">+${extra} turbo</span>`
-    : `<span class="browser-turbo-chip">base</span>`;
-  box.innerHTML=`<div><strong>${total}</strong> navegadores disponíveis</div>${chip}`;
-  if(extra<=0 && !renderBrowserTurbo.warnedBase){
-    renderBrowserTurbo.warnedBase=true;
-    console.warn("Turbo Modal indisponível ou sem orçamento; operando com a capacidade base de navegadores.", { total, base });
-  }
-}
-
 async function loadStateOnce(){
   if(!isIssRole()) return;
   if(loadingState){
@@ -2033,8 +1994,6 @@ async function loadStateOnce(){
     accounts = state.accounts || [];
     datasets = state.datasets || [];
     runs = state.runs || [];
-    renderBrowserTurbo(state);
-
     if(!userIsSelectingText()){
       renderAccounts();
       renderDatasets();
@@ -2332,11 +2291,11 @@ async function startPolling(){
   try{
     const user = await loadMe();
     if(!isIssRole(user.role)){
-      window.location.href = "index.html";
+      window.location.href = "/";
       return;
     }
     if(user.must_change_password){
-      window.location.href = "index.html#account";
+      window.location.href = "/#account";
       return;
     }
     switchSection("runsSection");
@@ -3797,7 +3756,7 @@ async function logout() {
   } catch(e) {}
   localStorage.removeItem("csrf");
   sessionStorage.removeItem("csrf");
-  window.location.href = "login.html";
+  window.location.href = "/login";
 }
 
 if($("btnLogout")) $("btnLogout").addEventListener("click", logout);

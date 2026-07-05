@@ -1,0 +1,63 @@
+[build]
+  publish = "."
+
+[[redirects]]
+  from = "/index.html"
+  to = "/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/login.html"
+  to = "/login"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/iss-fortaleza.html"
+  to = "/iss-fortaleza"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/admin.html"
+  to = "/admin"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/master.html"
+  to = "/master"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/master-company.html"
+  to = "/master-company"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/login"
+  to = "/login.html"
+  status = 200
+
+[[redirects]]
+  from = "/iss-fortaleza"
+  to = "/iss-fortaleza.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin"
+  to = "/admin.html"
+  status = 200
+
+[[redirects]]
+  from = "/master"
+  to = "/master.html"
+  status = 200
+
+[[redirects]]
+  from = "/master-company"
+  to = "/master-company.html"
+  status = 200

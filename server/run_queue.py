@@ -23,6 +23,7 @@ from db import (
     ITEM_FINAL_STATUSES,
     MAX_BROWSERS,
     logger,
+    clamp_auto_retry_max_attempts,
     now_ms,
 )
 
@@ -883,7 +884,7 @@ async def create_retry_attempt_for_root(
         usar_codigo_dominio=bool(root_run.get("usar_codigo_dominio", True)),
         reabrir_escrituracao_fechada=bool(root_run.get("reabrir_escrituracao_fechada", True)),
         auto_retry_enabled=bool(root_run.get("auto_retry_enabled", True)),
-        auto_retry_max_attempts=int(root_run.get("auto_retry_max_attempts") or AUTO_RETRY_MAX_ATTEMPTS),
+        auto_retry_max_attempts=clamp_auto_retry_max_attempts(root_run.get("auto_retry_max_attempts")),
     )
 
 
@@ -899,7 +900,7 @@ async def maybe_schedule_auto_retry(ctx: WorkerContext, run_key: str) -> None:
     if not root_run or not bool(root_run.get("auto_retry_enabled", True)):
         return
 
-    max_attempts = max(1, int(root_run.get("auto_retry_max_attempts") or AUTO_RETRY_MAX_ATTEMPTS))
+    max_attempts = clamp_auto_retry_max_attempts(root_run.get("auto_retry_max_attempts"))
     attempts = _attempts_for_root(ctx, root_id)
     run_log_file = run.get("run_log_file") or os.path.join(run.get("run_dir", ""), "logs.txt")
 
@@ -1009,7 +1010,7 @@ async def create_attempt_record(
             "usar_codigo_dominio": bool(usar_codigo_dominio),
             "reabrir_escrituracao_fechada": bool(reabrir_escrituracao_fechada),
             "auto_retry_enabled": bool(auto_retry_enabled),
-            "auto_retry_max_attempts": max(1, int(auto_retry_max_attempts or AUTO_RETRY_MAX_ATTEMPTS)),
+            "auto_retry_max_attempts": clamp_auto_retry_max_attempts(auto_retry_max_attempts),
             "created_by_user_id": ctx.user_id,
             "created_by_user_email": ctx.user_email,
             "groups_total": len(groups),

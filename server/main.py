@@ -41,6 +41,7 @@ from db import (
     MAX_BROWSERS,
     OUTPUT_ROOT,
     WORKER_PUBLIC_URL,
+    clamp_auto_retry_max_attempts,
     db_connect,
 )
 
@@ -119,7 +120,7 @@ from run_queue import (
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.29",
+    version="1.0.30",
     description="API ISS conectada ao Worker, com fila global justa e dados isolados por membro.",
 )
 
@@ -467,7 +468,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "ISS Automação API",
-        "version": "1.0.29",
+        "version": "1.0.30",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
@@ -1193,7 +1194,7 @@ async def duplicate_run(run_id: str, ctx: WorkerContext = Depends(get_worker_con
     usar_codigo_dominio = bool(root_run.get("usar_codigo_dominio", True))
     reabrir_escrituracao_fechada = bool(root_run.get("reabrir_escrituracao_fechada", True))
     auto_retry_enabled = bool(root_run.get("auto_retry_enabled", True))
-    auto_retry_max_attempts = int(root_run.get("auto_retry_max_attempts") or 3)
+    auto_retry_max_attempts = clamp_auto_retry_max_attempts(root_run.get("auto_retry_max_attempts"))
 
     return await create_attempt_record(
         ctx,

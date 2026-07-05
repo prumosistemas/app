@@ -60,7 +60,7 @@
 <body>
   <header>
     <div class="brand"><img src="prumo-logo.png" alt="Prumo Sistemas"><div><h1>Prumo Sistemas</h1><p>Inspeção administrativa da empresa</p></div></div>
-    <a class="button-link secondary" href="master.html">Voltar para empresas</a>
+    <a class="button-link secondary" href="/master">Voltar para empresas</a>
   </header>
   <main>
     <div class="topline">
@@ -86,7 +86,19 @@
     </div>
   </div>
   <script>
-    const API="https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
+    const HOMOLOG_WORKER_URL = "https://morning-credit-8a59-homologacao.prumo-sistema.workers.dev";
+    function resolveWorkerUrl(){
+      const host = String(window.location.hostname || "").toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const forced = String(params.get("env") || "").toLowerCase();
+      if(["homologacao","homolog","teste","test"].includes(forced)) return HOMOLOG_WORKER_URL;
+      if(["producao","prod"].includes(forced)) return PROD_WORKER_URL;
+      if(!host || host === "localhost" || host === "127.0.0.1") return HOMOLOG_WORKER_URL;
+      if(host.includes("homolog") || host.includes("deploy-preview") || host.includes("branch-deploy")) return HOMOLOG_WORKER_URL;
+      return PROD_WORKER_URL;
+    }
+    const API= resolveWorkerUrl();
     const SESSION_TOKEN_KEY="session_token";
     let csrf=sessionStorage.getItem("csrf")||localStorage.getItem("csrf")||"";
     let sessionToken=sessionStorage.getItem(SESSION_TOKEN_KEY)||localStorage.getItem(SESSION_TOKEN_KEY)||"";
@@ -97,7 +109,7 @@
     function ts(value){ if(value===null||value===undefined||value==="")return"Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*(n<10_000_000_000?1000:1)):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
     function bytes(value){ const n=Number(value||0); if(n<1024)return n+" B"; if(n<1048576)return(n/1024).toFixed(1)+" KB"; if(n<1073741824)return(n/1048576).toFixed(1)+" MB"; return(n/1073741824).toFixed(1)+" GB"; }
     function role(role){ return role==="master"?"Master":role==="owner"?"Administrador":"Colaborador"; }
-    function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); sessionStorage.removeItem(SESSION_TOKEN_KEY); localStorage.removeItem(SESSION_TOKEN_KEY); location.replace("login.html"); }
+    function toLogin(){ sessionStorage.removeItem("csrf"); localStorage.removeItem("csrf"); sessionStorage.removeItem(SESSION_TOKEN_KEY); localStorage.removeItem(SESSION_TOKEN_KEY); location.replace("/login"); }
     async function api(path,options={}){ const headers=new Headers(options.headers||{}); if(options.body&&!headers.has("Content-Type"))headers.set("Content-Type","application/json"); if(csrf)headers.set("X-CSRF-Token",csrf); if(sessionToken)headers.set("Authorization","Bearer "+sessionToken); const res=await fetch(API+path,{credentials:"include",...options,headers}); const ct=res.headers.get("content-type")||""; const data=ct.includes("application/json")?await res.json():await res.text(); if(data?.csrf){csrf=data.csrf;sessionStorage.setItem("csrf",csrf);localStorage.setItem("csrf",csrf);} if(data?.session_token){sessionToken=data.session_token;sessionStorage.setItem(SESSION_TOKEN_KEY,sessionToken);localStorage.setItem(SESSION_TOKEN_KEY,sessionToken);} if(res.status===401||res.status===403){toLogin();throw new Error("Sessão expirada.");} if(!res.ok)throw new Error(data?.error||data?.detail||String(data)); return data; }
     function status(user){
       if(user.deletion_status)return'<span class="pill bad">Exclusão pendente</span>';
@@ -180,9 +192,9 @@
       $("companyActions").querySelector("[data-delete]")?.addEventListener("click",deleteCompany);
       $("companyActions").querySelector("[data-reset]")?.addEventListener("click",resetOwner);
     }
-    async function load(){ if(!companyId){location.replace("master.html");return;} const data=await api("/api/master/companies/"+encodeURIComponent(companyId)); company=data.company; render(); }
+    async function load(){ if(!companyId){location.replace("/master");return;} const data=await api("/api/master/companies/"+encodeURIComponent(companyId)); company=data.company; render(); }
     async function toggleCompany(intent){ if(!confirm(intent==="disable"?"Desativar esta empresa?":"Reativar esta empresa?"))return; await api("/api/master/companies/toggle",{method:"POST",body:JSON.stringify({company_id:company.id,intent,confirm:"yes"})}); await load(); }
-    async function deleteCompany(){ if(!confirm("Excluir permanentemente esta empresa, seus usuários, runs e pastas?"))return; const data=await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:company.id,confirm:"DELETE"})}); if(data.deletion_status==="completed"){location.replace("master.html");return;} await load(); }
+    async function deleteCompany(){ if(!confirm("Excluir permanentemente esta empresa, seus usuários, runs e pastas?"))return; const data=await api("/api/master/companies/delete",{method:"POST",body:JSON.stringify({company_id:company.id,confirm:"DELETE"})}); if(data.deletion_status==="completed"){location.replace("/master");return;} await load(); }
     async function resetOwner(){ if(!confirm("Resetar a senha do administrador?"))return; const data=await api("/api/master/owners/reset-password",{method:"POST",body:JSON.stringify({owner_id:company.owner_id,confirm:"yes"})}); alert("Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); }
     $("btnCloseUserModal").onclick=()=>$("userModal").classList.remove("open");
     $("userModal").addEventListener("click",event=>{ if(event.target.id==="userModal") $("userModal").classList.remove("open"); });

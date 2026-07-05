@@ -10,8 +10,8 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       TOKEN: ${BROWSERLESS_TOKEN}
-      CONCURRENT: "13"
-      MAX_CONCURRENT_SESSIONS: "13"
+      CONCURRENT: "5"
+      MAX_CONCURRENT_SESSIONS: "5"
       QUEUED: "30"
       QUEUE_LENGTH: "30"
       TIMEOUT: "1200000"
