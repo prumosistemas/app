@@ -376,15 +376,26 @@ Certificado digital:
 - Nao ha upload de arquivo de certificado.
 - No Windows local, a sessao pode ser gerada usando a store de certificados do usuario.
 - No servidor Linux, a store Windows nao existe. Para producao sem certificado no servidor, importar uma sessao `sessao_nfse.txt` gerada em maquina autorizada e usar "usar sessao salva".
+- A sessao do Portal Nacional fica sensivel ao IP/origem. Para a producao usar a sessao, gere a sessao localmente passando pelo proxy do servidor.
+
+Gerar sessao no Windows usando o IP do servidor:
+
+```powershell
+cloudflared access tcp --hostname modal-proxy.prumosistemas.com.br --url 127.0.0.1:31480
+python server\portal_nacional_session.py --cert-index 3 --proxy http://127.0.0.1:31480 --out sessao_nfse.txt
+```
+
+Depois importe o JSON em `/portal-nacional` e rode com "usar sessao salva".
 
 Teste confirmado em 2026-07-05:
 
 - Run local `20260705-161546-recebidas-20260601-20260630-cert03-ambos`.
+- Run de producao Gabriel `20260705-210520-recebidas-20260601-20260630-cert00-pdf`.
 - Indexou 86 notas recebidas de 01/06/2026 a 30/06/2026.
-- Baixou 1 XML valido e 1 PDF valido via Modal solver.
+- Baixou 1 XML valido no teste local e 1 PDF valido na producao via Modal solver.
 - PDF validado pelo cabecalho `%PDF-1.4`.
 - XML validado como documento `NFSe`.
-- O segundo item ficou preso em captcha `solver:token_nao_voltou`; por isso o timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS`.
+- O captcha pode retornar `solver:token_nao_voltou` em alguns desafios; por isso o timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
 

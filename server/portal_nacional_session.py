@@ -75,7 +75,8 @@ def choose_certificate(certificates):
         print("Escolha invalida. Tente novamente.")
 
 
-def run_powershell_login(thumbprint: str, url: str, start_url: str) -> dict:
+def run_powershell_login(thumbprint: str, url: str, start_url: str, proxy: str | None = None) -> dict:
+    proxy_value = (proxy or "").strip()
     ps = rf"""
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -83,6 +84,11 @@ $ProgressPreference = 'SilentlyContinue'
 $thumbprint = '{thumbprint}'
 $url = '{url}'
 $startUrl = '{start_url}'
+$proxy = '{proxy_value}'
+$proxyArgs = @{{}}
+if ($proxy) {{
+    $proxyArgs['Proxy'] = $proxy
+}}
 $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', 'CurrentUser')
 $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
 $cert = $store.Certificates | Where-Object {{ $_.Thumbprint -eq $thumbprint }} | Select-Object -First 1
@@ -97,7 +103,7 @@ if (-not $cert.HasPrivateKey) {{
 
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 try {{
-    $response = Invoke-WebRequest -Uri $url -Certificate $cert -WebSession $session -MaximumRedirection 5 -UseBasicParsing
+    $response = Invoke-WebRequest -Uri $url -Certificate $cert -WebSession $session -MaximumRedirection 5 -UseBasicParsing @proxyArgs
     $statusCode = [int]$response.StatusCode
     $location = $response.Headers.Location
 }} catch {{
@@ -109,7 +115,7 @@ try {{
     }}
 }}
 
-$targetResponse = Invoke-WebRequest -Uri $startUrl -Certificate $cert -WebSession $session -MaximumRedirection 5 -UseBasicParsing
+$targetResponse = Invoke-WebRequest -Uri $startUrl -Certificate $cert -WebSession $session -MaximumRedirection 5 -UseBasicParsing @proxyArgs
 $targetFinalUrl = $targetResponse.BaseResponse.ResponseUri.AbsoluteUri
 $targetLooksLoggedIn = -not ($targetResponse.Content -like '*Acesso com Certificado Digital*')
 
@@ -142,6 +148,7 @@ foreach ($cookieUri in @([Uri]'https://www.nfse.gov.br/', [Uri]'https://nfse.gov
     redirect_location = $location
     target_final_url = $targetFinalUrl
     target_looks_logged_in = $targetLooksLoggedIn
+    proxy = $proxy
     certificate = [PSCustomObject]@{{
         subject = $cert.Subject
         issuer = $cert.Issuer
@@ -176,6 +183,7 @@ def main() -> int:
     parser.add_argument("--url", default=DEFAULT_URL, help="Endpoint de login por certificado.")
     parser.add_argument("--start-url", default=DEFAULT_START_URL, help="URL autenticada para validar e abrir depois.")
     parser.add_argument("--out", default=str(SESSION_FILE), help="Arquivo TXT de saida.")
+    parser.add_argument("--proxy", default=None, help="Proxy HTTP opcional para gerar sessao com o IP do servidor.")
     args = parser.parse_args()
 
     certificates = list_certificates()
@@ -190,7 +198,7 @@ def main() -> int:
     else:
         thumbprint = choose_certificate(certificates)
 
-    data = run_powershell_login(thumbprint, args.url, args.start_url)
+    data = run_powershell_login(thumbprint, args.url, args.start_url, args.proxy)
     data["saved_at_local"] = datetime.now().isoformat(timespec="seconds")
 
     out = Path(args.out)

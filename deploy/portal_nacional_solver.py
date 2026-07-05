@@ -29,9 +29,11 @@ COHERE_MODEL = "command-a-vision-07-2025"
 
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
-SOLVER_API_VERSION = "2026-07-05-modal-xvfb-nfse-host"
+SOLVER_API_VERSION = "2026-07-05-modal-xvfb-proxy"
 SOLVER_PAGE_HOST = os.environ.get("SOLVER_PAGE_HOST", "www.nfse.gov.br").strip() or "www.nfse.gov.br"
 NON_9_SETTLE_SECONDS = float(os.environ.get("SOLVER_NON_9_SETTLE_SECONDS", "5"))
+PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "").strip()
+PROXY_LISTENER = os.environ.get("PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480").strip()
 SOLVER_PROFILES = API_DIR / "chrome-profiles-hcaptcha"
 CAPTCHA_DIR = API_DIR / "hcaptcha-imagens"
 CHALLENGES_DIR = CAPTCHA_DIR / "desafios"
@@ -163,6 +165,9 @@ def open_solver_browser(browser: str, url: str) -> tuple[int, Path, subprocess.P
             "--disable-background-mode",
             url,
     ]
+    if PROXY_HOSTNAME and PROXY_LISTENER:
+        args.insert(-1, f"--proxy-server=http://{PROXY_LISTENER}")
+        args.insert(-1, f"--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;{SOLVER_PAGE_HOST}")
     if headless:
         args[4:4] = ["--headless=new", "--disable-gpu"]
     else:

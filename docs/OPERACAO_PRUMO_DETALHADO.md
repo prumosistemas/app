@@ -140,6 +140,7 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 - servidor Python para guardar usuario, sessao, indice, runs e arquivos;
 - Modal `prumo-portal-nacional-solver` apenas para hCaptcha;
 - selecao de certificado no runtime, sem upload de arquivo de certificado.
+- sessao gerada via proxy do servidor quando a producao Linux precisa usar cookies criados no Windows.
 
 Arquivos principais:
 
@@ -155,10 +156,19 @@ deploy/portal_nacional_solver.py
 Teste local confirmado em 2026-07-05:
 
 - indexacao por requests: 86 notas recebidas;
-- download: 1 XML e 1 PDF validos;
+- download local: 1 XML e 1 PDF validos;
+- producao Gabriel: run `20260705-210520-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
-- segundo item travou em `solver:token_nao_voltou`, entao o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240`.
+- sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
+- desafios hCaptcha ainda podem retornar `solver:token_nao_voltou`, entao o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
+
+Gerar sessao pelo IP do servidor:
+
+```powershell
+cloudflared access tcp --hostname modal-proxy.prumosistemas.com.br --url 127.0.0.1:31480
+python server\portal_nacional_session.py --cert-index 3 --proxy http://127.0.0.1:31480 --out sessao_nfse.txt
+```
 
 Health do solver:
 

@@ -1182,6 +1182,18 @@ def item_has_tipos(item: dict, tipos: list[str]) -> bool:
     return True
 
 
+def item_existing_file_for_tipo(item: dict, tipo: str) -> str | None:
+    files_by_tipo = item.get("files_by_tipo") or {}
+    existing = files_by_tipo.get(tipo)
+    if existing:
+        return str(existing)
+    suffix = default_extension_for_tipo(tipo).lower()
+    for file_path in item.get("files") or []:
+        if str(file_path).lower().endswith(suffix):
+            return str(file_path)
+    return None
+
+
 def download_item_requests(session: requests.Session, item: dict, solver_url: str, download_dir: Path, tipo_download: str = "xml") -> dict:
     tipos = normalize_download_tipos(tipo_download)
     files_by_tipo = dict(item.get("files_by_tipo") or {})
@@ -1189,8 +1201,10 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
     errors = []
 
     for tipo in tipos:
-        existing = files_by_tipo.get(tipo)
-        if existing and Path(str(existing)).exists():
+        existing = item_existing_file_for_tipo({**item, "files_by_tipo": files_by_tipo}, tipo)
+        if existing:
+            files_by_tipo[tipo] = existing
+            methods_by_tipo.setdefault(tipo, f"existing_{tipo}")
             continue
         result = download_item_tipo_requests(session, item, solver_url, download_dir, tipo)
         if result.get("ok"):
@@ -1317,6 +1331,11 @@ def run_requests_downloads(
                 index["items"][key]["last_error"] = result
                 if result.get("files_by_tipo"):
                     index["items"][key]["files_by_tipo"] = result.get("files_by_tipo", {})
+                    existing_files = list(index["items"][key].get("files") or [])
+                    for file_path in (result.get("files_by_tipo", {}) or {}).values():
+                        if file_path and file_path not in existing_files:
+                            existing_files.append(file_path)
+                    index["items"][key]["files"] = existing_files
                 if result.get("methods_by_tipo"):
                     index["items"][key]["methods_by_tipo"] = result.get("methods_by_tipo", {})
 
