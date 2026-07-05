@@ -129,7 +129,6 @@
     </section>
     <section id="billingSection" class="section">
       <div class="grid two">
-        <div class="card" style="grid-column:1 / -1;"><div class="card-head"><h3>Créditos Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox"><span class="small">Carregando créditos...</span></div></div>
         <div class="card"><div class="card-head"><h3>PIX da empresa</h3></div><div class="card-body stack">
           <form id="billingSettingsForm" class="stack">
             <div><label>Chave PIX</label><input name="pix_key" placeholder="email, telefone, CPF/CNPJ ou chave aleatória"></div>
@@ -168,6 +167,7 @@
             </select>
           </label>
         </div>
+        <div class="card"><div class="card-head"><h3>Créditos Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox"><span class="small">Carregando créditos...</span></div></div>
         <div id="metricCards" class="metric-grid"></div>
         <div class="grid two">
           <div class="card"><div class="card-head"><h3>CPU e memória</h3></div><div class="chart-wrap"><canvas id="resourcesChart"></canvas></div></div>
@@ -218,8 +218,8 @@ function switchSection(id){
   document.querySelectorAll("[data-section]").forEach(el=>el.classList.toggle("active",el.dataset.section===id));
   $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",billingSection:"Pagamentos",logsSection:"Logs"}[id] || "Master";
   if(id==="companiesSection") loadCompanies();
-  if(id==="billingSection"){ loadBilling(); loadModalBilling(); }
-  if(id==="logsSection"){ loadLogs(); loadMetrics(); startMetricsPolling(); }
+  if(id==="billingSection"){ loadBilling(); }
+  if(id==="logsSection"){ loadLogs(); loadModalBilling(); loadMetrics(); startMetricsPolling(); }
   else { stopMetricsPolling(); }
 }
 async function loadSession(){
@@ -285,7 +285,7 @@ async function loadModalBilling(){
   if(!box) return;
   box.innerHTML="<span class='small'>Consultando Modal...</span>";
   try{
-    const data=await api("/py/api/admin/modal-billing");
+    const data=await api("/api/master/modal-billing");
     if(!data.ok){
       box.innerHTML=`<div class="notice warn">Não foi possível consultar o Modal agora.<br><span class="small">${esc(data.error||"Sem detalhe.")}</span></div>`;
       return;

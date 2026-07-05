@@ -130,6 +130,10 @@ export default {
         return handleMasterMetrics(request, env);
       }
 
+      if (url.pathname === "/api/master/modal-billing" && request.method === "GET") {
+        return handleMasterModalBilling(request, env);
+      }
+
       if (url.pathname === "/api/billing" && request.method === "GET") {
         return handleBilling(request, env);
       }
@@ -709,6 +713,17 @@ async function handleMasterMetrics(request, env) {
     return jsonResponse(request, env, metrics, 502);
   }
   return jsonResponse(request, env, metrics);
+}
+
+async function handleMasterModalBilling(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+
+  const billing = await fetchPythonModalBilling(env, auth.user);
+  if (!billing.ok) {
+    return jsonResponse(request, env, billing, 502);
+  }
+  return jsonResponse(request, env, billing);
 }
 
 async function handleBilling(request, env) {
@@ -2739,6 +2754,23 @@ async function fetchPythonSystemMetrics(env, actor, range) {
   const base = String(env.PYTHON_API_URL).replace(/\/+$/, "");
   try {
     const res = await fetch(`${base}/api/admin/system-metrics?range=${encodeURIComponent(range)}`, {
+      method: "GET",
+      headers: pythonHeaders(env, actor),
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+async function fetchPythonModalBilling(env, actor) {
+  if (!env.PYTHON_API_URL || !env.ISS_INTERNAL_SECRET) {
+    return { ok: false, error: "PYTHON_API_URL ou ISS_INTERNAL_SECRET não configurado." };
+  }
+  const base = String(env.PYTHON_API_URL).replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/api/admin/modal-billing`, {
       method: "GET",
       headers: pythonHeaders(env, actor),
     });
