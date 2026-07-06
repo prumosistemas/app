@@ -11,8 +11,8 @@
     :root{
       --bg:#f0f2f7; --panel:#fff; --panel2:#f7f8fc; --border:#e4e6ef; --border2:#cdd0df;
       --text:#111827; --text2:#4b5563; --text3:#8b95a7; --accent:#4f46e5; --accent2:#6366f1;
-      --green:#16a34a; --red:#dc2626; --amber:#d97706; --blue:#0f766e;
-      --radius:12px; --shadow:0 1px 4px rgba(0,0,0,.07),0 0 0 1px rgba(0,0,0,.04);
+      --green:#16a34a; --red:#dc2626; --amber:#d97706; --teal:#0f766e;
+      --radius:10px; --shadow:0 1px 4px rgba(0,0,0,.07),0 0 0 1px rgba(0,0,0,.04);
       --font:'Plus Jakarta Sans',system-ui,sans-serif; --mono:'JetBrains Mono',monospace;
     }
     *{box-sizing:border-box;margin:0;padding:0}
@@ -27,7 +27,8 @@
     .nav-btn:hover,.nav-btn.active{background:#eef2ff;color:var(--accent)}.nav-icon{width:15px;height:15px;flex-shrink:0}
     .sidebar-footer{padding:10px 8px;border-top:1px solid var(--border);display:grid;gap:7px}
     main{padding:24px 26px;min-height:100vh}.topline{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:18px}.topline h2{font-size:20px;letter-spacing:-.03em}.topline p{margin-top:4px;color:var(--text3)}
-    .grid{display:grid;gap:16px;max-width:1220px}.grid.two{grid-template-columns:360px minmax(0,1fr)}.grid.cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .section{display:none}.section.active{display:block}
+    .grid{display:grid;gap:16px;max-width:1220px}.grid.two{grid-template-columns:370px minmax(0,1fr)}.grid.cards{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:16px}
     .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
     .card-head{padding:14px 16px;border-bottom:1px solid var(--border);background:var(--panel2);display:flex;align-items:center;justify-content:space-between;gap:10px}
     .card-head h3{font-size:13.5px}.card-body{padding:16px}.stack{display:grid;gap:12px}
@@ -39,9 +40,11 @@
     button:hover,.button:hover{opacity:.88}button.secondary,.button.secondary{background:#fff;color:var(--text2);border-color:var(--border2)}button.danger{background:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}
     .actions{display:flex;flex-wrap:wrap;gap:8px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.full{grid-column:1/-1}
     .notice{border:1px solid var(--border2);background:var(--panel2);border-radius:8px;padding:10px 12px;color:var(--text2);font-size:12.5px;white-space:pre-line}.notice.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.notice.err{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.notice.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
-    .metric{border:1px solid var(--border);background:var(--panel);border-radius:10px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
+    .metric{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
     .pill{display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:800;white-space:nowrap}.pill.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.pill.bad{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.pill.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}
+    .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
+    .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
     code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}}
   </style>
@@ -51,21 +54,20 @@
     <aside>
       <div class="brand">
         <div class="brand-logo"><img class="brand-image" src="prumo-logo.png" alt="Prumo Sistemas"><div><h1>Prumo Sistemas</h1></div></div>
-        <p>Central de aplicações</p>
+        <p>Portal Nacional</p>
       </div>
       <nav>
-        <div class="nav-label">Ferramentas</div>
-        <a class="nav-btn" href="/"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Central</a>
-        <a class="nav-btn" href="/iss-fortaleza"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9h1"/><path d="M9 13h1"/><path d="M9 17h1"/></svg>ISS Fortaleza</a>
-        <a class="nav-btn active" href="/portal-nacional"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>Notas Portal Nacional</a>
+        <div class="nav-label">Portal Nacional</div>
+        <button class="nav-btn active" data-section="certificatesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 7a2 2 0 1 1 2 2"/><path d="M4 20l7-7"/><path d="M8 16l3 3"/><path d="M12.5 11.5A5 5 0 1 0 10 14"/></svg>Certificados</button>
+        <button class="nav-btn" data-section="notesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>Notas</button>
       </nav>
       <div class="sidebar-footer"><button class="nav-btn" id="btnLogout" type="button">Sair</button></div>
     </aside>
     <main>
       <div class="topline">
         <div>
-          <h2>Notas Portal Nacional</h2>
-          <p>XML e DANFSe de notas recebidas e emitidas.</p>
+          <h2 id="pageTitle">Certificados</h2>
+          <p id="pageSubtitle">Certificados digitais usados para acessar o Portal Nacional.</p>
         </div>
         <div class="actions">
           <button class="secondary" id="btnRefresh" type="button">Atualizar</button>
@@ -73,16 +75,47 @@
         </div>
       </div>
       <div id="msg"></div>
-      <div class="grid cards" id="metrics"></div>
-      <div class="grid two" style="margin-top:16px;">
-        <div class="stack">
+
+      <section id="certificatesSection" class="section active">
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head"><h3>Novo certificado</h3></div>
+            <div class="card-body">
+              <form id="certForm" class="stack">
+                <label class="dropzone" id="certDropzone">
+                  <input id="certFile" name="file" type="file" accept=".pfx,.p12">
+                  <strong id="certFileName">Selecionar arquivo .pfx</strong>
+                  <span>Arraste o arquivo aqui ou clique para escolher.</span>
+                </label>
+                <div>
+                  <label>Alias</label>
+                  <input id="certAlias" name="alias" placeholder="Nome curto para identificar">
+                </div>
+                <div>
+                  <label>Senha</label>
+                  <input id="certPassword" name="password" type="password" autocomplete="off">
+                </div>
+                <div class="actions"><button id="btnUploadCert" type="submit">Salvar certificado</button></div>
+              </form>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Certificados</h3><span class="pill" id="certCount">0</span></div>
+            <div class="card-body" id="certList"><div class="small">Carregando...</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="notesSection" class="section">
+        <div class="grid cards" id="metrics"></div>
+        <div class="grid two">
           <div class="card">
             <div class="card-head"><h3>Nova run</h3><span class="pill" id="solverPill">Solver</span></div>
             <div class="card-body stack">
               <form id="runForm" class="stack">
                 <div>
                   <label>Certificado</label>
-                  <select name="cert_index" id="certSelect"></select>
+                  <select name="cert_id" id="certSelect"></select>
                 </div>
                 <div class="form-grid">
                   <div><label>Data inicial</label><input name="data_inicial" id="dataInicial" type="date" required></div>
@@ -92,35 +125,27 @@
                   <div><label>Limite teste</label><input name="max_items" type="number" min="0" max="5000" value="0"></div>
                   <div><label>Concorrência</label><input name="concorrencia" type="number" min="1" max="16" value="4"></div>
                   <div><label>Tentativas</label><input name="retries" type="number" min="1" max="20" value="6"></div>
-                  <div><label>Sessão</label><select name="renovar_sessao"><option value="true">Renovar pelo certificado</option><option value="false">Usar sessão salva</option></select></div>
                 </div>
                 <div class="actions"><button id="btnStart" type="submit">Iniciar run</button></div>
               </form>
               <div id="certNotice"></div>
             </div>
           </div>
-          <div class="card">
-            <div class="card-head"><h3>Sessão salva</h3><button class="secondary" id="btnImportSession" type="button">Importar</button></div>
-            <div class="card-body stack">
-              <div id="sessionBox" class="small">Carregando...</div>
-              <textarea id="sessionJson" placeholder='Cole aqui o JSON de sessao_nfse.txt quando a geração por certificado estiver em outro PC.'></textarea>
+          <div class="stack">
+            <div class="card">
+              <div class="card-head"><h3>Runs</h3><button class="secondary" id="btnDownloadRun" type="button">Baixar ZIP</button></div>
+              <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Detalhe</h3><button class="secondary" id="btnRetry" type="button">Retry</button></div>
+              <div class="card-body stack">
+                <div id="detailBox" class="small">Selecione uma run.</div>
+                <div id="filesBox"></div>
+              </div>
             </div>
           </div>
         </div>
-        <div class="stack">
-          <div class="card">
-            <div class="card-head"><h3>Runs</h3><button class="secondary" id="btnDownloadRun" type="button">Baixar ZIP</button></div>
-            <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>Detalhe</h3><button class="secondary" id="btnRetry" type="button">Retry</button></div>
-            <div class="card-body stack">
-              <div id="detailBox" class="small">Selecione uma run.</div>
-              <div id="filesBox"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      </section>
     </main>
   </div>
   <script>
@@ -131,6 +156,7 @@
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
     let selectedRunId = "";
     let activeRunId = "";
+    let latestState = null;
 
     const $ = id => document.getElementById(id);
     const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -141,7 +167,8 @@
     function toLogin(){ window.location.href="/login"; }
     async function api(path, options={}){
       const headers = new Headers(options.headers || {});
-      if(options.body !== undefined && options.body !== null && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
+      const isForm = options.body instanceof FormData;
+      if(options.body !== undefined && options.body !== null && !isForm && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
       if(csrf) headers.set("X-CSRF-Token", csrf);
       if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
       const res = await fetch(apiPath(path), {credentials:"include", ...options, headers});
@@ -166,10 +193,17 @@
       if(loading){ btn.dataset.label = btn.textContent; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${esc(label || "Aguarde")}`; }
       else { btn.disabled = false; btn.textContent = btn.dataset.label || label || btn.textContent; }
     }
+    function switchSection(sectionId){
+      document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === sectionId));
+      document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.classList.toggle("active", btn.dataset.section === sectionId));
+      const notes = sectionId === "notesSection";
+      $("pageTitle").textContent = notes ? "Notas" : "Certificados";
+      $("pageSubtitle").textContent = notes ? "XML e DANFSe de notas recebidas e emitidas." : "Certificados digitais usados para acessar o Portal Nacional.";
+    }
     function formPayload(){
       const fd = new FormData($("runForm"));
       return {
-        cert_index: Number(fd.get("cert_index") || 0),
+        cert_id: fd.get("cert_id") || "",
         data_inicial: fd.get("data_inicial"),
         data_final: fd.get("data_final"),
         modo: fd.get("modo"),
@@ -177,7 +211,7 @@
         max_items: Number(fd.get("max_items") || 0),
         concorrencia: Number(fd.get("concorrencia") || 4),
         retries: Number(fd.get("retries") || 6),
-        renovar_sessao: fd.get("renovar_sessao") === "true"
+        renovar_sessao: true
       };
     }
     function renderMetrics(state){
@@ -196,23 +230,21 @@
       $("btnStop").disabled = !active;
     }
     function renderCertificates(state){
-      const select = $("certSelect");
       const certs = state.certificates || [];
-      select.innerHTML = certs.length ? certs.map(c => `<option value="${Number(c.index)}">${esc(c.label)}</option>`).join("") : `<option value="0">Certificado não disponível neste servidor</option>`;
-      $("certNotice").innerHTML = state.certificate_error
-        ? `<div class="notice warn">Certificados não listados neste runtime. ${esc(state.certificate_error)}</div>`
-        : "";
-    }
-    function renderSession(session){
-      if(!session?.exists){
-        $("sessionBox").innerHTML = `<span class="pill warn">Sem sessão salva</span>`;
-        return;
-      }
-      $("sessionBox").innerHTML = `
-        <div class="notice ok">Sessão disponível
-Certificado: ${esc(session.certificate_subject || "-")}
-Cookies: ${Number(session.cookies_count || 0)}
-Atualizada: ${esc(formatTs(session.updated_at))}</div>`;
+      $("certCount").textContent = String(certs.length);
+      $("certSelect").innerHTML = certs.length
+        ? certs.map(c => `<option value="${esc(c.id || `runtime:${c.index || 0}`)}">${esc(c.label || c.subject || "Certificado")}</option>`).join("")
+        : `<option value="">Cadastre um certificado</option>`;
+      $("certNotice").innerHTML = certs.length ? "" : `<div class="notice warn">Nenhum certificado disponível.</div>`;
+      if(!certs.length){ $("certList").innerHTML = `<div class="small">Nenhum certificado cadastrado.</div>`; return; }
+      $("certList").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Alias</th><th>Validade</th><th>Origem</th><th></th></tr></thead><tbody>${certs.map(cert => `
+        <tr>
+          <td><strong>${esc(cert.alias || cert.subject || "Certificado")}</strong><br><span class="small">${esc(cert.filename || cert.subject || "")}</span></td>
+          <td>${esc((cert.not_after || "").slice(0,10) || "-")}</td>
+          <td>${esc(cert.source === "runtime" ? "Runtime" : "Upload")}</td>
+          <td>${cert.source === "upload" ? `<button class="danger" data-delete-cert="${esc(cert.id)}" type="button">Excluir</button>` : ""}</td>
+        </tr>`).join("")}</tbody></table></div>`;
+      $("certList").querySelectorAll("[data-delete-cert]").forEach(btn => btn.onclick = () => deleteCertificate(btn.dataset.deleteCert, btn));
     }
     function renderRuns(runs){
       if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
@@ -227,7 +259,7 @@ Atualizada: ${esc(formatTs(session.updated_at))}</div>`;
       }).join("")}</tbody></table></div>`;
       $("runsTable").querySelectorAll("[data-run]").forEach(row => row.onclick = () => loadRun(row.dataset.run));
     }
-    function renderDetail(run, index){
+    function renderDetail(run){
       selectedRunId = run?.run_id || "";
       const s = run?.summary || {};
       $("detailBox").innerHTML = run ? `
@@ -246,10 +278,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
       const res = await fetch(apiPath(path), {credentials:"include", headers});
       if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
-      if(!res.ok){
-        const text = await res.text().catch(() => "");
-        throw new Error(text || "Falha no download.");
-      }
+      if(!res.ok){ const text = await res.text().catch(() => ""); throw new Error(text || "Falha no download."); }
       const blob = await res.blob();
       const disp = res.headers.get("content-disposition") || "";
       const match = disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
@@ -267,28 +296,47 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
     }
     async function loadState(){
       const state = await api("/py/api/portal-nacional/state");
+      latestState = state;
       activeRunId = state.active_run_id || "";
-      renderMetrics(state); renderCertificates(state); renderSession(state.session); renderRuns(state.runs || []);
+      renderMetrics(state); renderCertificates(state); renderRuns(state.runs || []);
       if(selectedRunId && (state.runs || []).some(r => r.run_id === selectedRunId)) await loadRun(selectedRunId, false);
       else if((state.runs || [])[0]) await loadRun(state.runs[0].run_id, false);
     }
     async function loadRun(runId, showErr=true){
-      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); renderDetail(data.run, data.index); }
+      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); renderDetail(data.run); }
       catch(err){ if(showErr) setMsg("err", err.message); }
     }
+    async function deleteCertificate(certId, btn){
+      if(!confirm("Excluir este certificado?")) return;
+      buttonLoading(btn, true, "Excluindo");
+      try{ await api(`/py/api/portal-nacional/certificates/${encodeURIComponent(certId)}`, {method:"DELETE"}); await loadState(); setMsg("ok", "Certificado excluído."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading(btn, false, "Excluir"); }
+    }
+    $("certForm").onsubmit = async ev => {
+      ev.preventDefault(); setMsg("", "");
+      const file = $("certFile").files[0];
+      if(!file){ setMsg("warn", "Selecione um certificado."); return; }
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("alias", $("certAlias").value.trim());
+      fd.set("password", $("certPassword").value);
+      buttonLoading($("btnUploadCert"), true, "Salvando");
+      try{
+        await api("/py/api/portal-nacional/certificates", {method:"POST", body:fd});
+        $("certForm").reset(); $("certFileName").textContent = "Selecionar arquivo .pfx";
+        await loadState(); setMsg("ok", "Certificado salvo.");
+      }catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnUploadCert"), false, "Salvar certificado"); }
+    };
     $("runForm").onsubmit = async ev => {
-      ev.preventDefault(); setMsg("", ""); buttonLoading($("btnStart"), true, "Iniciando");
-      try{ const data = await api("/py/api/portal-nacional/runs", {method:"POST", body:JSON.stringify(formPayload())}); selectedRunId = data.run_id; await loadState(); setMsg("ok", "Run iniciada."); }
+      ev.preventDefault(); setMsg("", "");
+      const payload = formPayload();
+      if(!payload.cert_id){ setMsg("warn", "Selecione um certificado."); switchSection("certificatesSection"); return; }
+      buttonLoading($("btnStart"), true, "Iniciando");
+      try{ const data = await api("/py/api/portal-nacional/runs", {method:"POST", body:JSON.stringify(payload)}); selectedRunId = data.run_id; switchSection("notesSection"); await loadState(); setMsg("ok", "Run iniciada."); }
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnStart"), false, "Iniciar run"); }
-    };
-    $("btnImportSession").onclick = async () => {
-      const raw = $("sessionJson").value.trim();
-      if(!raw){ setMsg("warn", "Cole o JSON da sessão antes de importar."); return; }
-      buttonLoading($("btnImportSession"), true, "Importando");
-      try{ await api("/py/api/portal-nacional/sessions/import", {method:"POST", body:JSON.stringify({session:JSON.parse(raw)})}); $("sessionJson").value=""; await loadState(); setMsg("ok", "Sessão importada."); }
-      catch(err){ setMsg("err", err.message); }
-      finally{ buttonLoading($("btnImportSession"), false, "Importar"); }
     };
     $("btnRetry").onclick = async () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
@@ -314,6 +362,20 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
     };
     $("btnRefresh").onclick = () => loadState().catch(err => setMsg("err", err.message));
     $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
+    document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
+    $("certFile").addEventListener("change", () => {
+      $("certFileName").textContent = $("certFile").files[0]?.name || "Selecionar arquivo .pfx";
+    });
+    ["dragenter","dragover"].forEach(type => $("certDropzone").addEventListener(type, ev => { ev.preventDefault(); $("certDropzone").classList.add("dragover"); }));
+    ["dragleave","drop"].forEach(type => $("certDropzone").addEventListener(type, ev => { ev.preventDefault(); $("certDropzone").classList.remove("dragover"); }));
+    $("certDropzone").addEventListener("drop", ev => {
+      const file = ev.dataTransfer?.files?.[0];
+      if(!file) return;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      $("certFile").files = dt.files;
+      $("certFileName").textContent = file.name;
+    });
     (() => {
       const now = new Date();
       const first = new Date(now.getFullYear(), now.getMonth(), 1);

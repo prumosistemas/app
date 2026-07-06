@@ -11,13 +11,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from db import OUTPUT_ROOT
-from domain import WorkerContext, get_worker_context, member_output_root, safe_path_inside, safe_slug
-from portal_nacional_session import list_certificates
+from domain import (
+    WorkerContext,
+    get_worker_context,
+    member_output_root,
+    protect_secret,
+    safe_path_inside,
+    safe_slug,
+    unprotect_secret,
+)
+from portal_nacional_session import list_certificates, load_pfx_identity
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +45,7 @@ class PortalRunPayload(BaseModel):
     tipo_download: str = Field(default="ambos")
     data_inicial: str
     data_final: str
+    cert_id: str = ""
     cert_index: int = 0
     renovar_sessao: bool = True
     max_items: int = 0
@@ -80,6 +88,12 @@ def _portal_root(ctx: WorkerContext) -> Path:
     return root
 
 
+def _certificates_root(ctx: WorkerContext) -> Path:
+    root = _portal_root(ctx) / "certificates"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _runs_root(ctx: WorkerContext) -> Path:
     root = _portal_root(ctx) / "runs"
     root.mkdir(parents=True, exist_ok=True)
@@ -108,6 +122,94 @@ def _run_paths(run_dir: Path) -> Dict[str, Path]:
         "downloads": run_dir / "downloads",
         "logs": run_dir / "logs",
         "zip": run_dir / "_zip",
+    }
+
+
+def _certificate_dir(ctx: WorkerContext, cert_id: str) -> Path:
+    cert_id = safe_slug(cert_id, "cert")
+    cert_dir = _certificates_root(ctx) / cert_id
+    return Path(safe_path_inside(str(_certificates_root(ctx)), str(cert_dir)))
+
+
+def _certificate_meta_path(ctx: WorkerContext, cert_id: str) -> Path:
+    return _certificate_dir(ctx, cert_id) / "meta.json"
+
+
+def _public_certificate_meta(cert_id: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    alias = str(meta.get("alias") or meta.get("subject") or "Certificado").strip()
+    not_after = str(meta.get("not_after") or "")
+    label_tail = f" | vence {not_after[:10]}" if not_after else ""
+    return {
+        "id": cert_id,
+        "source": "upload",
+        "label": f"{alias}{label_tail}",
+        "alias": alias,
+        "filename": meta.get("filename"),
+        "subject": meta.get("subject"),
+        "issuer": meta.get("issuer"),
+        "thumbprint": meta.get("thumbprint"),
+        "not_after": meta.get("not_after"),
+        "uploaded_at": meta.get("uploaded_at"),
+        "updated_at": meta.get("updated_at"),
+        "size": meta.get("size"),
+    }
+
+
+def _list_uploaded_certificates(ctx: WorkerContext) -> List[Dict[str, Any]]:
+    certs: List[Dict[str, Any]] = []
+    for meta_path in sorted(_certificates_root(ctx).glob("*/meta.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        meta = _load_json(meta_path, {})
+        cert_file = meta_path.parent / "cert.pfx"
+        if not cert_file.exists():
+            continue
+        certs.append(_public_certificate_meta(meta_path.parent.name, meta))
+    return certs
+
+
+def _get_uploaded_certificate(ctx: WorkerContext, cert_id: str) -> Dict[str, Any]:
+    cert_id = safe_slug(cert_id, "cert")
+    cert_dir = _certificate_dir(ctx, cert_id)
+    meta = _load_json(cert_dir / "meta.json", {})
+    cert_file = cert_dir / "cert.pfx"
+    if not meta or not cert_file.exists():
+        raise HTTPException(status_code=404, detail="Certificado não encontrado.")
+    return {"id": cert_id, "dir": cert_dir, "file": cert_file, "meta": meta}
+
+
+def _runtime_certificates() -> tuple[List[Dict[str, Any]], str | None]:
+    certs: List[Dict[str, Any]] = []
+    try:
+        for index, cert in enumerate(list_certificates()):
+            certs.append(
+                {
+                    "id": f"runtime:{index}",
+                    "source": "runtime",
+                    "index": index,
+                    "label": f"{index + 1}. {cert.get('subject') or 'Certificado'} | vence {(cert.get('not_after') or '')[:10]}",
+                    "subject": cert.get("subject"),
+                    "thumbprint": cert.get("thumbprint"),
+                    "not_after": cert.get("not_after"),
+                }
+            )
+    except Exception as exc:
+        return [], str(exc)
+    return certs, None
+
+
+def _validate_pfx_bytes(raw: bytes, password: str, tmp_path: Path) -> Dict[str, Any]:
+    tmp_path.write_bytes(raw)
+    try:
+        identity = load_pfx_identity(tmp_path, password)
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+    return {
+        "subject": identity.get("subject"),
+        "issuer": identity.get("issuer"),
+        "thumbprint": identity.get("thumbprint"),
+        "not_after": identity.get("not_after"),
     }
 
 
@@ -147,12 +249,21 @@ def _normalize_cfg(payload: PortalRunPayload | PortalRetryPayload | Dict[str, An
     if tipo not in {"xml", "pdf", "ambos"}:
         raise HTTPException(status_code=400, detail="Arquivo deve ser xml, pdf ou ambos.")
 
+    cert_ref = str(raw.get("cert_id") or "").strip()
+    cert_id = ""
+    cert_index = _safe_int(raw.get("cert_index"), 0, 0, 999)
+    if cert_ref.startswith("runtime:"):
+        cert_index = _safe_int(cert_ref.split(":", 1)[1], 0, 0, 999)
+    elif cert_ref:
+        cert_id = safe_slug(cert_ref, "cert")
+
     return {
         "modo": modo,
         "tipo_download": tipo,
         "data_inicial": _normalize_date(str(raw.get("data_inicial") or "")),
         "data_final": _normalize_date(str(raw.get("data_final") or "")),
-        "cert_index": _safe_int(raw.get("cert_index"), 0, 0, 999),
+        "cert_id": cert_id,
+        "cert_index": cert_index,
         "renovar_sessao": bool(raw.get("renovar_sessao", True)),
         "max_items": _safe_int(raw.get("max_items"), 0, 0, 5000),
         "concorrencia": _safe_int(raw.get("concorrencia"), 4, 1, 16),
@@ -163,10 +274,11 @@ def _normalize_cfg(payload: PortalRunPayload | PortalRetryPayload | Dict[str, An
 def _run_id_for(cfg: Dict[str, Any], modo: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     suffix = "" if cfg["tipo_download"] == "xml" else f"-{cfg['tipo_download']}"
+    cert_token = f"cert-{safe_slug(cfg.get('cert_id', ''), 'pfx')[:12]}" if cfg.get("cert_id") else f"cert{int(cfg['cert_index']):02d}"
     return (
         f"{stamp}-{modo}-"
         f"{_date_slug(cfg['data_inicial'])}-{_date_slug(cfg['data_final'])}-"
-        f"cert{int(cfg['cert_index']):02d}{suffix}"
+        f"{cert_token}{suffix}"
     )
 
 
@@ -200,6 +312,45 @@ def _final_run_status(summary: Dict[str, Any], code: int) -> str:
     if summary.get("pendentes"):
         return "finalizado_com_erros"
     return "finalizado"
+
+
+def _attach_certificate_to_run(ctx: WorkerContext, cfg: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
+    cfg = dict(cfg)
+    if not cfg.get("renovar_sessao"):
+        return cfg
+
+    cert_id = str(cfg.get("cert_id") or "").strip()
+    if cert_id:
+        cert = _get_uploaded_certificate(ctx, cert_id)
+        cert_run_dir = run_dir / "certificado"
+        cert_run_dir.mkdir(parents=True, exist_ok=True)
+        pfx_path = cert_run_dir / "cert.pfx"
+        password_path = cert_run_dir / "password.txt"
+        shutil.copy2(cert["file"], pfx_path)
+        password_path.write_text(unprotect_secret(cert["meta"].get("password") or ""), encoding="utf-8")
+        try:
+            pfx_path.chmod(0o600)
+            password_path.chmod(0o600)
+        except Exception:
+            pass
+        cfg.update(
+            {
+                "cert_source": "upload",
+                "cert_alias": cert["meta"].get("alias") or cert["meta"].get("subject") or cert_id,
+                "cert_subject": cert["meta"].get("subject"),
+                "pfx_file": str(pfx_path),
+                "pfx_password_file": str(password_path),
+            }
+        )
+        return cfg
+
+    if os.name != "nt":
+        raise HTTPException(
+            status_code=400,
+            detail="Envie um certificado .pfx em Certificados antes de iniciar a run neste servidor.",
+        )
+    cfg["cert_source"] = "runtime"
+    return cfg
 
 
 def _list_files(run_dir: Path) -> List[Dict[str, Any]]:
@@ -258,6 +409,7 @@ def _compact_run(ctx: WorkerContext, run_dir: Path) -> Dict[str, Any]:
 
 
 def _create_run(ctx: WorkerContext, cfg: Dict[str, Any], modo: str) -> Path:
+    cfg = dict(cfg)
     run_id = _run_id_for(cfg, modo)
     run_dir = _runs_root(ctx) / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -273,6 +425,8 @@ def _create_run(ctx: WorkerContext, cfg: Dict[str, Any], modo: str) -> Path:
         if not saved_session.exists():
             raise HTTPException(status_code=400, detail="Nenhuma sessão salva para este colaborador. Gere ou importe uma sessão primeiro.")
         shutil.copy2(saved_session, paths["session"])
+    else:
+        cfg = _attach_certificate_to_run(ctx, cfg, run_dir)
 
     _save_json(
         paths["run"],
@@ -320,6 +474,10 @@ def _build_command(cfg: Dict[str, Any], run_dir: Path, retry_only: bool) -> List
         "--data-final",
         cfg["data_final"],
     ]
+    if cfg.get("pfx_file"):
+        cmd.extend(["--pfx-file", str(cfg["pfx_file"])])
+        if cfg.get("pfx_password_file"):
+            cmd.extend(["--pfx-password-file", str(cfg["pfx_password_file"])])
     if cfg.get("max_items"):
         cmd.extend(["--max", str(cfg["max_items"])])
     if retry_only:
@@ -419,21 +577,8 @@ def _session_status(ctx: WorkerContext) -> Dict[str, Any]:
 
 @router.get("/state")
 async def portal_state(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
-    certificate_error = None
-    certificates: List[Dict[str, Any]] = []
-    try:
-        for index, cert in enumerate(await asyncio.to_thread(list_certificates)):
-            certificates.append(
-                {
-                    "index": index,
-                    "label": f"{index + 1}. {cert.get('subject') or 'Certificado'} | vence {(cert.get('not_after') or '')[:10]}",
-                    "subject": cert.get("subject"),
-                    "thumbprint": cert.get("thumbprint"),
-                    "not_after": cert.get("not_after"),
-                }
-            )
-    except Exception as exc:
-        certificate_error = str(exc)
+    runtime_certificates, certificate_error = await asyncio.to_thread(_runtime_certificates)
+    certificates = [*_list_uploaded_certificates(ctx), *runtime_certificates]
 
     return {
         "ok": True,
@@ -446,6 +591,60 @@ async def portal_state(ctx: WorkerContext = Depends(get_worker_context)) -> Dict
         "runs": [_compact_run(ctx, path.parent) for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)],
         "limits": {"concorrencia_max": 16, "max_items_max": 5000},
     }
+
+
+@router.post("/certificates")
+async def upload_certificate(
+    file: UploadFile = File(...),
+    password: str = Form(default=""),
+    alias: str = Form(default=""),
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> Dict[str, Any]:
+    filename = Path(file.filename or "certificado.pfx").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".pfx", ".p12"}:
+        raise HTTPException(status_code=400, detail="Envie um arquivo .pfx ou .p12.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Arquivo vazio.")
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Certificado muito grande.")
+
+    temp_path = _certificates_root(ctx) / f"upload_{os.getpid()}_{threading.get_ident()}.tmp"
+    try:
+        cert_info = await asyncio.to_thread(_validate_pfx_bytes, raw, password or "", temp_path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    cert_id_base = safe_slug(f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{(cert_info.get('thumbprint') or '')[-10:]}", "cert")
+    cert_id = cert_id_base
+    for i in range(2, 100):
+        if not _certificate_dir(ctx, cert_id).exists():
+            break
+        cert_id = safe_slug(f"{cert_id_base}_{i}", "cert")
+    cert_dir = _certificate_dir(ctx, cert_id)
+    cert_dir.mkdir(parents=True, exist_ok=False)
+    cert_file = cert_dir / "cert.pfx"
+    cert_file.write_bytes(raw)
+    meta = {
+        "id": cert_id,
+        "alias": str(alias or "").strip() or Path(filename).stem,
+        "filename": filename,
+        "size": len(raw),
+        "password": protect_secret(password or ""),
+        "uploaded_at": _now_iso(),
+        "updated_at": _now_iso(),
+        **cert_info,
+    }
+    _save_json(cert_dir / "meta.json", meta)
+    return {"ok": True, "certificate": _public_certificate_meta(cert_id, meta)}
+
+
+@router.delete("/certificates/{cert_id}")
+async def delete_certificate(cert_id: str, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    cert = _get_uploaded_certificate(ctx, cert_id)
+    shutil.rmtree(cert["dir"], ignore_errors=True)
+    return {"ok": True}
 
 
 @router.post("/sessions/import")

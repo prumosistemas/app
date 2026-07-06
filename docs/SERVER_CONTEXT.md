@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.32
-Data: 2026-07-05
+Versao: 1.0.38
+Data: 2026-07-06
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -80,7 +80,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.37",
+  "version": "1.0.38",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -350,6 +350,8 @@ Arquivos:
 Endpoints Python:
 
 - `GET /api/portal-nacional/state`
+- `POST /api/portal-nacional/certificates`
+- `DELETE /api/portal-nacional/certificates/{cert_id}`
 - `POST /api/portal-nacional/sessions/import`
 - `POST /api/portal-nacional/runs`
 - `GET /api/portal-nacional/runs`
@@ -363,22 +365,28 @@ Arvore de dados:
 
 ```text
 /opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/portal_nacional/
+  certificates/<cert_id>/cert.pfx
+  certificates/<cert_id>/meta.json
   sessions/sessao_nfse.txt
   runs/<run_id>/run.json
   runs/<run_id>/indice.json
+  runs/<run_id>/certificado/cert.pfx
+  runs/<run_id>/certificado/password.txt
   runs/<run_id>/downloads/
   runs/<run_id>/logs/
 ```
 
-O download individual e o ZIP so expoem `downloads/`, `logs/`, `indice.json` e `run.json`. O arquivo `sessions/sessao_nfse.txt` nao e servido para download pela API.
+O download individual e o ZIP so expoem `downloads/`, `logs/`, `indice.json` e `run.json`. O arquivo `sessions/sessao_nfse.txt`, os PFX e o arquivo interno de senha nao sao servidos para download pela API.
 
 Certificado digital:
 
-- A UI pede para selecionar o certificado disponivel no runtime que esta gerando a sessao.
-- Nao ha upload de arquivo de certificado.
-- No Windows local, a sessao pode ser gerada usando a store de certificados do usuario.
-- No servidor Linux, a store Windows nao existe. Para producao sem certificado no servidor, importar uma sessao `sessao_nfse.txt` gerada em maquina autorizada e usar "usar sessao salva".
-- A sessao do Portal Nacional fica sensivel ao IP/origem. Para a producao usar a sessao, gere a sessao localmente passando pelo proxy do servidor.
+- A UI tem uma aba `Certificados` para upload de `.pfx`/`.p12`, com senha opcional.
+- O PFX fica no escopo empresa/colaborador em `portal_nacional/certificates`.
+- Ao iniciar a run, a API copia o PFX para `runs/<run_id>/certificado/` e grava a senha em arquivo interno para permitir renovacao de sessao durante indexacao/download.
+- A senha do certificado fica protegida com o mesmo mecanismo de segredo da API quando `ISS_INTERNAL_SECRET` esta configurado.
+- No Windows local, a store de certificados ainda pode ser listada como fallback de runtime.
+- No servidor Linux, a store Windows nao existe; producao deve usar upload de PFX.
+- A sessao do Portal Nacional fica sensivel ao IP/origem, mas o caminho PFX gera cookies direto no runtime atual.
 
 Gerar sessao no Windows usando o IP do servidor:
 
@@ -387,17 +395,15 @@ cloudflared access tcp --hostname modal-proxy.prumosistemas.com.br --url 127.0.0
 python server\portal_nacional_session.py --cert-index 3 --proxy http://127.0.0.1:31480 --out sessao_nfse.txt
 ```
 
-Depois importe o JSON em `/portal-nacional` e rode com "usar sessao salva".
+O caminho acima e legado/local. Em producao, prefira cadastrar o PFX pela aba `Certificados`.
 
-Teste confirmado em 2026-07-05:
+Teste confirmado em 2026-07-06:
 
-- Run local `20260705-161546-recebidas-20260601-20260630-cert03-ambos`.
-- Run de producao Gabriel `20260705-210520-recebidas-20260601-20260630-cert00-pdf`.
-- Run de producao Gabriel `20260705-215220-recebidas-20260601-20260630-cert00-pdf`.
-- Indexou 86 notas recebidas de 01/06/2026 a 30/06/2026.
-- Baixou 1 XML valido no teste local e PDFs validos na producao via Modal solver.
-- PDF validado pelo cabecalho `%PDF-1.4`.
-- XML validado como documento `NFSe`.
+- PFX `LOQUICENTER LOCADORA 11728000148` abriu com senha `Loqui450`, subject `LOQUICENTER LOCADORA COMERCIAL LTDA:11711728000148`, validade `2027-03-12`.
+- Geracao de sessao por PFX retornou `target_looks_logged_in=true`, status `200`, cookies `ASP.NET_SessionId`, `Emissor` e `ARRAffinity`.
+- Upload local pela API retornou `200`, apareceu em `/api/portal-nacional/state` e a exclusao retornou `200`.
+- `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
+- Download real `tipo-download=ambos`, `max=1`, `concorrencia=1`, `retries=3` ficou bloqueado no solver por `solver:cohere_rate_limited` (`Cohere 429`), sem falha de certificado/sessao.
 - O XML em producao recebeu hCaptcha canvas nao-9 e ficou bloqueado por `solver:cohere_rate_limited` quando a Cohere retornou HTTP 429. O Modal/proxy/browser estavam saudaveis; a dependencia limitante era a API de visao. O solver usa estrategia hibrida: recarrega desafios nao-9 algumas vezes e depois chama IA uma vez, preservando erros especificos.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
@@ -437,8 +443,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -t ryang20/prumo-api:1.0.32 server
-docker push ryang20/prumo-api:1.0.32
+docker build -t ryang20/prumo-api:1.0.38 server
+docker push ryang20/prumo-api:1.0.38
 ```
 
 Atualizar servidor:
@@ -449,7 +455,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.37 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.38 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

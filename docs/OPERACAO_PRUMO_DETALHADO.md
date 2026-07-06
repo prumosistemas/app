@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.32.
+Este documento e a fonte de contexto operacional da versao 1.0.38.
 
 ## Estado desejado
 
@@ -122,7 +122,7 @@ Ao excluir pagamento:
 
 ## Homologacao
 
-A homologacao foi removida da versao 1.0.32. Os arquivos HTML sempre apontam para producao.
+A homologacao foi removida em versao anterior. Os arquivos HTML sempre apontam para producao.
 
 Se existir recurso antigo no Cloudflare:
 
@@ -139,8 +139,8 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 
 - servidor Python para guardar usuario, sessao, indice, runs e arquivos;
 - Modal `prumo-portal-nacional-solver` apenas para hCaptcha;
-- selecao de certificado no runtime, sem upload de arquivo de certificado.
-- sessao gerada via proxy do servidor quando a producao Linux precisa usar cookies criados no Windows.
+- upload de certificado `.pfx`/`.p12` por colaborador, com senha validada e protegida no servidor;
+- sessao gerada diretamente pelo PFX no runtime atual, sem depender da store Windows no Linux.
 
 Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A central `/` e a rota limpa `/portal-nacional` foram mantidas ativas por rotas especificas do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`), que entregam `index.html` e `portal-nacional.html` diretamente.
 
@@ -155,10 +155,14 @@ deploy/modal_portal_nacional_solver.py
 deploy/portal_nacional_solver.py
 ```
 
-Teste local confirmado em 2026-07-05:
+Teste local confirmado em 2026-07-06:
 
-- indexacao por requests: 86 notas recebidas;
-- download local: 1 XML e 1 PDF validos;
+- PFX `LOQUICENTER LOCADORA 11728000148` com senha `Loqui450` abriu e gerou sessao logada no Portal Nacional;
+- upload local pela API retornou `200`, apareceu no estado e foi excluido com `200`;
+- indexacao por requests para 01/07/2026 a 06/07/2026 capturou `26/26` notas recebidas em 2 paginas;
+- download real `XML e PDF`, `max=1`, falhou no solver por `solver:cohere_rate_limited` (`Cohere 429`), sem falha de certificado/sessao;
+- teste anterior em 2026-07-05: indexacao por requests com 86 notas recebidas;
+- teste anterior em 2026-07-05: download local com 1 XML e 1 PDF validos;
 - producao Gabriel: run `20260705-210520-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
 - producao Gabriel: run `20260705-215220-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
 - PDF com cabecalho `%PDF-1.4`;
@@ -168,12 +172,14 @@ Teste local confirmado em 2026-07-05:
 - O solver Modal `2026-07-05-modal-xvfb-proxy-hybrid-non9` usa proxy do servidor, recarrega desafios nao-9 algumas vezes e depois chama IA uma vez para evitar queima de cota.
 - desafios hCaptcha ainda dependem da API de visao; por isso o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
 
-Gerar sessao pelo IP do servidor:
+Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
 
 ```powershell
 cloudflared access tcp --hostname modal-proxy.prumosistemas.com.br --url 127.0.0.1:31480
 python server\portal_nacional_session.py --cert-index 3 --proxy http://127.0.0.1:31480 --out sessao_nfse.txt
 ```
+
+Em producao, prefira cadastrar o PFX pela aba `Certificados` em `/portal-nacional`.
 
 Health do solver:
 

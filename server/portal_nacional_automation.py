@@ -571,15 +571,27 @@ def apply_cookies_to_client(client: CdpClient, session_data: dict) -> None:
             raise RuntimeError(f"Falhou ao gravar cookie {cookie['name']}")
 
 
-def regenerate_session(index: dict, index_path: Path, session_path: Path, start_url: str, cert_index: int | None = None) -> dict:
+def regenerate_session(
+    index: dict,
+    index_path: Path,
+    session_path: Path,
+    start_url: str,
+    cert_index: int | None = None,
+    pfx_file: str | None = None,
+    pfx_password_file: str | None = None,
+) -> dict:
     thumbprint = index.get("session", {}).get("certificate_thumbprint")
     cmd = [sys.executable, str(SESSION_GENERATOR), "--out", str(session_path), "--start-url", start_url]
-    if cert_index is not None:
+    if pfx_file:
+        cmd.extend(["--pfx-file", str(pfx_file)])
+        if pfx_password_file:
+            cmd.extend(["--pfx-password-file", str(pfx_password_file)])
+    elif cert_index is not None:
         cmd.extend(["--cert-index", str(cert_index)])
     elif thumbprint:
         cmd.extend(["--thumbprint", thumbprint])
     else:
-        raise RuntimeError("Sessao caiu, mas nao ha certificate_thumbprint no indice nem --cert-index para renovar sem interacao.")
+        raise RuntimeError("Sessao caiu, mas nao ha PFX, certificate_thumbprint nem --cert-index para renovar sem interacao.")
     save_index(index_path, index, "renovando_sessao", "session_expired_regenerating", command=" ".join(cmd))
     last_output = ""
     for attempt in range(1, 4):
@@ -604,11 +616,13 @@ def ensure_logged_in(
     session_path: Path,
     start_url: str,
     cert_index: int | None = None,
+    pfx_file: str | None = None,
+    pfx_password_file: str | None = None,
 ) -> dict | None:
     info = is_login_page(client)
     if not info.get("isLogin"):
         return None
-    session_data = regenerate_session(index, index_path, session_path, start_url, cert_index)
+    session_data = regenerate_session(index, index_path, session_path, start_url, cert_index, pfx_file, pfx_password_file)
     apply_cookies_to_client(client, session_data)
     navigate_and_wait(client, start_url, 5)
     info = is_login_page(client)
@@ -873,6 +887,8 @@ def run_requests_index(
     data_inicial: str | None,
     data_final: str | None,
     cert_index: int | None,
+    pfx_file: str | None = None,
+    pfx_password_file: str | None = None,
 ) -> None:
     session_data = json.loads(session_path.read_text(encoding="utf-8"))
     update_certificate_in_index(index, session_data)
@@ -884,7 +900,7 @@ def run_requests_index(
         response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
         if response_is_login(response):
             save_index(index_path, index, "renovando_sessao", "requests_index_login_failed", page=page, url=response.url)
-            session_data = regenerate_session(index, index_path, session_path, page_url, cert_index)
+            session_data = regenerate_session(index, index_path, session_path, page_url, cert_index, pfx_file, pfx_password_file)
             session = requests_session_from_data(session_data)
             response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
         if response_is_login(response):
@@ -1245,6 +1261,8 @@ def run_requests_downloads(
     max_attempts: int = 3,
     cert_index: int | None = None,
     tipo_download: str = "xml",
+    pfx_file: str | None = None,
+    pfx_password_file: str | None = None,
 ) -> None:
     require_solver_api(solver_url)
     tipos_download = normalize_download_tipos(tipo_download)
@@ -1359,7 +1377,15 @@ def run_requests_downloads(
             if login_errors:
                 save_index(index_path, index, "renovando_sessao", "requests_login_failed", errors=login_errors, active=len(futures), queue=len(queue))
                 print("Sessao caiu no requests. Renovando sessao pelo certificado do indice...")
-                session_data = regenerate_session(index, index_path, session_path, index.get("target_url") or TARGET_URL, cert_index)
+                session_data = regenerate_session(
+                    index,
+                    index_path,
+                    session_path,
+                    index.get("target_url") or TARGET_URL,
+                    cert_index,
+                    pfx_file,
+                    pfx_password_file,
+                )
 
             retry_items = [
                 item for item in retry_items
@@ -1687,6 +1713,8 @@ def main() -> int:
     parser.add_argument("--renovar-inicio", action="store_true", help="Roda 02_gera_sessao_txt.py antes de consultar o portal por requests.")
     parser.add_argument("--thumbprint", default=None, help="Certificado usado ao renovar sessao.")
     parser.add_argument("--cert-index", type=int, default=None, help="Indice do certificado usado ao renovar sessao.")
+    parser.add_argument("--pfx-file", default=None, help="Arquivo .pfx/.p12 usado ao renovar sessao.")
+    parser.add_argument("--pfx-password-file", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--manter-aberto", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--solver-url", default=SOLVER_API_URL, help="Endpoint da API resolvedora, ex: http://127.0.0.1:8765/solve.")
     parser.add_argument("--concorrencia", type=int, default=1, help="Quantidade de downloads simultaneos no modo requests.")
@@ -1702,6 +1730,8 @@ def main() -> int:
     session_path = Path(args.session).resolve()
     download_dir = Path(args.download_dir).resolve() / args.modo
     index_path = Path(args.index).resolve() if args.index else (BASE_DIR / f"indice_nfse_{args.modo}.json").resolve()
+    pfx_file = str(Path(args.pfx_file).resolve()) if args.pfx_file else None
+    pfx_password_file = str(Path(args.pfx_password_file).resolve()) if args.pfx_password_file else None
 
     if args.recriar_index and index_path.exists():
         index_path.unlink()
@@ -1718,6 +1748,9 @@ def main() -> int:
     index["download_dir"] = str(download_dir)
     if args.thumbprint:
         index.setdefault("session", {})["certificate_thumbprint"] = args.thumbprint
+    if pfx_file:
+        index.setdefault("session", {})["certificate_source"] = "pfx"
+        index["session"]["pfx_file"] = pfx_file
     elif session_path.exists():
         try:
             existing_session = json.loads(session_path.read_text(encoding="utf-8"))
@@ -1727,7 +1760,7 @@ def main() -> int:
     save_index(index_path, index, "iniciando", "start", modo=args.modo, data_inicial=data_inicial, data_final=data_final)
 
     if args.renovar_inicio or not session_path.exists():
-        regenerate_session(index, index_path, session_path, target_url, args.cert_index)
+        regenerate_session(index, index_path, session_path, target_url, args.cert_index, pfx_file, pfx_password_file)
 
     if not session_path.exists():
         raise FileNotFoundError(f"Sessao nao encontrada: {session_path}")
@@ -1749,6 +1782,8 @@ def main() -> int:
             data_inicial=data_inicial,
             data_final=data_final,
             cert_index=args.cert_index,
+            pfx_file=pfx_file,
+            pfx_password_file=pfx_password_file,
         )
     else:
         print("Usando indice existente; sem navegador principal.")
@@ -1772,6 +1807,8 @@ def main() -> int:
         max_attempts=args.retries,
         cert_index=args.cert_index,
         tipo_download=args.tipo_download,
+        pfx_file=pfx_file,
+        pfx_password_file=pfx_password_file,
     )
     consolidate_page_totals(index)
     final_status = final_download_status(index, args.max)
@@ -1816,7 +1853,7 @@ def main() -> int:
             raise
         print("Sessao inicial caiu no login. Renovando e tentando de novo...")
         save_index(index_path, index, "renovando_sessao", "initial_session_failed", error=str(exc))
-        session_data = regenerate_session(index, index_path, session_path, target_url, args.cert_index)
+        session_data = regenerate_session(index, index_path, session_path, target_url, args.cert_index, pfx_file, pfx_password_file)
         session_data["start_url"] = target_url
         load_cookies_and_navigate(port, session_data, download_dir)
 
@@ -1854,7 +1891,7 @@ def main() -> int:
 
         save_index(index_path, index, "indexando", "scan_started")
         navigate_and_wait(client, target_url, 5)
-        ensure_logged_in(client, index, index_path, session_path, target_url, args.cert_index)
+        ensure_logged_in(client, index, index_path, session_path, target_url, args.cert_index, pfx_file, pfx_password_file)
         if data_inicial or data_final:
             filter_result = apply_date_filters(client, data_inicial, data_final)
             filtered_url = client.eval("location.href")
@@ -1882,7 +1919,7 @@ def main() -> int:
         if last_page > 1:
             print(f"Paginador detectado: indo na ultima pagina ({last_page}) para confirmar.")
             navigate_and_wait(client, build_page_url(target_url, last_page), 4)
-            ensure_logged_in(client, index, index_path, session_path, build_page_url(target_url, last_page), args.cert_index)
+            ensure_logged_in(client, index, index_path, session_path, build_page_url(target_url, last_page), args.cert_index, pfx_file, pfx_password_file)
             last_snapshot = page_snapshot(client)
             if last_snapshot.get("lastPage"):
                 last_page = max(last_page, int(last_snapshot.get("lastPage") or last_page))
@@ -1897,7 +1934,7 @@ def main() -> int:
             print(f"Indexando pagina {page}/{last_page}: {page_url}")
             save_index(index_path, index, "indexando", "page_scan_started", page=page)
             navigate_and_wait(client, page_url, 4)
-            ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index)
+            ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index, pfx_file, pfx_password_file)
             snapshot = page_snapshot(client)
             links = scan_current_page_links(client, args.modo, page)
             index.setdefault("pages", {})[str(page)] = {
@@ -1959,6 +1996,8 @@ def main() -> int:
                 max_attempts=args.retries,
                 cert_index=args.cert_index,
                 tipo_download=args.tipo_download,
+                pfx_file=pfx_file,
+                pfx_password_file=pfx_password_file,
             )
             consolidate_page_totals(index)
             final_status = final_download_status(index, args.max)
@@ -1983,7 +2022,7 @@ def main() -> int:
             print(f"[{pos}/{len(pending)}] Pagina {page} :: {item.get('text', '')[:100]}")
             if current_page != page:
                 navigate_and_wait(client, page_url, 4)
-                ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index)
+                ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index, pfx_file, pfx_password_file)
                 current_page = page
 
             index["items"][key]["status"] = "executando"
@@ -2004,7 +2043,7 @@ def main() -> int:
                         raise RuntimeError(f"Link XML nao clicado: {clicked.get('reason', 'sem motivo')}")
 
                     time.sleep(2)
-                    renewed = ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index)
+                    renewed = ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index, pfx_file, pfx_password_file)
                     if renewed:
                         current_page = None
                         raise RuntimeError("Sessao renovada apos clique; repetir item.")
@@ -2024,7 +2063,7 @@ def main() -> int:
                     save_index(index_path, index, "baixando", "captcha_submitted", id=key, clicked=inject_result.get("clicked"))
                     time.sleep(5)
 
-                    renewed = ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index)
+                    renewed = ensure_logged_in(client, index, index_path, session_path, page_url, args.cert_index, pfx_file, pfx_password_file)
                     if renewed:
                         current_page = None
                         raise RuntimeError("Sessao caiu depois do captcha; repetir item.")
