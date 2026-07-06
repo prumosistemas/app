@@ -132,6 +132,24 @@ def classify_exception(exc: Exception) -> ErrorSpec:
             retryable=True,
         )
 
+    transient_network_markers = (
+        "net::err_connection_reset",
+        "net::err_connection_closed",
+        "net::err_empty_response",
+        "net::err_network_changed",
+        "net::err_http2_protocol_error",
+        "net::err_aborted",
+        "connection reset",
+        "connection closed",
+    )
+    if any(marker in text_low for marker in transient_network_markers):
+        return ErrorSpec(
+            code="NETWORK_ERROR",
+            short_message="Falha transitória de rede ao acessar o portal ISS.",
+            action="Repetir o fluxo; se persistir, verificar portal, proxy e estabilidade do CDP.",
+            retryable=True,
+        )
+
     if "chrome-error://chromewebdata" in text_low or "interrupted by another navigation" in text_low:
         return ErrorSpec(
             code="NETWORK_NAVIGATION_ERROR",

@@ -18,6 +18,18 @@ class FlowErrorClassificationTests(unittest.TestCase):
         self.assertEqual(spec.code, "TIMEOUT")
         self.assertTrue(spec.retryable)
 
+    def test_connection_reset_is_retryable_network_error(self):
+        spec = classify_exception(Exception("Page.goto: net::ERR_CONNECTION_RESET at https://iss.fortaleza.ce.gov.br/grpfor/oauth2/login"))
+
+        self.assertEqual(spec.code, "NETWORK_ERROR")
+        self.assertTrue(spec.retryable)
+
+    def test_network_changed_is_retryable_network_error(self):
+        spec = classify_exception(Exception("Page.goto: net::ERR_NETWORK_CHANGED at https://iss.fortaleza.ce.gov.br/grpfor/home.seam"))
+
+        self.assertEqual(spec.code, "NETWORK_ERROR")
+        self.assertTrue(spec.retryable)
+
 
 if __name__ == "__main__":
     unittest.main()
