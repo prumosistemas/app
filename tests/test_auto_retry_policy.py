@@ -12,11 +12,14 @@ from run_queue import is_safe_retryable_result  # noqa: E402
 
 class AutoRetryPolicyTests(unittest.TestCase):
     def test_business_errors_are_not_safe_even_if_flagged_retryable(self):
-        for code in ("CNPJ_INEXISTENTE", "CNPJ_MISMATCH", "MENSAGEM_NA_TELA", "LOGIN_ERROR"):
+        for code in ("CNPJ_INEXISTENTE", "MENSAGEM_NA_TELA", "LOGIN_ERROR"):
             self.assertFalse(is_safe_retryable_result({"retryable": True, "erro_code": code}))
 
     def test_known_transient_error_is_safe(self):
         self.assertTrue(is_safe_retryable_result({"retryable": True, "erro_code": "TIMEOUT"}))
+
+    def test_cnpj_mismatch_is_retryable_because_portal_can_reuse_stale_grid(self):
+        self.assertTrue(is_safe_retryable_result({"retryable": True, "erro_code": "CNPJ_MISMATCH"}))
 
     def test_non_retryable_error_is_not_safe(self):
         self.assertFalse(is_safe_retryable_result({"retryable": False, "erro_code": "TIMEOUT"}))

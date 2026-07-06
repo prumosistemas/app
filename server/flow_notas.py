@@ -40,6 +40,7 @@ from flow_core import (
     create_browser_context,
     ensure_dir,
     log_flow,
+    portal_timeout_ms,
     resilient_goto,
     requests_bootstrap_enabled,
     run_step,
@@ -522,8 +523,8 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> str:
             "EMPRESA_NAO_LOCALIZADA",
             f"Empresa não localizada para o CNPJ {cnpj}",
             short_message="A pesquisa não retornou empresa utilizável.",
-            action="Verificar o CNPJ pesquisado e o HTML retornado da grade.",
-            retryable=False,
+            action="Repetir a pesquisa; se persistir, verificar o CNPJ pesquisado e o HTML retornado da grade.",
+            retryable=True,
         )
 
     cnpj_ret_raw = (await cnpj_link.inner_text()).strip()
@@ -565,24 +566,25 @@ async def esperar_overlay_sumir(page, timeout_ms: int = 20_000) -> None:
 async def acessar_menu_nfse_consulta(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando NFS-e → Consultar NFS-e", event="STEP_DETAIL")
     await settle_portal_page(page, ctx, reason="antes menu NFS-e")
+    menu_timeout = portal_timeout_ms("PORTAL_MENU_TIMEOUT_MS", 60_000, max_ms=120_000)
 
     try:
-        await page.click("a.dropdown-toggle:has-text('NFS-e')", timeout=10_000)
-        await page.click("a:has-text('Consultar NFS-e')", timeout=10_000)
+        await page.click("a.dropdown-toggle:has-text('NFS-e')", timeout=menu_timeout)
+        await page.click("a:has-text('Consultar NFS-e')", timeout=menu_timeout)
     except Exception:
         try:
-            await page.click("text=NFS-e", timeout=10_000)
-            await page.click("text=Consultar NFS-e", timeout=10_000)
+            await page.click("text=NFS-e", timeout=menu_timeout)
+            await page.click("text=Consultar NFS-e", timeout=menu_timeout)
         except Exception as e:
             raise FlowError(
                 "NFSE_MENU_FAIL",
                 f"Falha ao abrir menu NFS-e/Consultar: {e}",
                 short_message="Não foi possível acessar o menu de consulta de NFS-e.",
-                action="Revisar os seletores do menu NFS-e no portal.",
-                retryable=False,
+                action="Repetir o fluxo; se persistir, revisar os seletores do menu NFS-e no portal.",
+                retryable=True,
             )
 
-    await page.wait_for_selector("form[id^='consultarnfseForm']", timeout=20_000)
+    await page.wait_for_selector("form[id^='consultarnfseForm']", timeout=ctx.config.selector_timeout_ms)
     await asyncio.sleep(0.8)
 
 
@@ -596,7 +598,7 @@ async def clicar_aba_competencia(page, tipo: str, ctx: FlowContext) -> None:
         else "#consultarnfseForm\\:abaPorCompetenciaTomador_tab_lbl"
     )
 
-    aba = await page.wait_for_selector(aba_id, timeout=20_000)
+    aba = await page.wait_for_selector(aba_id, timeout=ctx.config.selector_timeout_ms)
     cls = (await aba.get_attribute("class")) or ""
     if "rich-tab-active" not in cls:
         await aba.click()
@@ -642,7 +644,7 @@ async def clicar_consultar(page, ctx: FlowContext) -> None:
 async def selecionar_tipo(page, tipo: str, ctx: FlowContext) -> None:
     texto = "Serviços Prestados" if tipo == "prestadas" else "Serviços Tomados"
     await log_flow(ctx, f"Selecionando tipo: {texto}", event="STEP_DETAIL")
-    await page.wait_for_selector(f"label:has-text('{texto}')", timeout=20_000)
+    await page.wait_for_selector(f"label:has-text('{texto}')", timeout=ctx.config.selector_timeout_ms)
     await page.locator(f"label:has-text('{texto}')").click()
     await asyncio.sleep(0.8)
 
@@ -819,9 +821,9 @@ async def job_notas(
         run_dir=run_dir,
         run_log_file=run_log_file,
         cnpj_dir=cnpj_dir,
-        step_timeout_sec=200,
-        nav_timeout_ms=60_000,
-        selector_timeout_ms=30_000,
+        step_timeout_sec=portal_timeout_ms("PORTAL_NOTAS_STEP_TIMEOUT_MS", 240_000, max_ms=360_000) // 1000,
+        nav_timeout_ms=portal_timeout_ms("PORTAL_NAV_TIMEOUT_MS", 90_000, max_ms=180_000),
+        selector_timeout_ms=portal_timeout_ms("PORTAL_SELECTOR_TIMEOUT_MS", 60_000, max_ms=180_000),
         close_timeout_sec=15,
         goto_retries=3,
         headless=headless,

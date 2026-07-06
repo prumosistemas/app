@@ -23,12 +23,15 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Tuple
 
+from playwright.async_api import TimeoutError as PWTimeoutError  # type: ignore
+
 from flow_core import (
     FlowConfig,
     FlowContext,
     create_browser_context,
     ensure_dir,
     log_flow,
+    portal_timeout_ms,
     rename_cnpj_dir_with_company,
     resilient_goto,
     requests_bootstrap_enabled,
@@ -769,8 +772,8 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
             "EMPRESA_NAO_LOCALIZADA",
             f"Empresa não localizada para o CNPJ {cnpj}",
             short_message="A pesquisa não retornou empresa utilizável.",
-            action="Verificar o CNPJ pesquisado e o HTML retornado da grade.",
-            retryable=False,
+            action="Repetir a pesquisa; se persistir, verificar o CNPJ pesquisado e o HTML retornado da grade.",
+            retryable=True,
         )
 
     cnpj_ret_raw = (await cnpj_link.inner_text()).strip()
@@ -788,6 +791,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
         """
     )
     await asyncio.sleep(2)
+    await settle_portal_page(page, ctx, reason="selecionar empresa DAM")
 
     await _verificar_mensagem_na_tela(page)
 
@@ -813,16 +817,17 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
 async def acessar_menu_dam(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando menu Recolhimento / Emitir DAM", event="STEP_DETAIL")
     await settle_portal_page(page, ctx, reason="antes menu DAM")
+    menu_timeout = portal_timeout_ms("PORTAL_MENU_TIMEOUT_MS", 60_000, max_ms=120_000)
 
     try:
-        await page.hover("text=Recolhimento", timeout=10_000)
+        await page.hover("text=Recolhimento", timeout=menu_timeout)
     except Exception as e:
         raise FlowError(
             "DAM_MENU_HOVER_FAIL",
             f"Falha ao abrir menu Recolhimento: {e}",
             short_message="Não foi possível abrir o menu de Recolhimento.",
-            action="Revisar seletor do menu e possíveis mudanças no HTML.",
-            retryable=False,
+            action="Repetir o fluxo; se persistir, revisar seletor do menu e possíveis mudanças no HTML.",
+            retryable=True,
         )
 
     await asyncio.sleep(0.8)
@@ -839,8 +844,8 @@ async def acessar_menu_dam(page, ctx: FlowContext) -> None:
             "DAM_MENU_NOT_FOUND",
             "Não foi possível localizar item do menu Recolhimento.",
             short_message="Item do menu Recolhimento não encontrado.",
-            action="Revisar seletor do item do menu no portal.",
-            retryable=False,
+            action="Repetir o fluxo; se persistir, revisar seletor do item do menu no portal.",
+            retryable=True,
         )
 
     await page.evaluate(
@@ -852,7 +857,10 @@ async def acessar_menu_dam(page, ctx: FlowContext) -> None:
         """
     )
 
-    await page.wait_for_load_state("networkidle")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+    except PWTimeoutError:
+        pass
     await asyncio.sleep(1.2)
 
 
@@ -860,11 +868,11 @@ async def selecionar_competencia_dam(page, mes: str, ctx: FlowContext) -> None:
     mes_num, ano = map(int, mes.split("/"))
     await log_flow(ctx, f"Selecionando competência {mes}", event="STEP_DETAIL")
 
-    await page.wait_for_selector("div.rich-calendar-tool-btn", timeout=15_000)
+    await page.wait_for_selector("div.rich-calendar-tool-btn", timeout=ctx.config.selector_timeout_ms)
     await page.click("div.rich-calendar-tool-btn")
     await asyncio.sleep(0.6)
 
-    await page.wait_for_selector("#competenciaDateEditorLayout", timeout=10_000)
+    await page.wait_for_selector("#competenciaDateEditorLayout", timeout=ctx.config.selector_timeout_ms)
 
     base_y = "#competenciaDateEditorLayoutY"
     ano_ok = False
@@ -893,7 +901,7 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
     await log_flow(ctx, f"Emitindo DAM tipo={tipo}", event="STEP_DETAIL")
 
     combo = page.locator("select#comboImposto")
-    await combo.wait_for(state="visible", timeout=30_000)
+    await combo.wait_for(state="visible", timeout=ctx.config.selector_timeout_ms)
     await combo.select_option(value=tipo)
     await asyncio.sleep(0.8)
 
@@ -924,7 +932,7 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
     await page.click("input#btnEmitir")
     await asyncio.sleep(0.5)
 
-    await page.wait_for_selector("input#btnConfirma", timeout=20_000)
+    await page.wait_for_selector("input#btnConfirma", timeout=ctx.config.selector_timeout_ms)
     await page.click("input#btnConfirma")
     await asyncio.sleep(1.0)
 
@@ -950,7 +958,7 @@ async def _emitir_dam_tipo(page, tipo: str, pasta_destino: str, ctx: FlowContext
 
 
 async def emitir_dams(page, pasta_destino: str, ctx: FlowContext) -> Dict[str, bool]:
-    await page.wait_for_selector("select#comboImposto", timeout=20_000)
+    await page.wait_for_selector("select#comboImposto", timeout=ctx.config.selector_timeout_ms)
 
     resultados: Dict[str, bool] = {}
     falhas: Dict[str, str] = {}
@@ -1007,9 +1015,9 @@ async def job_dam(
         run_dir=run_dir,
         run_log_file=run_log_file,
         cnpj_dir=cnpj_dir,
-        step_timeout_sec=120,
-        nav_timeout_ms=60_000,
-        selector_timeout_ms=30_000,
+        step_timeout_sec=portal_timeout_ms("PORTAL_DAM_STEP_TIMEOUT_MS", 180_000, max_ms=300_000) // 1000,
+        nav_timeout_ms=portal_timeout_ms("PORTAL_NAV_TIMEOUT_MS", 90_000, max_ms=180_000),
+        selector_timeout_ms=portal_timeout_ms("PORTAL_SELECTOR_TIMEOUT_MS", 60_000, max_ms=180_000),
         close_timeout_sec=15,
         goto_retries=3,
         headless=headless,

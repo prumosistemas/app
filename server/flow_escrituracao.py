@@ -38,6 +38,7 @@ from flow_core import (
     create_browser_context,
     ensure_dir,
     log_flow,
+    portal_timeout_ms,
     rename_cnpj_dir_with_company,
     resilient_goto,
     requests_bootstrap_enabled,
@@ -221,8 +222,8 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
             "EMPRESA_NAO_LOCALIZADA",
             f"Empresa não localizada para o CNPJ {cnpj}",
             short_message="A pesquisa não retornou empresa utilizável.",
-            action="Verificar o CNPJ pesquisado e o HTML retornado da grade.",
-            retryable=False,
+            action="Repetir a pesquisa; se persistir, verificar o CNPJ e o HTML retornado da grade.",
+            retryable=True,
         )
 
     cnpj_ret_raw = (await cnpj_link.inner_text()).strip()
@@ -240,6 +241,7 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
         """
     )
     await asyncio.sleep(2)
+    await settle_portal_page(page, ctx, reason="selecionar empresa escrituração")
 
     await _verificar_mensagem_na_tela(page)
 
@@ -274,16 +276,17 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
 async def acessar_escrituracao(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Acessando menu Escrituração", event="STEP_DETAIL")
     await settle_portal_page(page, ctx, reason="antes menu Escrituração")
+    menu_timeout = portal_timeout_ms("PORTAL_MENU_TIMEOUT_MS", 60_000, max_ms=120_000)
 
     try:
-        await page.hover("text=Escrituração", timeout=10_000)
+        await page.hover("text=Escrituração", timeout=menu_timeout)
     except Exception as e:
         raise FlowError(
             "MENU_ESCRIT_HOVER_FAIL",
             f"Falha hover menu Escrituração: {e}",
             short_message="Não foi possível abrir o menu de Escrituração.",
-            action="Revisar seletor do menu e possíveis mudanças no HTML.",
-            retryable=False,
+            action="Repetir o fluxo; se persistir, revisar seletor do menu e possíveis mudanças no HTML.",
+            retryable=True,
         )
 
     await asyncio.sleep(0.8)
@@ -299,8 +302,8 @@ async def acessar_escrituracao(page, ctx: FlowContext) -> None:
             "MENU_ESCRIT_NOT_FOUND",
             "Item do menu Escrituração não localizado.",
             short_message="Item do menu Escrituração não encontrado.",
-            action="Revisar seletor do item do menu no portal.",
-            retryable=False,
+            action="Repetir o fluxo; se persistir, revisar seletor do item do menu no portal.",
+            retryable=True,
         )
 
     await page.evaluate(
@@ -311,10 +314,13 @@ async def acessar_escrituracao(page, ctx: FlowContext) -> None:
         }});
         """
     )
-    await page.wait_for_load_state("networkidle")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+    except PWTimeoutError:
+        pass
     await page.wait_for_selector(
         "#manterEscrituracaoForm\\:dataInicialHeader .rich-calendar-tool-btn",
-        timeout=30_000,
+        timeout=ctx.config.selector_timeout_ms,
     )
     await asyncio.sleep(1.0)
 
@@ -344,13 +350,13 @@ async def preencher_calendarios(page, mes: str, ctx: FlowContext) -> None:
 
     await page.wait_for_selector(
         "#manterEscrituracaoForm\\:dataInicialHeader .rich-calendar-tool-btn",
-        timeout=20_000,
+        timeout=ctx.config.selector_timeout_ms,
     )
     await _selecionar_mes_calendar(page, "manterEscrituracaoForm:dataInicial", mes_num, ano)
 
     await page.wait_for_selector(
         "#manterEscrituracaoForm\\:dataFinalHeader .rich-calendar-tool-btn",
-        timeout=20_000,
+        timeout=ctx.config.selector_timeout_ms,
     )
     await _selecionar_mes_calendar(page, "manterEscrituracaoForm:dataFinal", mes_num, ano)
 
@@ -361,7 +367,7 @@ async def clicar_consultar(page, ctx: FlowContext) -> None:
     await _esperar_resultado_consulta_escrituracao(page)
 
 
-async def _esperar_resultado_consulta_escrituracao(page, timeout_ms: int = 35_000) -> None:
+async def _esperar_resultado_consulta_escrituracao(page, timeout_ms: int = 70_000) -> None:
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=5_000)
     except Exception:
@@ -453,7 +459,7 @@ async def _wait_for_stable_escrituracao_state(page, *, timeout_ms: int) -> None:
     raise PWTimeoutError("Timeout aguardando resultado da consulta de escrituração")
 
 
-async def _wait_escrituracao_aberta(page, *, timeout_ms: int = 35_000) -> None:
+async def _wait_escrituracao_aberta(page, *, timeout_ms: int = 70_000) -> None:
     deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
     stable_hits = 0
     last_exc: Exception | None = None
@@ -492,6 +498,25 @@ async def _query_selector_retrying_navigation(page, selector: str, *, timeout_ms
     return None
 
 
+async def _js_click_selector(page, selector: str) -> bool:
+    try:
+        return bool(
+            await page.evaluate(
+                """(sel) => {
+                    const el = document.querySelector(sel);
+                    if (!el) return false;
+                    el.click();
+                    return true;
+                }""",
+                selector,
+            )
+        )
+    except Exception as exc:
+        if _is_navigation_race(exc):
+            return True
+        raise
+
+
 async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechada: bool = True) -> None:
     await log_flow(ctx, "Escriturar/Reabrir", event="STEP_DETAIL")
 
@@ -522,13 +547,17 @@ async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechad
                 retryable=False,
             )
         try:
-            await page.click("a[id$=':linkReabrir']")
-            await _esperar_resultado_consulta_escrituracao(page, timeout_ms=20_000)
+            clicked = await _js_click_selector(page, "a[id$=':linkReabrir']")
+            if not clicked:
+                await page.click("a[id$=':linkReabrir']", timeout=ctx.config.selector_timeout_ms)
+            await _esperar_resultado_consulta_escrituracao(page, timeout_ms=70_000)
         except Exception:
             pass
 
-    await page.click("a[id$=':linkEscriturar']")
-    await _wait_escrituracao_aberta(page)
+    clicked = await _js_click_selector(page, "a[id$=':linkEscriturar']")
+    if not clicked:
+        await page.click("a[id$=':linkEscriturar']", timeout=ctx.config.selector_timeout_ms)
+    await _wait_escrituracao_aberta(page, timeout_ms=70_000)
     await asyncio.sleep(0.5)
 
 
@@ -599,7 +628,7 @@ async def clicar_aba_simples(page, ctx: FlowContext) -> None:
 
 async def gerar_pdf_simples(page, cnpj_dir: str, ctx: FlowContext) -> None:
     await log_flow(ctx, "Gerando Simples Nacional (screenshot)", event="STEP_DETAIL")
-    await page.wait_for_selector("form#abaEspelhoSimplesNacionalForm", timeout=30_000)
+    await page.wait_for_selector("form#abaEspelhoSimplesNacionalForm", timeout=ctx.config.selector_timeout_ms)
 
     ensure_dir(cnpj_dir)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -632,48 +661,79 @@ async def gerar_pdf_simples(page, cnpj_dir: str, ctx: FlowContext) -> None:
 async def voltar_encerramento(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Voltando para aba Encerramento", event="STEP_DETAIL")
     try:
-        await page.click("#abaEncerramento_shifted")
+        await page.click("#abaEncerramento_shifted", timeout=ctx.config.selector_timeout_ms)
     except Exception:
-        await page.click("a[id$=':abaEncerramento']")
+        await page.click("a[id$=':abaEncerramento']", timeout=ctx.config.selector_timeout_ms)
     await asyncio.sleep(1.0)
-    await page.wait_for_selector("#abaEncerramentoForm\\:btnEncerrarEscrituracao", timeout=30_000)
+    await page.wait_for_selector("#abaEncerramentoForm\\:btnEncerrarEscrituracao", timeout=ctx.config.selector_timeout_ms)
 
 
 async def clicar_encerrar(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Encerrando escrituração", event="STEP_DETAIL")
-    await page.click("#abaEncerramentoForm\\:btnEncerrarEscrituracao")
+    clicked = await _js_click_selector(page, "#abaEncerramentoForm\\:btnEncerrarEscrituracao")
+    if not clicked:
+        await page.click("#abaEncerramentoForm\\:btnEncerrarEscrituracao", timeout=ctx.config.selector_timeout_ms)
     await asyncio.sleep(1.0)
 
 
 async def confirmar_sim(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Confirmando encerramento (Sim)", event="STEP_DETAIL")
-    await page.click("#formEncerramento\\:btnSim")
+    clicked = await _js_click_selector(page, "#formEncerramento\\:btnSim")
+    if not clicked:
+        await page.click("#formEncerramento\\:btnSim", timeout=ctx.config.selector_timeout_ms)
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=8_000)
+    except PWTimeoutError:
+        pass
     await asyncio.sleep(1.0)
+
+
+async def _wait_certificado_button_id(page, timeout_ms: int) -> str:
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    last_exc: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            btn_id = await page.evaluate(
+                """
+                () => {
+                  const norm = (s) => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();
+                  const els = Array.from(document.querySelectorAll('input[id][value], button[id], a[id]'));
+                  const el = els.find(e => norm(e.value || e.innerText || e.textContent || '').includes('certificado de encerramento'));
+                  return el ? el.id : null;
+                }
+                """
+            )
+            if btn_id:
+                return str(btn_id)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_navigation_race(exc):
+                raise
+        await asyncio.sleep(0.75)
+    if last_exc:
+        raise last_exc
+    raise PWTimeoutError("Timeout aguardando botão Certificado de Encerramento")
 
 
 async def abrir_certificado(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Abrindo certificado de encerramento", event="STEP_DETAIL")
-    btn_id = await page.evaluate(
-        """
-        () => {
-          const els = Array.from(document.querySelectorAll('input[id][value]'));
-          const el = els.find(e => (e.value || '').includes('Certificado de Encerramento'));
-          return el ? el.id : null;
-        }
-        """
-    )
-    if not btn_id:
+    try:
+        btn_id = await _wait_certificado_button_id(page, ctx.config.selector_timeout_ms)
+    except Exception as exc:
         raise FlowError(
             "CERT_BUTTON_NOT_FOUND",
-            "Botão Certificado de Encerramento não localizado.",
+            f"Botão Certificado de Encerramento não localizado: {exc}",
             short_message="Botão do certificado de encerramento não encontrado.",
-            action="Revisar HTML da tela de encerramento.",
-            retryable=False,
+            action="Repetir o fluxo; se persistir, revisar HTML da tela de encerramento.",
+            retryable=True,
         )
 
-    await page.evaluate("(id) => document.getElementById(id).click()", btn_id)
+    await page.evaluate("(id) => document.getElementById(id)?.click()", btn_id)
     await asyncio.sleep(1.2)
-    await page.wait_for_load_state("networkidle")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+    except PWTimeoutError:
+        pass
 
 
 async def gerar_pdf_certificado(page, cnpj_dir: str, ctx: FlowContext) -> None:
@@ -813,9 +873,9 @@ async def job_escrituracao(
         run_dir=run_dir,
         run_log_file=run_log_file,
         cnpj_dir=cnpj_dir,
-        step_timeout_sec=120,
-        nav_timeout_ms=60_000,
-        selector_timeout_ms=30_000,
+        step_timeout_sec=portal_timeout_ms("PORTAL_ESCRITURACAO_STEP_TIMEOUT_MS", 180_000, max_ms=300_000) // 1000,
+        nav_timeout_ms=portal_timeout_ms("PORTAL_NAV_TIMEOUT_MS", 90_000, max_ms=180_000),
+        selector_timeout_ms=portal_timeout_ms("PORTAL_SELECTOR_TIMEOUT_MS", 60_000, max_ms=180_000),
         close_timeout_sec=15,
         goto_retries=3,
         headless=headless,

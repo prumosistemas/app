@@ -62,7 +62,6 @@ from domain import (
 
 AUTO_RETRY_BLOCKED_CODES = {
     "CNPJ_INEXISTENTE",
-    "CNPJ_MISMATCH",
     "MENSAGEM_NA_TELA",
     "LOGIN_ERROR",
     "PORTAL_ACCESS_BLOCKED",
@@ -73,6 +72,63 @@ AUTO_RETRY_BLOCKED_CODES = {
 def is_safe_retryable_result(result: Dict[str, Any]) -> bool:
     code = str(result.get("erro_code") or result.get("code") or "").strip().upper()
     return bool(result.get("retryable")) and code not in AUTO_RETRY_BLOCKED_CODES
+
+
+def _dam_blocked_result(item: Dict[str, Any], *, reason: str, retryable: bool = True) -> Dict[str, Any]:
+    return {
+        "cnpj": item.get("cnpj", ""),
+        "codigo_dominio": item.get("codigo_dominio", ""),
+        "nome_empresa": item.get("nome_empresa", ""),
+        "account_id": item.get("account_id", ""),
+        "account_alias": item.get("account_alias", ""),
+        "flow_mode": "dam",
+        "flow_label": FLOW_LABELS.get("dam", "DAM"),
+        "status": "erro",
+        "erro": reason,
+        "erro_code": "DAM_BLOCKED_BY_ESCRITURACAO",
+        "erro_action": "Corrigir a Escrituração e executar retry antes de gerar DAM.",
+        "retryable": retryable,
+        "finished_at": now_ms(),
+        "usar_codigo_dominio": bool(item.get("usar_codigo_dominio", True)),
+    }
+
+
+def _root_has_escrituracao_task(ctx: WorkerContext, run_key: str, item: Dict[str, Any]) -> bool:
+    run = RUNS.get(run_key)
+    if not run:
+        return False
+
+    root_id = root_id_of(run)
+    root_run = next((r for r in runs_for_member(ctx) if r.get("run_id") == root_id), None)
+    if not root_run:
+        return False
+
+    wanted = task_key({"cnpj": item.get("cnpj", ""), "flow_mode": "escrituracao"})
+    return any(task_key(task) == wanted for task in root_run.get("input_tasks", []) or [])
+
+
+def _effective_escrituracao_result_for_item(
+    ctx: WorkerContext,
+    run_key: str,
+    item: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    run = RUNS.get(run_key)
+    if not run:
+        return None
+
+    wanted = task_key({"cnpj": item.get("cnpj", ""), "flow_mode": "escrituracao"})
+    for result in aggregate_results_for_root(ctx, root_id_of(run)):
+        if task_key(result) == wanted:
+            return result
+    return None
+
+
+def _escrituracao_allows_dam(result: Optional[Dict[str, Any]]) -> bool:
+    if not result:
+        return False
+    if result.get("status") == "ok":
+        return True
+    return result.get("erro_code") == "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA"
 
 
 def _attempts_for_root(ctx: WorkerContext, root_id: str) -> List[Dict[str, Any]]:
@@ -609,35 +665,21 @@ async def run_cnpj_group_serial(
 
         if flow == "dam":
             has_escrituracao = any(x.get("flow_mode") == "escrituracao" for x in ordered_items)
-            escrit_closed_without_reopen = (
-                escrituracao_result
-                and escrituracao_result.get("erro_code") == "ESCRITURACAO_FECHADA_REABERTURA_DESATIVADA"
-            )
+            has_root_escrituracao = _root_has_escrituracao_task(ctx, run_key, item)
+            dependency_result = escrituracao_result or _effective_escrituracao_result_for_item(ctx, run_key, item)
 
-            if has_escrituracao and (not escrituracao_result or (escrituracao_result.get("status") != "ok" and not escrit_closed_without_reopen)):
-                skipped = {
-                    "cnpj": item.get("cnpj", ""),
-                    "codigo_dominio": item.get("codigo_dominio", ""),
-                    "nome_empresa": item.get("nome_empresa", ""),
-                    "account_id": item.get("account_id", ""),
-                    "account_alias": item.get("account_alias", ""),
-                    "flow_mode": "dam",
-                    "flow_label": FLOW_LABELS.get("dam", "DAM"),
-                    "status": "erro",
-                    "erro": "DAM não executado porque a Escrituração deste CNPJ falhou.",
-                    "erro_code": "DAM_BLOCKED_BY_ESCRITURACAO",
-                    "erro_action": "Corrigir a Escrituração e executar retry antes de gerar DAM.",
-                    "retryable": True,
-                    "finished_at": now_ms(),
-                    "usar_codigo_dominio": bool(item.get("usar_codigo_dominio", True)),
-                }
+            if (has_escrituracao or has_root_escrituracao) and not _escrituracao_allows_dam(dependency_result):
+                skipped = _dam_blocked_result(
+                    item,
+                    reason="DAM não executado porque a Escrituração deste CNPJ falhou ou ainda não foi concluída.",
+                )
 
                 write_run_log(
                     run_log_file,
                     (
                         f"[ITEM_ERROR] flow=dam cnpj={normalize_cnpj(item.get('cnpj', ''))} "
                         f"code=DAM_BLOCKED_BY_ESCRITURACAO retryable=True "
-                        f"msg=DAM não executado porque Escrituração falhou."
+                        f"msg=DAM não executado porque Escrituração falhou ou ainda não foi concluída."
                     ),
                 )
 

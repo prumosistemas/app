@@ -423,8 +423,8 @@ async def pesquisar_empresa(page, cnpj: str, ctx: FlowContext) -> Tuple[str, str
             "EMPRESA_NAO_LOCALIZADA",
             f"Empresa não localizada para o CNPJ {cnpj}",
             short_message="A pesquisa não retornou empresa utilizável.",
-            action="Verificar o CNPJ pesquisado e o HTML retornado da grade.",
-            retryable=False,
+            action="Repetir a pesquisa; se persistir, verificar o CNPJ pesquisado e o HTML retornado da grade.",
+            retryable=True,
         )
 
     cnpj_ret_raw = (await cnpj_link.inner_text()).strip()

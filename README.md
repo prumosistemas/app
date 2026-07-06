@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.31 - Producao unica, Modal 40 e pagamentos ajustaveis**
+Versao: **1.0.33 - Producao unica, Modal 30 e retry ISS estabilizado**
 
 ## Estado atual
 
@@ -8,7 +8,7 @@ Versao: **1.0.31 - Producao unica, Modal 40 e pagamentos ajustaveis**
 - Worker Cloudflare de producao: `morning-credit-8a59`.
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
-- Navegadores: `40` sessoes Modal/turbo.
+- Navegadores: `30` sessoes Modal/turbo.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -55,8 +55,8 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -t ryang20/prumo-api:1.0.31 server
-docker push ryang20/prumo-api:1.0.31
+docker build -t ryang20/prumo-api:1.0.33 server
+docker push ryang20/prumo-api:1.0.33
 ```
 
 Servidor:

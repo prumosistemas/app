@@ -487,6 +487,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def portal_timeout_ms(
+    name: str,
+    default: int,
+    *,
+    min_ms: int = 1_000,
+    max_ms: int = 180_000,
+) -> int:
+    value = _env_int(name, default)
+    return max(min_ms, min(value, max_ms))
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name, "").strip().lower()
     if not raw:

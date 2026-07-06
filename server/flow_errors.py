@@ -73,8 +73,8 @@ class CnpjMismatchError(FlowError):
             "CNPJ_MISMATCH",
             f"CNPJ esperado={esperado}, retornado={encontrado}",
             short_message="O CNPJ retornado pelo portal não corresponde ao pesquisado.",
-            action="Revisar pesquisa, máscara e resultado retornado pela tabela.",
-            retryable=False,
+            action="Repetir a pesquisa; se persistir, revisar máscara e resultado retornado pela tabela.",
+            retryable=True,
         )
 
 

@@ -162,8 +162,8 @@ def find_company_link_and_name(text: str, cnpj_digits: str) -> Tuple[str, str, s
         "EMPRESA_NAO_LOCALIZADA",
         f"Empresa nao localizada para o CNPJ {cnpj_digits}",
         short_message="A pesquisa nao retornou empresa utilizavel.",
-        action="Verificar o CNPJ pesquisado e o HTML retornado da grade.",
-        retryable=False,
+        action="Repetir a pesquisa; se persistir, verificar o CNPJ pesquisado e o HTML retornado da grade.",
+        retryable=True,
     )
 
 
