@@ -80,7 +80,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.34",
+  "version": "1.0.35",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -449,7 +449,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.34 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.35 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

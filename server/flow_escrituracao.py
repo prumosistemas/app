@@ -668,16 +668,71 @@ async def voltar_encerramento(page, ctx: FlowContext) -> None:
     await page.wait_for_selector("#abaEncerramentoForm\\:btnEncerrarEscrituracao", timeout=ctx.config.selector_timeout_ms)
 
 
+async def _portal_validation_message(page) -> str:
+    try:
+        text = await page.evaluate(
+            """
+            () => {
+              const visible = (el) => {
+                if (!el) return false;
+                const st = window.getComputedStyle(el);
+                const box = el.getBoundingClientRect();
+                return st.display !== 'none' && st.visibility !== 'hidden' &&
+                       Number(st.opacity || '1') > 0 &&
+                       (box.width > 0 || box.height > 0);
+              };
+              const candidates = Array.from(document.querySelectorAll(
+                '.alert, .alert-warning, .alert-danger, .rich-messages, .rich-message, ' +
+                '[class*="message"], [class*="erro"], [class*="warn"]'
+              ));
+              const messages = candidates
+                .filter(visible)
+                .map((el) => (el.innerText || el.textContent || '').trim())
+                .filter(Boolean);
+              const body = (document.body && (document.body.innerText || '')) || '';
+              const known = [
+                'É necessário informações sobre a sociedade de profissionais',
+                'E necessario informacoes sobre a sociedade de profissionais',
+              ];
+              for (const needle of known) {
+                if (body.includes(needle)) messages.push(needle);
+              }
+              return Array.from(new Set(messages)).join(' | ');
+            }
+            """
+        )
+        return _safe_text(str(text or ""))
+    except Exception:
+        return ""
+
+
+async def _raise_if_escrituracao_validation_blocked(page) -> None:
+    message = await _portal_validation_message(page)
+    norm = message.lower()
+    if not message:
+        return
+    if "sociedade de profissionais" in norm or "necessário" in norm or "necessario" in norm:
+        raise FlowError(
+            "ESCRITURACAO_VALIDACAO_PORTAL",
+            message,
+            short_message="Portal bloqueou o encerramento da escrituração por pendência de validação.",
+            action="Abrir a empresa no portal e corrigir a pendência indicada antes de repetir a automação.",
+            retryable=False,
+        )
+
+
 async def clicar_encerrar(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Encerrando escrituração", event="STEP_DETAIL")
     clicked = await _js_click_selector(page, "#abaEncerramentoForm\\:btnEncerrarEscrituracao")
     if not clicked:
         await page.click("#abaEncerramentoForm\\:btnEncerrarEscrituracao", timeout=ctx.config.selector_timeout_ms)
     await asyncio.sleep(1.0)
+    await _raise_if_escrituracao_validation_blocked(page)
 
 
 async def confirmar_sim(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Confirmando encerramento (Sim)", event="STEP_DETAIL")
+    await _raise_if_escrituracao_validation_blocked(page)
     clicked = await _js_click_selector(page, "#formEncerramento\\:btnSim")
     if not clicked:
         await page.click("#formEncerramento\\:btnSim", timeout=ctx.config.selector_timeout_ms)
@@ -799,25 +854,52 @@ async def gerar_exportacao(page, ctx: FlowContext) -> None:
     await asyncio.sleep(1.0)
 
 
+async def _wait_exportacao_pronta(page, ctx: FlowContext) -> str:
+    btn = "#exportarEscrituracaoForm\\:fileButton"
+    nenhum = "#nenhumText"
+    timeout_ms = portal_timeout_ms("PORTAL_EXPORT_FILE_TIMEOUT_MS", 150_000, min_ms=30_000, max_ms=240_000)
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            btn_el = await page.query_selector(btn)
+            if btn_el and await btn_el.is_visible():
+                return "file"
+
+            nenhum_el = await page.query_selector(nenhum)
+            if nenhum_el and await nenhum_el.is_visible():
+                return "empty"
+        except Exception as exc:
+            if not _is_navigation_race(exc):
+                raise
+
+        await asyncio.sleep(1.0)
+
+    raise FlowError(
+        "EXPORTACAO_ARQUIVO_NAO_GERADO",
+        f"O portal não disponibilizou o arquivo de exportação em {timeout_ms // 1000}s.",
+        short_message="Arquivo XLS da escrituração não foi disponibilizado pelo portal.",
+        action="Repetir o fluxo; se persistir, verificar lentidão ou falha interna do portal na geração do XLS.",
+        retryable=True,
+    )
+
+
 async def baixar_exportacao(page, cnpj: str, cnpj_dir: str, ctx: FlowContext) -> None:
     await log_flow(ctx, "Baixando exportação (XLS)", event="STEP_DETAIL")
     ensure_dir(cnpj_dir)
 
     btn = "#exportarEscrituracaoForm\\:fileButton"
-    nenhum = "#nenhumText"
+    export_state = await _wait_exportacao_pronta(page, ctx)
 
-    try:
-        await page.wait_for_selector(btn, state="visible", timeout=60_000)
-        async with page.expect_download(timeout=60_000) as dl:
-            await page.click(btn)
-        download = await dl.value
-        destino = os.path.join(cnpj_dir, f"exportacao_{cnpj}.xls")
-        await download.save_as(destino)
-    except Exception:
-        if await page.query_selector(nenhum):
-            await log_flow(ctx, "Nenhum arquivo de exportação disponível.", event="INFO")
-            return
-        raise
+    if export_state == "empty":
+        await log_flow(ctx, "Nenhum arquivo de exportação disponível.", event="INFO")
+        return
+
+    async with page.expect_download(timeout=60_000) as dl:
+        await page.click(btn)
+    download = await dl.value
+    destino = os.path.join(cnpj_dir, f"exportacao_{cnpj}.xls")
+    await download.save_as(destino)
 
 
 async def maybe_log_stop_after_open(
