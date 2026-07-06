@@ -318,10 +318,14 @@ async def acessar_escrituracao(page, ctx: FlowContext) -> None:
         await page.wait_for_load_state("networkidle", timeout=12_000)
     except PWTimeoutError:
         pass
-    await page.wait_for_selector(
-        "#manterEscrituracaoForm\\:dataInicialHeader .rich-calendar-tool-btn",
-        timeout=ctx.config.selector_timeout_ms,
-    )
+    try:
+        await page.wait_for_selector(
+            "#manterEscrituracaoForm\\:dataInicialHeader .rich-calendar-tool-btn",
+            timeout=ctx.config.selector_timeout_ms,
+        )
+    except PWTimeoutError:
+        await _raise_if_chrome_network_error(page)
+        raise
     await asyncio.sleep(1.0)
 
 
@@ -385,6 +389,33 @@ def _is_navigation_race(exc: Exception) -> bool:
     return "execution context was destroyed" in text or "most likely because of a navigation" in text
 
 
+async def _raise_if_chrome_network_error(page) -> None:
+    try:
+        url = str(getattr(page, "url", "") or "")
+        body = await page.inner_text("body", timeout=1_500)
+    except Exception:
+        return
+
+    text = f"{url}\n{body}".lower()
+    if "err_timed_out" in text or "took too long to respond" in text:
+        raise FlowError(
+            "NETWORK_TIMEOUT",
+            "Página de erro do Chrome: portal ISS demorou demais para responder.",
+            short_message="Timeout de conexão ao acessar o portal ISS.",
+            action="Repetir o fluxo; se persistir, verificar lentidão do portal, proxy e estabilidade do acesso.",
+            retryable=True,
+        )
+
+    if url.startswith("chrome-error://") or "this site can't be reached" in text:
+        raise FlowError(
+            "NETWORK_NAVIGATION_ERROR",
+            "Página de erro do Chrome ao acessar o portal ISS.",
+            short_message="Falha de navegação ao acessar o portal ISS.",
+            action="Repetir o fluxo; se persistir, verificar proxy, disponibilidade do portal e DNS.",
+            retryable=True,
+        )
+
+
 async def _escrituracao_aberta(page) -> bool:
     try:
         return bool(
@@ -442,6 +473,7 @@ async def _wait_for_stable_escrituracao_state(page, *, timeout_ms: int) -> None:
     last_exc: Exception | None = None
     while asyncio.get_running_loop().time() < deadline:
         try:
+            await _raise_if_chrome_network_error(page)
             if await _escrituracao_resultado_pronto(page):
                 stable_hits += 1
                 if stable_hits >= 3:
@@ -465,6 +497,7 @@ async def _wait_escrituracao_aberta(page, *, timeout_ms: int = 70_000) -> None:
     last_exc: Exception | None = None
     while asyncio.get_running_loop().time() < deadline:
         try:
+            await _raise_if_chrome_network_error(page)
             if await _escrituracao_aberta(page):
                 stable_hits += 1
                 if stable_hits >= 2:
@@ -519,6 +552,7 @@ async def _js_click_selector(page, selector: str) -> bool:
 
 async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechada: bool = True) -> None:
     await log_flow(ctx, "Escriturar/Reabrir", event="STEP_DETAIL")
+    await _raise_if_chrome_network_error(page)
 
     if await _escrituracao_aberta(page):
         return
@@ -554,9 +588,13 @@ async def clicar_escriturar_ou_reabrir(page, ctx: FlowContext, *, reabrir_fechad
         except Exception:
             pass
 
-    clicked = await _js_click_selector(page, "a[id$=':linkEscriturar']")
-    if not clicked:
-        await page.click("a[id$=':linkEscriturar']", timeout=ctx.config.selector_timeout_ms)
+    try:
+        clicked = await _js_click_selector(page, "a[id$=':linkEscriturar']")
+        if not clicked:
+            await page.click("a[id$=':linkEscriturar']", timeout=ctx.config.selector_timeout_ms)
+    except PWTimeoutError:
+        await _raise_if_chrome_network_error(page)
+        raise
     await _wait_escrituracao_aberta(page, timeout_ms=70_000)
     await asyncio.sleep(0.5)
 

@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.35 - Producao unica, Modal 30 e waits ISS estabilizados**
+Versao: **1.0.36 - Producao unica, Modal 30 e diagnostico de rede ISS**
 
 ## Estado atual
 
@@ -55,8 +55,8 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -t ryang20/prumo-api:1.0.35 server
-docker push ryang20/prumo-api:1.0.35
+docker build -t ryang20/prumo-api:1.0.36 server
+docker push ryang20/prumo-api:1.0.36
 ```
 
 Servidor:
