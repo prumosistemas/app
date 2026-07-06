@@ -768,6 +768,48 @@ async def clicar_encerrar(page, ctx: FlowContext) -> None:
     await _raise_if_escrituracao_validation_blocked(page)
 
 
+async def _confirmar_sem_movimento_if_present(page, ctx: FlowContext) -> None:
+    try:
+        body = await page.inner_text("body", timeout=2_000)
+    except Exception:
+        return
+
+    body_norm = _safe_text(body).lower()
+    if "sem movimento" not in body_norm or "deseja confirmar" not in body_norm:
+        return
+
+    await log_flow(ctx, "Confirmando escrituração sem movimento", event="STEP_DETAIL")
+    clicked = await page.evaluate(
+        """
+        () => {
+          const visible = (el) => {
+            if (!el) return false;
+            const st = window.getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return st.display !== 'none' && st.visibility !== 'hidden' &&
+                   Number(st.opacity || '1') > 0 &&
+                   (box.width > 0 || box.height > 0);
+          };
+          const norm = (s) => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim().toLowerCase();
+          const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a'));
+          const btn = buttons.find((el) => visible(el) && norm(el.value || el.innerText || el.textContent) === 'sim');
+          if (!btn) return false;
+          btn.click();
+          return true;
+        }
+        """
+    )
+    if not clicked:
+        raise FlowError(
+            "SEM_MOVIMENTO_CONFIRM_NOT_FOUND",
+            "Botão Sim da confirmação de escrituração sem movimento não localizado.",
+            short_message="Confirmação de escrituração sem movimento não encontrada.",
+            action="Repetir o fluxo; se persistir, revisar HTML da tela de confirmação sem movimento.",
+            retryable=True,
+        )
+    await asyncio.sleep(1.0)
+
+
 async def confirmar_sim(page, ctx: FlowContext) -> None:
     await log_flow(ctx, "Confirmando encerramento (Sim)", event="STEP_DETAIL")
     await _raise_if_escrituracao_validation_blocked(page)
@@ -779,6 +821,8 @@ async def confirmar_sim(page, ctx: FlowContext) -> None:
     except PWTimeoutError:
         pass
     await asyncio.sleep(1.0)
+    await _raise_if_escrituracao_validation_blocked(page)
+    await _confirmar_sem_movimento_if_present(page, ctx)
 
 
 async def _wait_certificado_button_id(page, timeout_ms: int) -> str:
