@@ -11,7 +11,7 @@ A Prumo roda em quatro partes:
 1. HTMLs estaticos no Netlify, servidos em `https://app.prumosistemas.com.br`.
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando de login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
-4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 40 sessoes turbo.
+4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
 5. API resolvedora do Portal Nacional no Modal, app `prumo-portal-nacional-solver`, usada apenas para hCaptcha.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
@@ -58,16 +58,16 @@ Configuracao atual de producao:
 
 ```env
 BASE_BROWSER_SLOTS=0
-MAX_BROWSERS=40
+MAX_BROWSERS=30
 MAX_BROWSER_LIMIT=96
-BROWSER_CDP_POOL=modal-turbo|40|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+BROWSER_CDP_POOL=modal-turbo|30|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
 ```
 
 Isso significa:
 
 - 0 navegadores locais.
-- 40 navegadores pelo Modal.
-- A fila da API cria no maximo 40 workers globais.
+- 30 navegadores pelo Modal.
+- A fila da API cria no maximo 30 workers globais.
 - O portal ISS sai pelo IP do servidor porque o Browserless Modal sobe `cloudflared access tcp` e injeta proxy no Chrome.
 
 Conferir pela API:
@@ -80,10 +80,10 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.32",
-  "max_browsers": 40,
+  "version": "1.0.33",
+  "max_browsers": 30,
   "base_browsers": 0,
-  "browser_turbo_extra": 40,
+  "browser_turbo_extra": 30,
   "browser_pool_configured": true
 }
 ```
@@ -96,7 +96,7 @@ App Modal:
 
 - Nome: `prumo-browserless`
 - Arquivo local: `deploy/modal_browserless.py`
-- Configuracao atual: `10` containers maximos x `4` sessoes por container = `40`.
+- Configuracao atual: `8` containers maximos x `4` sessoes por container = `32`; a API usa `30`.
 - Secret esperado no Modal: `prumo-browserless`
 - Secret deve conter pelo menos `TOKEN=<token_browserless>`.
 
@@ -193,9 +193,9 @@ Alterar `.env` para fallback misto:
 
 ```env
 BASE_BROWSER_SLOTS=5
-MAX_BROWSERS=45
+MAX_BROWSERS=35
 BROWSER_CDP_URL=ws://browserless:3000?token=...
-BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|40|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|30|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
 ```
 
 Ou, se Modal estiver totalmente fora:
@@ -449,7 +449,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.32 e pool Modal 40
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.33 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

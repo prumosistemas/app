@@ -12,7 +12,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.32.
 - API Python no servidor local Linux.
 - `prumo-api` como unico container principal da Prumo.
 - Browserless local desligado.
-- Modal `prumo-browserless` com 40 sessoes turbo.
+- Modal `prumo-browserless` com 30 sessoes turbo pela API.
 - Modal `prumo-portal-nacional-solver` separado, usado so para resolver hCaptcha do Portal Nacional.
 - GitHub, pasta local e servidor na mesma versao.
 
