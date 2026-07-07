@@ -1130,7 +1130,6 @@ async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowCo
             )
             lote += 1
 
-        await _limpar_selecao_pagina(page, ctx)
         next_button = await _proximo_botao_nfse(page)
         if next_button is None:
             break
