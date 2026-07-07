@@ -27,11 +27,13 @@ output/runXXXXXXXXXX/tentativa_N/notas/
 
 import asyncio
 import base64
+import hashlib
 import logging
 import os
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from flow_core import (
@@ -653,113 +655,465 @@ async def selecionar_tipo(page, tipo: str, ctx: FlowContext) -> None:
 # EXPORTAR XML
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowContext) -> bool:
-    await log_flow(ctx, f"Exportando XML ({tipo})", event="STEP_DETAIL")
+_NFSE_ROWS_SELECTOR = "#consultarnfseForm\\:dataTable\\:tb tr"
+_NFSE_ROW_CHECKBOX_SELECTOR = f"{_NFSE_ROWS_SELECTOR} input[type='checkbox']"
+_NFSE_SELECT_ALL_SELECTOR = "input#consultarnfseForm\\:j_id324"
+_NFSE_EXPORT_SELECTOR = "input[name='consultarnfseForm:j_id325']"
+_NFSE_NEXT_SELECTOR = (
+    "td.rich-datascr-button:not(.rich-datascr-button-dsbld)[onclick*=\"'next'\"]"
+)
 
-    msg = await page.query_selector("span.rich-messages-label")
-    if msg:
-        t = (await msg.inner_text()).strip()
-        if "Nenhum registro foi encontrado" in t:
-            await log_flow(ctx, f"Sem registros para {tipo}.", event="INFO")
-            return False
 
-    ensure_dir(pasta_tipo_empresa)
+def _local_tag(tag: str) -> str:
+    return (tag or "").split("}")[-1]
 
-    await page.wait_for_load_state("networkidle")
-    await asyncio.sleep(0.5)
 
-    tds = await page.query_selector_all(
-        "#consultarnfseForm\\:dataTable\\:j_id374_table td.rich-datascr-inact, td.rich-datascr-act"
+def _nfse_top_level_nodes(root: ET.Element) -> list[ET.Element]:
+    direct = [child for child in list(root) if _local_tag(child.tag).lower() == "nfse"]
+    if direct:
+        return direct
+    if _local_tag(root.tag).lower() == "nfse":
+        return [root]
+    return []
+
+
+def _contar_nfse_xml(caminho: str) -> int:
+    tree = ET.parse(caminho)
+    return len(_nfse_top_level_nodes(tree.getroot()))
+
+
+def _chaves_nfse_xml(caminho: str) -> set[str]:
+    tree = ET.parse(caminho)
+    nodes = _nfse_top_level_nodes(tree.getroot())
+    keys: set[str] = set()
+
+    for node in nodes:
+        verification = ""
+        number = ""
+        emission = ""
+        for elem in node.iter():
+            tag = _local_tag(elem.tag).lower()
+            value = (elem.text or "").strip()
+            if not value:
+                continue
+            if not verification and tag == "codigoverificacao":
+                verification = value
+            elif not number and tag in {"numeronfse", "numero"}:
+                number = value
+            elif not emission and tag == "dataemissao":
+                emission = value
+
+        if verification:
+            key = f"verificacao:{verification}"
+        elif number and emission:
+            key = f"numero-data:{number}:{emission}"
+        else:
+            raw = ET.tostring(node, encoding="utf-8")
+            key = "sha256:" + hashlib.sha256(raw).hexdigest()
+        keys.add(key)
+
+    return keys
+
+
+async def _portal_informa_sem_registros(page) -> bool:
+    try:
+        messages = await page.locator(
+            "span.rich-messages-label, .rich-messages, .alert, .mensagem"
+        ).all_inner_texts()
+    except Exception:
+        messages = []
+
+    normalized = " ".join(messages).lower()
+    return (
+        "nenhum registro foi encontrado" in normalized
+        or "nenhum registro encontrado" in normalized
     )
-    pages = []
-    for td in tds:
-        txt = (await td.inner_text()).strip()
-        if txt.isdigit():
-            pages.append(int(txt))
 
-    total_paginas = max(pages) if pages else 1
 
-    pagina = 1
-    lote = 1
-    acumulado = 0
-    baixou = False
+async def _esperar_grade_nfse(page, ctx: FlowContext, timeout_sec: float = 45.0) -> int:
+    deadline = asyncio.get_running_loop().time() + timeout_sec
 
-    while True:
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(0.4)
-
-        rows = await page.query_selector_all("#consultarnfseForm\\:dataTable\\:tb tr")
-        qtd = len(rows)
+    while asyncio.get_running_loop().time() < deadline:
+        await esperar_overlay_sumir(page, timeout_ms=5_000)
+        try:
+            qtd = await page.locator(_NFSE_ROWS_SELECTOR).count()
+        except Exception:
+            qtd = 0
 
         if qtd > 0:
+            return qtd
+        if await _portal_informa_sem_registros(page):
+            return 0
+        await asyncio.sleep(0.6)
+
+    raise FlowError(
+        "NFSE_RESULT_GRID_EMPTY",
+        "A consulta terminou sem linhas e sem a mensagem oficial de ausência de registros.",
+        short_message="A grade de NFS-e não carregou corretamente.",
+        action="Repetir a consulta; o portal pode ter devolvido uma resposta AJAX incompleta.",
+        retryable=True,
+    )
+
+
+async def _estado_checkboxes_linhas(page) -> tuple[int, int]:
+    boxes = page.locator(_NFSE_ROW_CHECKBOX_SELECTOR)
+    try:
+        total = await boxes.count()
+    except Exception:
+        return 0, 0
+
+    checked = 0
+    for idx in range(total):
+        try:
+            if await boxes.nth(idx).is_checked():
+                checked += 1
+        except Exception:
+            pass
+    return total, checked
+
+
+async def _selecionar_pagina_nfse(page, qtd_linhas: int, ctx: FlowContext) -> int:
+    total_boxes, checked = await _estado_checkboxes_linhas(page)
+    if total_boxes >= qtd_linhas and checked >= qtd_linhas:
+        return qtd_linhas
+
+    clicked_master = False
+    master = page.locator(_NFSE_SELECT_ALL_SELECTOR)
+    try:
+        if await master.count() > 0:
+            await master.first.click(timeout=ctx.config.selector_timeout_ms)
+            clicked_master = True
             await esperar_overlay_sumir(page)
+            await asyncio.sleep(0.5)
+    except Exception as exc:
+        await log_flow(
+            ctx,
+            f"Seleção geral da página falhou; tentando checkboxes individuais: {type(exc).__name__}: {exc}",
+            event="WARN",
+            code="NFSE_SELECT_ALL_FALLBACK",
+        )
 
-            btn_all = await page.query_selector("input#consultarnfseForm\\:j_id324")
-            if btn_all:
-                try:
-                    await btn_all.click()
-                except Exception:
-                    pass
-
-                await esperar_overlay_sumir(page)
-                await asyncio.sleep(0.8)
-
-            acumulado += qtd
-            baixou = True
-
-            await log_flow(
-                ctx,
-                f"Página {pagina}/{total_paginas}: {qtd} linhas (acumulado={acumulado})",
-                event="STEP_DETAIL",
-            )
-        else:
-            await log_flow(
-                ctx,
-                f"Página {pagina}/{total_paginas}: sem linhas",
-                event="WARN",
-                code="NFSE_EMPTY_PAGE",
-            )
-
-        next_btn = await page.query_selector(
-            f"td.rich-datascr-button:not(.rich-datascr-button-dsbld):has-text('{pagina + 1}')"
-        ) or await page.query_selector("td.rich-datascr-button[onclick*=\"'next'\"]")
-
-        ultima = next_btn is None
-
-        if acumulado >= 100 or (ultima and acumulado > 0):
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            nome_arquivo = f"{tipo}_lote{lote:02}_{stamp}.xml"
-            destino = os.path.join(pasta_tipo_empresa, nome_arquivo)
-
-            export_selector = "input[name='consultarnfseForm:j_id325']"
-
-            export_btn = await page.query_selector(export_selector)
-            if not export_btn:
+    total_boxes, checked = await _estado_checkboxes_linhas(page)
+    if total_boxes >= qtd_linhas and checked < qtd_linhas:
+        boxes = page.locator(_NFSE_ROW_CHECKBOX_SELECTOR)
+        for idx in range(min(total_boxes, qtd_linhas)):
+            box = boxes.nth(idx)
+            try:
+                if not await box.is_checked():
+                    await box.click(timeout=ctx.config.selector_timeout_ms)
+                    await esperar_overlay_sumir(page, timeout_ms=8_000)
+            except Exception as exc:
                 raise FlowError(
-                    "EXPORT_BUTTON_MISSING",
-                    "Botão 'Exportar XML' não encontrado.",
-                    short_message="Botão de exportação XML não foi localizado.",
-                    action="Revisar os seletores da tela de consulta NFS-e.",
-                    retryable=False,
+                    "NFSE_ROW_SELECTION_FAILED",
+                    f"Falha ao selecionar a linha {idx + 1}/{qtd_linhas}: {type(exc).__name__}: {exc}",
+                    short_message="Não foi possível selecionar todas as notas da página.",
+                    action="Repetir a consulta e revisar os controles de seleção do portal.",
+                    retryable=True,
                 )
 
+        total_boxes, checked = await _estado_checkboxes_linhas(page)
+
+    if total_boxes >= qtd_linhas:
+        if checked < qtd_linhas:
+            raise FlowError(
+                "NFSE_PAGE_SELECTION_INCOMPLETE",
+                f"Página com {qtd_linhas} linhas, mas somente {checked} checkbox(es) ficaram marcados.",
+                short_message="A seleção das notas ficou incompleta.",
+                action="Repetir a página; nenhuma exportação parcial será aceita.",
+                retryable=True,
+            )
+        return qtd_linhas
+
+    if clicked_master:
+        await log_flow(
+            ctx,
+            "O portal não expôs checkboxes verificáveis; a quantidade será validada pelo XML.",
+            event="WARN",
+            code="NFSE_SELECTION_XML_VALIDATION_ONLY",
+        )
+        return qtd_linhas
+
+    raise FlowError(
+        "NFSE_SELECTION_CONTROL_MISSING",
+        "Não foram encontrados checkboxes de linha nem o controle de selecionar todos.",
+        short_message="Os controles de seleção das notas não foram localizados.",
+        action="Revisar a estrutura da tabela de NFS-e.",
+        retryable=False,
+    )
+
+
+async def _limpar_selecao_pagina(page, ctx: FlowContext) -> None:
+    total_boxes, checked = await _estado_checkboxes_linhas(page)
+    if total_boxes > 0:
+        boxes = page.locator(_NFSE_ROW_CHECKBOX_SELECTOR)
+        for idx in range(total_boxes):
+            box = boxes.nth(idx)
+            try:
+                if await box.is_checked():
+                    await box.click(timeout=ctx.config.selector_timeout_ms)
+                    await esperar_overlay_sumir(page, timeout_ms=8_000)
+            except Exception as exc:
+                raise FlowError(
+                    "NFSE_SELECTION_CLEAR_FAILED",
+                    f"Falha ao desmarcar a linha {idx + 1}: {type(exc).__name__}: {exc}",
+                    short_message="Não foi possível limpar a seleção após exportar.",
+                    action="Repetir o fluxo para evitar que notas de páginas anteriores contaminem o próximo XML.",
+                    retryable=True,
+                )
+
+        _, remaining = await _estado_checkboxes_linhas(page)
+        if remaining:
+            raise FlowError(
+                "NFSE_SELECTION_NOT_CLEARED",
+                f"Ainda restaram {remaining} checkbox(es) marcados após a limpeza.",
+                short_message="A seleção anterior permaneceu ativa.",
+                action="Repetir o fluxo antes de exportar a próxima página.",
+                retryable=True,
+            )
+        return
+
+    # Alguns layouts não expõem checkbox por linha. Neles, o mesmo botão geral
+    # costuma alternar a seleção. A validação de duplicidade do próximo XML
+    # protege contra uma eventual seleção antiga que permaneça no servidor.
+    master = page.locator(_NFSE_SELECT_ALL_SELECTOR)
+    try:
+        if await master.count() > 0:
+            await master.first.click(timeout=ctx.config.selector_timeout_ms)
             await esperar_overlay_sumir(page)
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.4)
+    except Exception as exc:
+        await log_flow(
+            ctx,
+            f"Não foi possível confirmar a limpeza pelo controle geral: {type(exc).__name__}: {exc}",
+            event="WARN",
+            code="NFSE_SELECTION_CLEAR_UNVERIFIED",
+        )
 
-            await log_flow(ctx, f"Exportando lote {lote} ({acumulado})...", event="STEP_DETAIL")
 
-            await baixar_xml_com_fallback(
-                page,
-                export_selector,
-                destino,
-                ctx,
-                timeout_sec=180,
+async def _fingerprint_grade(page) -> str:
+    rows = page.locator(_NFSE_ROWS_SELECTOR)
+    try:
+        count = await rows.count()
+    except Exception:
+        return ""
+    if count <= 0:
+        return ""
+
+    samples = []
+    for idx in sorted({0, count - 1}):
+        try:
+            samples.append((await rows.nth(idx).inner_text()).strip())
+        except Exception:
+            samples.append("")
+    return hashlib.sha256("\n".join(samples).encode("utf-8", errors="ignore")).hexdigest()
+
+
+async def _proximo_botao_nfse(page):
+    locator = page.locator(_NFSE_NEXT_SELECTOR)
+    try:
+        count = await locator.count()
+    except Exception:
+        return None
+
+    for idx in range(count):
+        button = locator.nth(idx)
+        try:
+            if await button.is_visible():
+                return button
+        except Exception:
+            continue
+    return None
+
+
+async def _avancar_pagina_nfse(page, button, previous_fingerprint: str, ctx: FlowContext) -> None:
+    try:
+        await button.click(timeout=ctx.config.selector_timeout_ms)
+    except Exception as exc:
+        raise FlowError(
+            "NFSE_NEXT_PAGE_CLICK_FAILED",
+            f"Falha ao avançar a paginação: {type(exc).__name__}: {exc}",
+            short_message="Não foi possível avançar para a próxima página de notas.",
+            action="Repetir o fluxo e revisar o paginador do portal.",
+            retryable=True,
+        )
+
+    await esperar_overlay_sumir(page, timeout_ms=30_000)
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while asyncio.get_running_loop().time() < deadline:
+        current = await _fingerprint_grade(page)
+        if current and current != previous_fingerprint:
+            return
+        await asyncio.sleep(0.5)
+
+    raise FlowError(
+        "NFSE_PAGINATION_STALLED",
+        "O botão de próxima página foi acionado, mas a grade não mudou.",
+        short_message="A paginação de NFS-e ficou travada.",
+        action="Repetir a consulta; o portal pode ter ignorado a requisição AJAX.",
+        retryable=True,
+    )
+
+
+async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowContext) -> Dict[str, Any]:
+    await log_flow(ctx, f"Exportando XML ({tipo})", event="STEP_DETAIL")
+    ensure_dir(pasta_tipo_empresa)
+
+    qtd_inicial = await _esperar_grade_nfse(page, ctx)
+    if qtd_inicial == 0:
+        await log_flow(ctx, f"Sem registros para {tipo}, confirmado pelo portal.", event="INFO")
+        return {
+            "baixou": False,
+            "sem_registros": True,
+            "arquivos": 0,
+            "registros": 0,
+            "paginas": 0,
+        }
+
+    seen_keys: set[str] = set()
+    existing_files = sorted(
+        path
+        for path in Path(pasta_tipo_empresa).glob(f"{tipo}_lote*.xml")
+        if path.is_file()
+    )
+    for existing in existing_files:
+        try:
+            seen_keys.update(_chaves_nfse_xml(str(existing)))
+        except Exception:
+            continue
+
+    pagina = 1
+    lote = len(existing_files) + 1
+    arquivos_novos = 0
+    registros_novos = 0
+    fingerprints: set[str] = set()
+
+    while True:
+        qtd = await _esperar_grade_nfse(page, ctx)
+        if qtd <= 0:
+            raise FlowError(
+                "NFSE_PAGE_UNEXPECTEDLY_EMPTY",
+                f"A página {pagina} ficou vazia depois de a consulta já ter retornado registros.",
+                short_message="A grade de notas desapareceu durante a paginação.",
+                action="Repetir a consulta; não considerar a página vazia como conclusão.",
+                retryable=True,
             )
 
-            if tipo == "tomadas":
-                remover_canceladas_xml(destino)
+        fingerprint = await _fingerprint_grade(page)
+        if not fingerprint:
+            raise FlowError(
+                "NFSE_PAGE_FINGERPRINT_EMPTY",
+                f"Não foi possível identificar o conteúdo da página {pagina}.",
+                short_message="Não foi possível validar a página atual de notas.",
+                action="Repetir a consulta.",
+                retryable=True,
+            )
+        if fingerprint in fingerprints:
+            raise FlowError(
+                "NFSE_PAGINATION_LOOP",
+                f"A página {pagina} repetiu um conteúdo já processado.",
+                short_message="O paginador entrou em repetição.",
+                action="Interromper para não gerar XML duplicado e repetir a consulta.",
+                retryable=True,
+            )
+        fingerprints.add(fingerprint)
 
-                valido, msg_validacao = _validar_xml_salvo(destino)
+        await log_flow(
+            ctx,
+            f"Página {pagina}: {qtd} linha(s); selecionando e exportando esta página.",
+            event="STEP_DETAIL",
+        )
+        selecionadas = await _selecionar_pagina_nfse(page, qtd, ctx)
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        final_name = f"{tipo}_lote{lote:03}_{stamp}.xml"
+        final_path = os.path.join(pasta_tipo_empresa, final_name)
+        temp_path = final_path + ".part"
+
+        export_btn = await page.query_selector(_NFSE_EXPORT_SELECTOR)
+        if not export_btn:
+            raise FlowError(
+                "EXPORT_BUTTON_MISSING",
+                "Botão 'Exportar XML' não encontrado.",
+                short_message="Botão de exportação XML não foi localizado.",
+                action="Revisar os seletores da tela de consulta NFS-e.",
+                retryable=False,
+            )
+
+        await log_flow(
+            ctx,
+            f"Exportando página {pagina} como lote {lote} ({selecionadas} selecionadas)...",
+            event="STEP_DETAIL",
+        )
+        await baixar_xml_com_fallback(
+            page,
+            _NFSE_EXPORT_SELECTOR,
+            temp_path,
+            ctx,
+            timeout_sec=180,
+        )
+
+        try:
+            quantidade_xml = _contar_nfse_xml(temp_path)
+            keys = _chaves_nfse_xml(temp_path)
+        except Exception as exc:
+            raise FlowError(
+                "NFSE_XML_COUNT_FAILED",
+                f"Não foi possível contar as NFS-e exportadas: {type(exc).__name__}: {exc}",
+                short_message="O XML foi salvo, mas sua quantidade não pôde ser validada.",
+                action="Repetir a exportação; arquivos sem validação não serão aceitos.",
+                retryable=True,
+            )
+
+        if quantidade_xml != selecionadas or len(keys) != quantidade_xml:
+            invalid_path = final_path + f".quantidade-{quantidade_xml}-esperado-{selecionadas}.invalido"
+            try:
+                os.replace(temp_path, invalid_path)
+            except OSError:
+                pass
+            raise FlowError(
+                "NFSE_XML_QUANTIDADE_DIVERGENTE",
+                f"Foram selecionadas {selecionadas} notas, mas o XML contém "
+                f"{quantidade_xml} registro(s) e {len(keys)} chave(s) única(s).",
+                short_message="O portal exportou uma quantidade diferente da seleção.",
+                action="Repetir a página; o lote parcial foi separado e não será considerado concluído.",
+                retryable=True,
+            )
+
+        overlap = keys.intersection(seen_keys)
+        if overlap:
+            if overlap == keys:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+                await log_flow(
+                    ctx,
+                    f"Página {pagina} já estava integralmente salva nesta tentativa; pulando duplicata.",
+                    event="INFO",
+                    code="NFSE_PAGE_ALREADY_EXPORTED",
+                )
+            else:
+                invalid_path = final_path + ".sobreposicao-parcial.invalido"
+                try:
+                    os.replace(temp_path, invalid_path)
+                except OSError:
+                    pass
+                raise FlowError(
+                    "NFSE_XML_PARTIAL_OVERLAP",
+                    f"O XML da página {pagina} mistura {len(overlap)} nota(s) já exportada(s) com notas novas.",
+                    short_message="A seleção acumulou notas de páginas diferentes.",
+                    action="Limpar a seleção e repetir a consulta para evitar duplicidade.",
+                    retryable=True,
+                )
+        else:
+            os.replace(temp_path, final_path)
+            seen_keys.update(keys)
+            arquivos_novos += 1
+            registros_novos += quantidade_xml
+
+            if tipo == "tomadas":
+                remover_canceladas_xml(final_path)
+                valido, msg_validacao = _validar_xml_salvo(final_path)
                 if not valido:
                     raise FlowError(
                         "XML_TOMADAS_INVALIDO_APOS_CANCELADAS",
@@ -769,24 +1123,34 @@ async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowCo
                         retryable=True,
                     )
 
-            acumulado = 0
+            await log_flow(
+                ctx,
+                f"Página {pagina} validada: {quantidade_xml} NFS-e em {final_path}",
+                event="INFO",
+            )
             lote += 1
 
-        if ultima:
+        await _limpar_selecao_pagina(page, ctx)
+        next_button = await _proximo_botao_nfse(page)
+        if next_button is None:
             break
 
+        await _avancar_pagina_nfse(page, next_button, fingerprint, ctx)
         pagina += 1
 
-        try:
-            await next_btn.click()
-        except Exception:
-            await asyncio.sleep(0.8)
-            await next_btn.click()
-
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(1.0)
-
-    return baixou
+    await log_flow(
+        ctx,
+        f"Exportação {tipo} concluída: páginas={pagina}, arquivos_novos={arquivos_novos}, "
+        f"registros_novos={registros_novos}, registros_unicos_total={len(seen_keys)}.",
+        event="INFO",
+    )
+    return {
+        "baixou": bool(seen_keys),
+        "sem_registros": False,
+        "arquivos": arquivos_novos,
+        "registros": len(seen_keys),
+        "paginas": pagina,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -917,10 +1281,17 @@ async def job_notas(
             "Prestadas: consultar",
             clicar_consultar(page, ctx),
         )
-        await run_step(
+        export_timeout_sec = portal_timeout_ms(
+            "PORTAL_NOTAS_EXPORT_TIMEOUT_MS",
+            1_800_000,
+            max_ms=3_600_000,
+        ) // 1000
+
+        resultado_prestadas = await run_step(
             ctx,
             "Prestadas: exportar",
             baixar_lotes_xml(page, "prestadas", pasta_prestadas, ctx),
+            timeout_sec=export_timeout_sec,
         )
 
         await run_step(
@@ -943,10 +1314,17 @@ async def job_notas(
             "Tomadas: consultar",
             clicar_consultar(page, ctx),
         )
-        await run_step(
+        resultado_tomadas = await run_step(
             ctx,
             "Tomadas: exportar",
             baixar_lotes_xml(page, "tomadas", pasta_tomadas, ctx),
+            timeout_sec=export_timeout_sec,
+        )
+
+        await log_flow(
+            ctx,
+            f"Resumo validado: prestadas={resultado_prestadas}; tomadas={resultado_tomadas}",
+            event="INFO",
         )
 
         await log_flow(ctx, "=== FIM (OK) ===", event="FLOW_END")
@@ -960,6 +1338,8 @@ async def job_notas(
             "pasta_tomadas": pasta_tomadas,
             "codigo_dominio": codigo_dominio,
             "usar_codigo_dominio": usar_codigo_dominio,
+            "resultado_prestadas": resultado_prestadas,
+            "resultado_tomadas": resultado_tomadas,
         }
 
     except Exception as e:

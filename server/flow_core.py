@@ -931,12 +931,22 @@ async def try_requests_bootstrap_company(
         return None
 
 
-async def run_step(ctx: FlowContext, name: str, coro: Awaitable[Any]) -> Any:
+async def run_step(
+    ctx: FlowContext,
+    name: str,
+    coro: Awaitable[Any],
+    *,
+    timeout_sec: Optional[float] = None,
+) -> Any:
     mark_step(ctx, name)
     await log_flow(ctx, f"Step: {name}", event="STEP")
 
+    effective_timeout = float(
+        ctx.config.step_timeout_sec if timeout_sec is None else timeout_sec
+    )
+
     try:
-        return await asyncio.wait_for(coro, timeout=ctx.config.step_timeout_sec)
+        return await asyncio.wait_for(coro, timeout=effective_timeout)
 
     except asyncio.TimeoutError as e:
         await log_flow(
