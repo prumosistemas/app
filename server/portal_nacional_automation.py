@@ -1210,8 +1210,17 @@ def item_existing_file_for_tipo(item: dict, tipo: str) -> str | None:
     return None
 
 
+def item_required_tipos(item: dict, fallback: list[str]) -> list[str]:
+    configured = item.get("required_tipos")
+    if isinstance(configured, list):
+        valid = [tipo for tipo in configured if tipo in {"xml", "pdf"}]
+        if valid:
+            return list(dict.fromkeys(valid))
+    return list(fallback)
+
+
 def download_item_requests(session: requests.Session, item: dict, solver_url: str, download_dir: Path, tipo_download: str = "xml") -> dict:
-    tipos = normalize_download_tipos(tipo_download)
+    tipos = item_required_tipos(item, normalize_download_tipos(tipo_download))
     files_by_tipo = dict(item.get("files_by_tipo") or {})
     methods_by_tipo = dict(item.get("methods_by_tipo") or {})
     errors = []
@@ -1272,7 +1281,14 @@ def run_requests_downloads(
     update_certificate_in_index(index, session_data)
     items = list(index.get("items", {}).values())
     items.sort(key=lambda item: (int(item.get("page") or 0), item.get("id") or ""))
-    pending = [item for item in items if not (item.get("status") == "baixado" and item_has_tipos(item, tipos_download))]
+    pending = [
+        item
+        for item in items
+        if not (
+            item.get("status") == "baixado"
+            and item_has_tipos(item, item_required_tipos(item, tipos_download))
+        )
+    ]
     for item in pending:
         item["requests_attempts"] = 0
         if item.get("status") in {"erro", "executando"}:
@@ -1771,7 +1787,7 @@ def main() -> int:
     save_index(index_path, index, "sessao_carregada", "session_loaded")
 
     has_index_items = bool(index.get("items"))
-    if not has_index_items or args.forcar_indexar:
+    if not has_index_items or (args.forcar_indexar and not index.get("skip_force_reindex")):
         print("Indexando por requests, sem navegador principal.")
         run_requests_index(
             index=index,
