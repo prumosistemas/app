@@ -24,12 +24,24 @@ except Exception:
     pass
 
 # --- CONFIGURAÇÕES DO COHERE ---
-COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "").strip()
+# Compatibilidade: COHERE_API_KEY continua sendo a chave 1.
+# As chaves 2 e 3 sao opcionais e entram no round-robin/failover quando configuradas.
+COHERE_API_KEYS = tuple(
+    dict.fromkeys(
+        key
+        for key in (
+            os.environ.get("COHERE_API_KEY", "").strip(),
+            os.environ.get("COHERE_API_KEY_2", "").strip(),
+            os.environ.get("COHERE_API_KEY_3", "").strip(),
+        )
+        if key
+    )
+)
 COHERE_MODEL = "command-a-vision-07-2025"
 
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
-SOLVER_API_VERSION = "2026-07-05-modal-xvfb-proxy-hybrid-non9"
+SOLVER_API_VERSION = "2026-07-07-modal-six-browsers-cohere-cooldown"
 SOLVER_PAGE_HOST = os.environ.get("SOLVER_PAGE_HOST", "www.nfse.gov.br").strip() or "www.nfse.gov.br"
 NON_9_SETTLE_SECONDS = float(os.environ.get("SOLVER_NON_9_SETTLE_SECONDS", "5"))
 NON_9_RELOADS_BEFORE_AI = int(os.environ.get("SOLVER_NON_9_RELOADS_BEFORE_AI", "3"))
@@ -67,6 +79,148 @@ def has_solver_error() -> bool:
 
 def should_reload_non_9_before_ai(non_9_reloads: int) -> bool:
     return FAST_RELOAD_NON_9 and non_9_reloads < max(0, NON_9_RELOADS_BEFORE_AI)
+
+
+COHERE_KEY_LOCK = threading.Lock()
+COHERE_KEY_INDEX = 0
+COHERE_LAST_SUCCESSFUL_KEY_INDEX = None
+COHERE_KEY_FAILURE_COUNTS = [0 for _ in COHERE_API_KEYS]
+COHERE_KEY_SUCCESS_COUNTS = [0 for _ in COHERE_API_KEYS]
+COHERE_KEY_LAST_ERRORS = [None for _ in COHERE_API_KEYS]
+COHERE_KEY_COOLDOWN_UNTIL = [0.0 for _ in COHERE_API_KEYS]
+COHERE_429_COOLDOWN_SECONDS = max(30.0, float(os.environ.get("COHERE_429_COOLDOWN_SECONDS", "300")))
+COHERE_FAILOVER_STATUSES = {401, 403, 408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class CohereKeysUnavailable(RuntimeError):
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        detail = "; ".join(errors) if errors else "nenhuma chave configurada"
+        super().__init__(f"Todas as chaves Cohere falharam: {detail}")
+
+    @property
+    def all_rate_limited(self) -> bool:
+        return bool(self.errors) and all(("HTTP 429" in error or "cooldown" in error.lower()) for error in self.errors)
+
+
+def cohere_key_state() -> dict:
+    now = time.monotonic()
+    with COHERE_KEY_LOCK:
+        next_slot = (COHERE_KEY_INDEX % len(COHERE_API_KEYS)) + 1 if COHERE_API_KEYS else None
+        active_slot = (
+            COHERE_LAST_SUCCESSFUL_KEY_INDEX + 1
+            if COHERE_LAST_SUCCESSFUL_KEY_INDEX is not None
+            else next_slot
+        )
+        return {
+            "configured_keys": len(COHERE_API_KEYS),
+            "active_slot": active_slot,
+            "next_slot": next_slot,
+            "rate_limit_cooldown_seconds": COHERE_429_COOLDOWN_SECONDS,
+            "slots": [
+                {
+                    "slot": index + 1,
+                    "successes": COHERE_KEY_SUCCESS_COUNTS[index],
+                    "failures": COHERE_KEY_FAILURE_COUNTS[index],
+                    "last_error": COHERE_KEY_LAST_ERRORS[index],
+                    "available": COHERE_KEY_COOLDOWN_UNTIL[index] <= now,
+                    "cooldown_remaining_seconds": max(
+                        0,
+                        int(round(COHERE_KEY_COOLDOWN_UNTIL[index] - now)),
+                    ),
+                }
+                for index in range(len(COHERE_API_KEYS))
+            ],
+        }
+
+
+def _reserve_cohere_start_index() -> int | None:
+    global COHERE_KEY_INDEX
+    with COHERE_KEY_LOCK:
+        if not COHERE_API_KEYS:
+            return None
+        start = COHERE_KEY_INDEX % len(COHERE_API_KEYS)
+        COHERE_KEY_INDEX = (COHERE_KEY_INDEX + 1) % len(COHERE_API_KEYS)
+        return start
+
+
+def _record_cohere_result(
+    index: int,
+    *,
+    success: bool,
+    error: str | None = None,
+    status_code: int | None = None,
+) -> None:
+    global COHERE_LAST_SUCCESSFUL_KEY_INDEX
+    with COHERE_KEY_LOCK:
+        if success:
+            COHERE_KEY_SUCCESS_COUNTS[index] += 1
+            COHERE_KEY_LAST_ERRORS[index] = None
+            COHERE_KEY_COOLDOWN_UNTIL[index] = 0.0
+            COHERE_LAST_SUCCESSFUL_KEY_INDEX = index
+        else:
+            COHERE_KEY_FAILURE_COUNTS[index] += 1
+            COHERE_KEY_LAST_ERRORS[index] = error
+            if status_code == 429:
+                COHERE_KEY_COOLDOWN_UNTIL[index] = max(
+                    COHERE_KEY_COOLDOWN_UNTIL[index],
+                    time.monotonic() + COHERE_429_COOLDOWN_SECONDS,
+                )
+
+
+def post_to_cohere(payload: dict, *, timeout: float) -> tuple[requests.Response, int]:
+    """Round-robin com failover e cooldown para chaves temporariamente bloqueadas."""
+    start = _reserve_cohere_start_index()
+    if start is None:
+        raise CohereKeysUnavailable([])
+
+    errors: list[str] = []
+    for offset in range(len(COHERE_API_KEYS)):
+        index = (start + offset) % len(COHERE_API_KEYS)
+        slot = index + 1
+        now = time.monotonic()
+        with COHERE_KEY_LOCK:
+            cooldown_remaining = COHERE_KEY_COOLDOWN_UNTIL[index] - now
+        if cooldown_remaining > 0:
+            errors.append(f"slot {slot}: cooldown {int(round(cooldown_remaining))}s")
+            continue
+
+        headers = {
+            "Authorization": f"bearer {COHERE_API_KEYS[index]}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        try:
+            response = requests.post(
+                "https://api.cohere.com/v2/chat",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            detail = f"slot {slot}: {type(exc).__name__}: {exc}"
+            _record_cohere_result(index, success=False, error=detail)
+            errors.append(detail)
+            continue
+
+        if 200 <= response.status_code < 300:
+            _record_cohere_result(index, success=True)
+            return response, slot
+
+        detail = f"slot {slot}: HTTP {response.status_code}"
+        _record_cohere_result(
+            index,
+            success=False,
+            error=detail,
+            status_code=response.status_code,
+        )
+        if response.status_code in COHERE_FAILOVER_STATUSES:
+            errors.append(detail)
+            continue
+
+        response.raise_for_status()
+
+    raise CohereKeysUnavailable(errors)
 
 
 class TokenState:
@@ -1379,9 +1533,9 @@ def solve_with_cohere(image_path: Path, captcha_question: str, challenge_dir: Pa
     if not image_path or not image_path.exists():
         print("[Cohere] Imagem não encontrada.")
         return None
-    if not COHERE_API_KEY:
-        print("[Cohere] COHERE_API_KEY nao configurada no ambiente.")
-        set_solver_error("cohere_key_missing", "COHERE_API_KEY nao configurada no Secret do Modal.")
+    if not COHERE_API_KEYS:
+        print("[Cohere] Nenhuma chave Cohere configurada no ambiente.")
+        set_solver_error("cohere_key_missing", "Nenhuma chave Cohere configurada no Secret do Modal.")
         return None
 
     bot_response = ""
@@ -1453,15 +1607,8 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
             "response_format": {"type": "json_object"}
         }
         
-        headers = {
-            "Authorization": f"bearer {COHERE_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        
-        response = requests.post("https://api.cohere.com/v2/chat", headers=headers, json=payload, timeout=20)
-        response.raise_for_status()
-        
+        response, key_slot = post_to_cohere(payload, timeout=20)
+        print(f"[Cohere] Resposta recebida pelo slot {key_slot}.")
         data = response.json()
         bot_response = data["message"]["content"][0]["text"]
         
@@ -1519,6 +1666,11 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
             )
         return None
     except Exception as e:
+        if isinstance(e, CohereKeysUnavailable):
+            if e.all_rate_limited:
+                set_solver_error("cohere_rate_limited", str(e))
+            else:
+                set_solver_error("cohere_all_keys_failed", str(e))
         print(f"[Cohere] Erro ao resolver captcha: {e}")
         if challenge_dir:
             (challenge_dir / "resposta.json").write_text(
@@ -1544,9 +1696,9 @@ def analyze_non_9_with_cohere(challenge_dir: Path, captcha_question: str) -> dic
         image_path = challenge_dir / "desafio.png"
     if not image_path.exists():
         return None
-    if not COHERE_API_KEY:
-        print("[Cohere] COHERE_API_KEY nao configurada no ambiente.")
-        set_solver_error("cohere_key_missing", "COHERE_API_KEY nao configurada no Secret do Modal.")
+    if not COHERE_API_KEYS:
+        print("[Cohere] Nenhuma chave Cohere configurada no ambiente.")
+        set_solver_error("cohere_key_missing", "Nenhuma chave Cohere configurada no Secret do Modal.")
         return None
 
     bot_response = ""
@@ -1598,23 +1750,8 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
-        headers = {
-            "Authorization": f"bearer {COHERE_API_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        last_error = None
-        response = None
-        for _ in range(2):
-            try:
-                response = requests.post("https://api.cohere.com/v2/chat", headers=headers, json=payload, timeout=90)
-                break
-            except requests.Timeout as e:
-                last_error = e
-                time.sleep(2)
-        if response is None:
-            raise last_error or RuntimeError("Cohere sem resposta")
-        response.raise_for_status()
+        response, key_slot = post_to_cohere(payload, timeout=90)
+        print(f"[Cohere] Analise nao-9 recebida pelo slot {key_slot}.")
         data = response.json()
         bot_response = data["message"]["content"][0]["text"]
         parsed = json.loads(bot_response.strip())
@@ -1655,7 +1792,12 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
         )
         return None
     except Exception as e:
-        if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 429:
+        if isinstance(e, CohereKeysUnavailable):
+            if e.all_rate_limited:
+                set_solver_error("cohere_rate_limited", str(e))
+            else:
+                set_solver_error("cohere_all_keys_failed", str(e))
+        elif isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 429:
             set_solver_error(
                 "cohere_rate_limited",
                 "Cohere retornou 429 ao analisar desafio hCaptcha nao-9; tente novamente depois ou reduza paralelismo.",
@@ -1985,6 +2127,7 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 "active_browsers": active,
                 "reload_non_9": FAST_RELOAD_NON_9,
                 "non_9_reloads_before_ai": NON_9_RELOADS_BEFORE_AI,
+                "cohere_keys": cohere_key_state(),
             }).encode())
         else:
             self.send_response(404)

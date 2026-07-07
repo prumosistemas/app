@@ -1016,8 +1016,25 @@ def solver_api_health_url(solver_url: str) -> str:
 
 
 def require_solver_api(solver_url: str) -> None:
-    response = requests.get(solver_api_health_url(solver_url), timeout=5)
-    response.raise_for_status()
+    last_error: Exception | None = None
+
+    for attempt in range(1, 7):
+        try:
+            response = requests.get(
+                solver_api_health_url(solver_url),
+                timeout=30,
+            )
+            response.raise_for_status()
+            return
+        except Exception as exc:
+            last_error = exc
+            print(f"[Solver] Health ainda indisponivel ({attempt}/6): {exc}")
+            if attempt < 6:
+                time.sleep(min(5 * attempt, 20))
+
+    raise RuntimeError(
+        f"Solver nao ficou disponivel apos aquecimento: {last_error}"
+    )
 
 
 def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:

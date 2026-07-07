@@ -11,9 +11,9 @@ BROWSERLESS_IMAGE = (
     "57d19e414d9fe4ae9d2ab12ba768c97f38d51246c5b31af55a009205c136012f"
 )
 PORT = int(os.environ.get("PORTAL_NACIONAL_SOLVER_PORT", "8765"))
-BROWSERS_PER_CONTAINER = int(os.environ.get("PORTAL_NACIONAL_SOLVER_BROWSERS_PER_CONTAINER", "4"))
+BROWSERS_PER_CONTAINER = int(os.environ.get("PORTAL_NACIONAL_SOLVER_BROWSERS_PER_CONTAINER", "6"))
 MAX_CONTAINERS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_MAX_CONTAINERS", "4"))
-REQUESTS_PER_CONTAINER = int(os.environ.get("PORTAL_NACIONAL_SOLVER_REQUESTS_PER_CONTAINER", str(BROWSERS_PER_CONTAINER * 2)))
+REQUESTS_PER_CONTAINER = int(os.environ.get("PORTAL_NACIONAL_SOLVER_REQUESTS_PER_CONTAINER", str(BROWSERS_PER_CONTAINER)))
 PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "modal-proxy.prumosistemas.com.br").strip()
 PROXY_LISTENER = os.environ.get("PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480").strip()
 PROXY_LOG_LEVEL = os.environ.get("PRUMO_MODAL_PROXY_LOG_LEVEL", "warn").strip() or "warn"
@@ -69,7 +69,7 @@ def _start_proxy_tunnel() -> None:
 
 @app.function(
     secrets=[modal.Secret.from_name("prumo-portal-nacional-solver")],
-    min_containers=0,
+    min_containers=1,
     max_containers=MAX_CONTAINERS,
     startup_timeout=180,
     timeout=86400,
