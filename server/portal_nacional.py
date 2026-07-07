@@ -316,9 +316,6 @@ def _final_run_status(summary: Dict[str, Any], code: int) -> str:
 
 def _attach_certificate_to_run(ctx: WorkerContext, cfg: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
     cfg = dict(cfg)
-    if not cfg.get("renovar_sessao"):
-        return cfg
-
     cert_id = str(cfg.get("cert_id") or "").strip()
     if cert_id:
         cert = _get_uploaded_certificate(ctx, cert_id)
@@ -342,6 +339,9 @@ def _attach_certificate_to_run(ctx: WorkerContext, cfg: Dict[str, Any], run_dir:
                 "pfx_password_file": str(password_path),
             }
         )
+        return cfg
+
+    if not cfg.get("renovar_sessao"):
         return cfg
 
     if os.name != "nt":
@@ -693,6 +693,7 @@ async def retry_portal_run(run_id: str, payload: PortalRetryPayload, ctx: Worker
     override = _normalize_cfg({**cfg, **payload.model_dump(), "modo": cfg.get("modo") or "recebidas", "data_inicial": cfg.get("data_inicial"), "data_final": cfg.get("data_final"), "renovar_sessao": False})
     override["modo"] = cfg.get("modo") or override["modo"]
     override["renovar_sessao"] = False
+    override = _attach_certificate_to_run(ctx, override, run_dir)
     _update_run(run_dir, config=override)
     _start_jobs(ctx, [run_dir], retry_only=True)
     return {"ok": True, "run_id": run_dir.name}
