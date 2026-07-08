@@ -1290,6 +1290,36 @@ async def _proximo_botao_nfse(page):
     return None
 
 
+async def _botao_pagina_nfse(page, target_page: int):
+    locator = page.locator("td.rich-datascr-inact, td.rich-datascr-act")
+    try:
+        count = await locator.count()
+    except Exception:
+        return None
+
+    wanted = str(target_page)
+    for idx in range(count):
+        button = locator.nth(idx)
+        try:
+            text = (await button.inner_text()).strip()
+            class_name = ((await button.get_attribute("class")) or "").lower()
+            if text == wanted and "rich-datascr-act" not in class_name and await button.is_visible():
+                return button
+        except Exception:
+            continue
+    return None
+
+
+async def _wait_grade_change(page, previous_fingerprint: str, timeout_sec: float) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    while asyncio.get_running_loop().time() < deadline:
+        current = await _fingerprint_grade(page)
+        if current and current != previous_fingerprint:
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
 async def _pagination_outcome(
     page,
     *,
@@ -1305,9 +1335,17 @@ async def _pagination_outcome(
         await esperar_overlay_sumir(page, timeout_ms=4_000)
         snapshot = await _pagination_snapshot(page)
         last_snapshot = snapshot
+
+        numeric_button = await _botao_pagina_nfse(page, current_page + 1)
+        if numeric_button is not None:
+            snapshot["next_enabled"] = True
+            snapshot["navigation_mode"] = "numeric"
+            return numeric_button, snapshot, ""
+
         button = await _proximo_botao_nfse(page)
         if button is not None:
             snapshot["next_enabled"] = True
+            snapshot["navigation_mode"] = "generic_next"
             return button, snapshot, ""
 
         reason = _classify_pagination_end(
@@ -1328,31 +1366,69 @@ async def _pagination_outcome(
     )
 
 
-async def _avancar_pagina_nfse(page, button, previous_fingerprint: str, ctx: FlowContext) -> None:
-    try:
-        await button.click(timeout=ctx.config.selector_timeout_ms)
-    except Exception as exc:
-        raise FlowError(
-            "NFSE_NEXT_PAGE_CLICK_FAILED",
-            f"Falha ao avançar a paginação: {type(exc).__name__}: {exc}",
-            short_message="Não foi possível avançar para a próxima página de notas.",
-            action="Repetir o fluxo e revisar o paginador do portal.",
-            retryable=True,
+async def _avancar_pagina_nfse(
+    page,
+    button,
+    previous_fingerprint: str,
+    ctx: FlowContext,
+    *,
+    current_page: int,
+) -> None:
+    target_page = current_page + 1
+
+    async def click_and_wait(candidate, label: str, timeout_sec: float) -> bool:
+        if candidate is None:
+            return False
+        try:
+            await candidate.click(timeout=ctx.config.selector_timeout_ms)
+        except Exception as exc:
+            await log_flow(
+                ctx,
+                f"Falha ao navegar para a página {target_page} via {label}: {type(exc).__name__}: {exc}",
+                event="WARN",
+                code="NFSE_PAGE_NAVIGATION_CLICK_FAILED",
+            )
+            return False
+
+        await esperar_overlay_sumir(page, timeout_ms=30_000)
+        return await _wait_grade_change(page, previous_fingerprint, timeout_sec)
+
+    if await click_and_wait(button, "controle preferencial", 12.0):
+        return
+
+    numeric_button = await _botao_pagina_nfse(page, target_page)
+    if numeric_button is not None:
+        await log_flow(
+            ctx,
+            f"Controle inicial não alterou a grade; tentando página numérica {target_page}.",
+            event="WARN",
+            code="NFSE_NUMERIC_PAGE_FALLBACK",
         )
-
-    await esperar_overlay_sumir(page, timeout_ms=30_000)
-    deadline = asyncio.get_running_loop().time() + 30.0
-    while asyncio.get_running_loop().time() < deadline:
-        current = await _fingerprint_grade(page)
-        if current and current != previous_fingerprint:
+        if await click_and_wait(numeric_button, f"página numérica {target_page}", 20.0):
             return
-        await asyncio.sleep(0.5)
 
+    generic_next = await _proximo_botao_nfse(page)
+    if generic_next is not None:
+        await log_flow(
+            ctx,
+            f"Página numérica indisponível ou sem efeito; repetindo controle próxima para chegar à página {target_page}.",
+            event="WARN",
+            code="NFSE_GENERIC_NEXT_RETRY",
+        )
+        if await click_and_wait(generic_next, "controle próxima", 20.0):
+            return
+
+    snapshot = await _pagination_snapshot(page)
     raise FlowError(
         "NFSE_PAGINATION_STALLED",
-        "O botão de próxima página foi acionado, mas a grade não mudou.",
+        (
+            f"Não foi possível avançar da página {current_page} para {target_page}. "
+            f"Estado do paginador: active={snapshot.get('active_page')}, "
+            f"visible={snapshot.get('visible_pages')}, "
+            f"next_enabled={snapshot.get('next_enabled')}."
+        ),
         short_message="A paginação de NFS-e ficou travada.",
-        action="Repetir a consulta; o portal pode ter ignorado a requisição AJAX.",
+        action="Repetir a consulta; o checkpoint preservará todas as páginas já concluídas.",
         retryable=True,
     )
 
@@ -1691,7 +1767,13 @@ async def baixar_lotes_xml(
             )
             break
 
-        await _avancar_pagina_nfse(page, next_button, fingerprint, ctx)
+        await _avancar_pagina_nfse(
+            page,
+            next_button,
+            fingerprint,
+            ctx,
+            current_page=pagina,
+        )
         pagina += 1
 
     await log_flow(
