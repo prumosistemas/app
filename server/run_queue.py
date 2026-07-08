@@ -334,10 +334,19 @@ async def execute_flow(
         coro = job_certidao(**common_kwargs)
         cancel_on_stop = True
     elif flow_mode == "notas":
+        root_run_dir = os.path.dirname(attempt_run_dir)
+        checkpoint_dir = os.path.join(
+            root_run_dir,
+            "_checkpoints",
+            "notas",
+            normalize_cnpj(cnpj),
+            str(mes or "").replace("/", "-"),
+        )
         coro = job_notas(
             **common_kwargs,
             codigo_dominio=codigo_dominio,
             usar_codigo_dominio=bool(item.get("usar_codigo_dominio", True)),
+            checkpoint_dir=checkpoint_dir,
         )
         cancel_on_stop = True
     else:

@@ -28,6 +28,7 @@ output/runXXXXXXXXXX/tentativa_N/notas/
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import re
@@ -652,7 +653,7 @@ async def selecionar_tipo(page, tipo: str, ctx: FlowContext) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# EXPORTAR XML
+# EXPORTAR XML COM CHECKPOINT E PAGINAÇÃO VALIDADA
 # ──────────────────────────────────────────────────────────────────────────────
 
 _NFSE_ROWS_SELECTOR = "#consultarnfseForm\\:dataTable\\:tb tr"
@@ -662,6 +663,22 @@ _NFSE_EXPORT_SELECTOR = "input[name='consultarnfseForm:j_id325']"
 _NFSE_NEXT_SELECTOR = (
     "td.rich-datascr-button:not(.rich-datascr-button-dsbld)[onclick*=\"'next'\"]"
 )
+_NFSE_CHECKPOINT_VERSION = 1
+_NFSE_PAGE_SIZE_EXPECTED = 10
+
+_JS_PAGINATION_SNAPSHOT = """
+() => Array.from(document.querySelectorAll('td')).filter((el) => {
+    const cls = String(el.className || '');
+    return cls.includes('rich-datascr');
+}).map((el, index) => ({
+    index,
+    className: String(el.className || ''),
+    text: String(el.textContent || '').trim(),
+    onclick: String(el.getAttribute('onclick') || ''),
+    title: String(el.getAttribute('title') || ''),
+    ariaLabel: String(el.getAttribute('aria-label') || ''),
+}));
+"""
 
 
 def _local_tag(tag: str) -> str:
@@ -713,6 +730,295 @@ def _chaves_nfse_xml(caminho: str) -> set[str]:
         keys.add(key)
 
     return keys
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _keys_digest(keys: set[str]) -> str:
+    payload = "\n".join(sorted(keys)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _checkpoint_path(checkpoint_dir: str, tipo: str) -> str:
+    return os.path.join(checkpoint_dir, f"{tipo}.json")
+
+
+def _new_checkpoint(tipo: str, ctx: FlowContext) -> Dict[str, Any]:
+    return {
+        "version": _NFSE_CHECKPOINT_VERSION,
+        "flow": "notas",
+        "tipo": tipo,
+        "cnpj": ctx.cnpj,
+        "mes": ctx.mes,
+        "status": "in_progress",
+        "last_completed_page": 0,
+        "next_page": 1,
+        "records_total": 0,
+        "files_total": 0,
+        "detected_total_pages": None,
+        "terminal_reason": None,
+        "pages": [],
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _save_checkpoint(path: str, checkpoint: Dict[str, Any]) -> None:
+    ensure_dir(os.path.dirname(path))
+    checkpoint["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    temp_path = f"{path}.tmp-{os.getpid()}"
+    with open(temp_path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(checkpoint, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, path)
+
+
+def _load_checkpoint(path: str, tipo: str, ctx: FlowContext) -> Dict[str, Any]:
+    if not os.path.isfile(path):
+        return _new_checkpoint(tipo, ctx)
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            checkpoint = json.load(handle)
+    except Exception as exc:
+        raise FlowError(
+            "NFSE_CHECKPOINT_READ_FAILED",
+            f"Não foi possível ler {path}: {type(exc).__name__}: {exc}",
+            short_message="O checkpoint das notas está corrompido.",
+            action="Preservar os XMLs e revisar o arquivo de checkpoint antes de retomar.",
+            retryable=False,
+        )
+
+    expected = {
+        "version": _NFSE_CHECKPOINT_VERSION,
+        "flow": "notas",
+        "tipo": tipo,
+        "cnpj": ctx.cnpj,
+        "mes": ctx.mes,
+    }
+    mismatches = {
+        key: (checkpoint.get(key), value)
+        for key, value in expected.items()
+        if checkpoint.get(key) != value
+    }
+    if mismatches:
+        raise FlowError(
+            "NFSE_CHECKPOINT_CONTEXT_MISMATCH",
+            f"Checkpoint incompatível com a execução atual: {mismatches}",
+            short_message="O checkpoint pertence a outro CNPJ, competência ou tipo de nota.",
+            action="Não reutilizar esse checkpoint; iniciar uma nova run raiz.",
+            retryable=False,
+        )
+
+    pages = checkpoint.get("pages")
+    if not isinstance(pages, list):
+        raise FlowError(
+            "NFSE_CHECKPOINT_INVALID",
+            "Campo pages ausente ou inválido.",
+            short_message="O checkpoint das notas está estruturalmente inválido.",
+            action="Revisar o checkpoint antes de retomar.",
+            retryable=False,
+        )
+
+    ordered = sorted(pages, key=lambda item: int(item.get("page") or 0))
+    expected_pages = list(range(1, len(ordered) + 1))
+    actual_pages = [int(item.get("page") or 0) for item in ordered]
+    if actual_pages != expected_pages:
+        raise FlowError(
+            "NFSE_CHECKPOINT_NON_CONTIGUOUS",
+            f"Páginas do checkpoint não são contíguas: {actual_pages}",
+            short_message="O checkpoint possui um salto de páginas.",
+            action="Não retomar para evitar lacunas na exportação.",
+            retryable=False,
+        )
+
+    checkpoint["pages"] = ordered
+    checkpoint["last_completed_page"] = len(ordered)
+    checkpoint["next_page"] = len(ordered) + 1
+    return checkpoint
+
+
+def _validate_checkpoint_files(
+    checkpoint: Dict[str, Any],
+) -> tuple[set[str], Dict[str, Dict[str, Any]]]:
+    seen_keys: set[str] = set()
+    exports_by_digest: Dict[str, Dict[str, Any]] = {}
+
+    for page_entry in checkpoint.get("pages", []):
+        path = str(page_entry.get("file") or "")
+        if not path or not os.path.isfile(path):
+            raise FlowError(
+                "NFSE_CHECKPOINT_FILE_MISSING",
+                f"Arquivo do checkpoint não existe: {path}",
+                short_message="Um XML já confirmado pelo checkpoint desapareceu.",
+                action="Restaurar o arquivo ou iniciar uma nova run raiz.",
+                retryable=False,
+            )
+
+        try:
+            count = _contar_nfse_xml(path)
+            keys = _chaves_nfse_xml(path)
+            file_hash = _sha256_file(path)
+        except Exception as exc:
+            raise FlowError(
+                "NFSE_CHECKPOINT_FILE_INVALID",
+                f"Falha ao validar {path}: {type(exc).__name__}: {exc}",
+                short_message="Um XML referenciado pelo checkpoint está inválido.",
+                action="Restaurar o XML ou iniciar uma nova run raiz.",
+                retryable=False,
+            )
+
+        if count != int(page_entry.get("records") or 0):
+            raise FlowError(
+                "NFSE_CHECKPOINT_COUNT_MISMATCH",
+                f"{path}: checkpoint={page_entry.get('records')} XML={count}",
+                short_message="A quantidade do XML não coincide com o checkpoint.",
+                action="Não retomar até verificar a integridade do arquivo.",
+                retryable=False,
+            )
+        if len(keys) != count:
+            raise FlowError(
+                "NFSE_CHECKPOINT_DUPLICATE_KEYS",
+                f"{path}: registros={count}, chaves únicas={len(keys)}",
+                short_message="Um XML do checkpoint contém chaves duplicadas.",
+                action="Não retomar com arquivo inconsistente.",
+                retryable=False,
+            )
+        if page_entry.get("file_sha256") and page_entry.get("file_sha256") != file_hash:
+            raise FlowError(
+                "NFSE_CHECKPOINT_FILE_CHANGED",
+                f"O hash de {path} mudou desde a confirmação.",
+                short_message="Um XML confirmado foi alterado após o checkpoint.",
+                action="Não retomar até verificar a alteração.",
+                retryable=False,
+            )
+
+        overlap = seen_keys.intersection(keys)
+        if overlap:
+            raise FlowError(
+                "NFSE_CHECKPOINT_CROSS_PAGE_DUPLICATE",
+                f"O checkpoint repete {len(overlap)} chave(s) entre páginas.",
+                short_message="O checkpoint possui notas duplicadas entre páginas.",
+                action="Não retomar com checkpoint inconsistente.",
+                retryable=False,
+            )
+
+        digest = _keys_digest(keys)
+        if page_entry.get("keys_sha256") and page_entry.get("keys_sha256") != digest:
+            raise FlowError(
+                "NFSE_CHECKPOINT_KEYS_CHANGED",
+                f"As chaves de {path} mudaram desde a confirmação.",
+                short_message="As chaves de um XML não coincidem com o checkpoint.",
+                action="Não retomar até verificar o arquivo.",
+                retryable=False,
+            )
+
+        seen_keys.update(keys)
+        exports_by_digest[digest] = {
+            "file": path,
+            "records": count,
+            "keys": keys,
+            "file_sha256": file_hash,
+        }
+
+    expected_total = sum(int(item.get("records") or 0) for item in checkpoint.get("pages", []))
+    checkpoint["records_total"] = expected_total
+    checkpoint["files_total"] = len(checkpoint.get("pages", []))
+    return seen_keys, exports_by_digest
+
+
+def _scan_uncheckpointed_exports(
+    pasta_tipo_empresa: str,
+    tipo: str,
+    checkpoint_files: set[str],
+    seen_keys: set[str],
+) -> Dict[str, Dict[str, Any]]:
+    exports: Dict[str, Dict[str, Any]] = {}
+    for path in sorted(Path(pasta_tipo_empresa).glob(f"{tipo}_lote*.xml")):
+        absolute = str(path.resolve())
+        if absolute in checkpoint_files:
+            continue
+        count = _contar_nfse_xml(absolute)
+        keys = _chaves_nfse_xml(absolute)
+        if count <= 0 or len(keys) != count:
+            raise FlowError(
+                "NFSE_ORPHAN_XML_INVALID",
+                f"Arquivo não checkpointado inválido: {absolute}",
+                short_message="Foi encontrado um XML órfão inconsistente.",
+                action="Revisar o arquivo antes de retomar.",
+                retryable=False,
+            )
+        overlap = seen_keys.intersection(keys)
+        if overlap:
+            raise FlowError(
+                "NFSE_ORPHAN_XML_OVERLAP",
+                f"Arquivo órfão {absolute} repete {len(overlap)} chave(s) já confirmadas.",
+                short_message="Foi encontrado um XML órfão duplicado.",
+                action="Remover ou revisar o arquivo antes de retomar.",
+                retryable=False,
+            )
+        digest = _keys_digest(keys)
+        exports[digest] = {
+            "file": absolute,
+            "records": count,
+            "keys": keys,
+            "file_sha256": _sha256_file(absolute),
+        }
+        seen_keys.update(keys)
+    return exports
+
+
+def _append_checkpoint_page(
+    checkpoint: Dict[str, Any],
+    *,
+    page: int,
+    rows: int,
+    fingerprint: str,
+    file_path: str,
+    records: int,
+    keys: set[str],
+    pagination: Dict[str, Any],
+) -> None:
+    expected_page = len(checkpoint.get("pages", [])) + 1
+    if page != expected_page:
+        raise FlowError(
+            "NFSE_CHECKPOINT_APPEND_OUT_OF_ORDER",
+            f"Tentativa de gravar página {page}; esperada {expected_page}.",
+            short_message="O checkpoint seria gravado fora de ordem.",
+            action="Interromper para não criar lacunas.",
+            retryable=False,
+        )
+
+    checkpoint.setdefault("pages", []).append(
+        {
+            "page": page,
+            "rows": rows,
+            "records": records,
+            "fingerprint": fingerprint,
+            "file": str(Path(file_path).resolve()),
+            "file_size": os.path.getsize(file_path),
+            "file_sha256": _sha256_file(file_path),
+            "keys_sha256": _keys_digest(keys),
+            "pagination": pagination,
+            "completed_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    checkpoint["status"] = "in_progress"
+    checkpoint["last_completed_page"] = page
+    checkpoint["next_page"] = page + 1
+    checkpoint["records_total"] = sum(
+        int(item.get("records") or 0) for item in checkpoint.get("pages", [])
+    )
+    checkpoint["files_total"] = len(checkpoint.get("pages", []))
+    checkpoint["detected_total_pages"] = None
+    checkpoint["terminal_reason"] = None
 
 
 async def _portal_informa_sem_registros(page) -> bool:
@@ -842,54 +1148,6 @@ async def _selecionar_pagina_nfse(page, qtd_linhas: int, ctx: FlowContext) -> in
     )
 
 
-async def _limpar_selecao_pagina(page, ctx: FlowContext) -> None:
-    total_boxes, checked = await _estado_checkboxes_linhas(page)
-    if total_boxes > 0:
-        boxes = page.locator(_NFSE_ROW_CHECKBOX_SELECTOR)
-        for idx in range(total_boxes):
-            box = boxes.nth(idx)
-            try:
-                if await box.is_checked():
-                    await box.click(timeout=ctx.config.selector_timeout_ms)
-                    await esperar_overlay_sumir(page, timeout_ms=8_000)
-            except Exception as exc:
-                raise FlowError(
-                    "NFSE_SELECTION_CLEAR_FAILED",
-                    f"Falha ao desmarcar a linha {idx + 1}: {type(exc).__name__}: {exc}",
-                    short_message="Não foi possível limpar a seleção após exportar.",
-                    action="Repetir o fluxo para evitar que notas de páginas anteriores contaminem o próximo XML.",
-                    retryable=True,
-                )
-
-        _, remaining = await _estado_checkboxes_linhas(page)
-        if remaining:
-            raise FlowError(
-                "NFSE_SELECTION_NOT_CLEARED",
-                f"Ainda restaram {remaining} checkbox(es) marcados após a limpeza.",
-                short_message="A seleção anterior permaneceu ativa.",
-                action="Repetir o fluxo antes de exportar a próxima página.",
-                retryable=True,
-            )
-        return
-
-    # Alguns layouts não expõem checkbox por linha. Neles, o mesmo botão geral
-    # costuma alternar a seleção. A validação de duplicidade do próximo XML
-    # protege contra uma eventual seleção antiga que permaneça no servidor.
-    master = page.locator(_NFSE_SELECT_ALL_SELECTOR)
-    try:
-        if await master.count() > 0:
-            await master.first.click(timeout=ctx.config.selector_timeout_ms)
-            await esperar_overlay_sumir(page)
-            await asyncio.sleep(0.4)
-    except Exception as exc:
-        await log_flow(
-            ctx,
-            f"Não foi possível confirmar a limpeza pelo controle geral: {type(exc).__name__}: {exc}",
-            event="WARN",
-            code="NFSE_SELECTION_CLEAR_UNVERIFIED",
-        )
-
-
 async def _fingerprint_grade(page) -> str:
     rows = page.locator(_NFSE_ROWS_SELECTOR)
     try:
@@ -900,12 +1158,119 @@ async def _fingerprint_grade(page) -> str:
         return ""
 
     samples = []
-    for idx in sorted({0, count - 1}):
+    for idx in range(count):
         try:
             samples.append((await rows.nth(idx).inner_text()).strip())
         except Exception:
             samples.append("")
     return hashlib.sha256("\n".join(samples).encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _is_forward_control(cell: Dict[str, Any]) -> bool:
+    marker = " ".join(
+        str(cell.get(key) or "").lower()
+        for key in ("onclick", "title", "ariaLabel")
+    )
+    text = str(cell.get("text") or "").strip().lower()
+    return (
+        "next" in marker
+        or "fastforward" in marker
+        or text in {">", ">>", "›", "»", "próxima", "proxima"}
+    )
+
+
+async def _pagination_snapshot(page) -> Dict[str, Any]:
+    try:
+        cells = await page.evaluate(_JS_PAGINATION_SNAPSHOT)
+    except Exception:
+        cells = []
+    if not isinstance(cells, list):
+        cells = []
+
+    visible_pages = []
+    active_page = None
+    forward_disabled = False
+    for cell in cells:
+        text = str(cell.get("text") or "").strip()
+        class_name = str(cell.get("className") or "").lower()
+        if text.isdigit():
+            number = int(text)
+            visible_pages.append(number)
+            if "rich-datascr-act" in class_name:
+                active_page = number
+        if "dsbld" in class_name and _is_forward_control(cell):
+            forward_disabled = True
+
+    next_button = await _proximo_botao_nfse(page)
+    return {
+        "has_paginator": bool(cells),
+        "active_page": active_page,
+        "visible_pages": sorted(set(visible_pages)),
+        "next_enabled": next_button is not None,
+        "forward_disabled": forward_disabled,
+        "cells": cells,
+    }
+
+
+def _classify_pagination_end(
+    snapshot: Dict[str, Any],
+    *,
+    current_page: int,
+    rows: int,
+) -> str:
+    if snapshot.get("next_enabled"):
+        return ""
+    if snapshot.get("forward_disabled"):
+        return "forward_control_disabled"
+
+    active = snapshot.get("active_page")
+    visible = snapshot.get("visible_pages") or []
+    active_matches = active in {None, current_page}
+
+    if not snapshot.get("has_paginator") and current_page == 1:
+        return "single_page_without_paginator"
+    if active_matches and rows < _NFSE_PAGE_SIZE_EXPECTED:
+        return "short_final_page"
+    if active == current_page and visible and current_page == max(visible) and rows < _NFSE_PAGE_SIZE_EXPECTED:
+        return "active_short_last_visible_page"
+    return ""
+
+
+def _compact_pagination_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "has_paginator": bool(snapshot.get("has_paginator")),
+        "active_page": snapshot.get("active_page"),
+        "visible_pages": list(snapshot.get("visible_pages") or []),
+        "next_enabled": bool(snapshot.get("next_enabled")),
+        "forward_disabled": bool(snapshot.get("forward_disabled")),
+    }
+
+
+def _cleanup_stale_partial_files(
+    pasta_tipo_empresa: str,
+    tipo: str,
+    checkpoint_dir: str = "",
+) -> int:
+    company_dir = Path(pasta_tipo_empresa)
+    candidate_dirs = {company_dir}
+
+    checkpoint_path = Path(checkpoint_dir) if checkpoint_dir else None
+    if checkpoint_path and "_checkpoints" in checkpoint_path.parts:
+        checkpoint_index = checkpoint_path.parts.index("_checkpoints")
+        root_dir = Path(*checkpoint_path.parts[:checkpoint_index])
+        company_folder = company_dir.name
+        for attempt in root_dir.glob("tentativa_*"):
+            candidate_dirs.add(attempt / "notas" / tipo / company_folder)
+
+    removed = 0
+    for directory in candidate_dirs:
+        for partial in directory.glob(f"{tipo}_lote*.xml.part"):
+            try:
+                partial.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 async def _proximo_botao_nfse(page):
@@ -923,6 +1288,44 @@ async def _proximo_botao_nfse(page):
         except Exception:
             continue
     return None
+
+
+async def _pagination_outcome(
+    page,
+    *,
+    current_page: int,
+    rows: int,
+    ctx: FlowContext,
+    timeout_sec: float = 12.0,
+) -> tuple[Any, Dict[str, Any], str]:
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    last_snapshot: Dict[str, Any] = {}
+
+    while asyncio.get_running_loop().time() < deadline:
+        await esperar_overlay_sumir(page, timeout_ms=4_000)
+        snapshot = await _pagination_snapshot(page)
+        last_snapshot = snapshot
+        button = await _proximo_botao_nfse(page)
+        if button is not None:
+            snapshot["next_enabled"] = True
+            return button, snapshot, ""
+
+        reason = _classify_pagination_end(
+            snapshot,
+            current_page=current_page,
+            rows=rows,
+        )
+        if reason:
+            return None, snapshot, reason
+        await asyncio.sleep(0.5)
+
+    raise FlowError(
+        "NFSE_PAGINATION_END_UNCONFIRMED",
+        f"Não foi possível confirmar próxima página nem fim da paginação na página {current_page}: {last_snapshot}",
+        short_message="O fim da paginação não pôde ser confirmado.",
+        action="Repetir a consulta; não marcar a exportação como concluída sem evidência do paginador.",
+        retryable=True,
+    )
 
 
 async def _avancar_pagina_nfse(page, button, previous_fingerprint: str, ctx: FlowContext) -> None:
@@ -954,12 +1357,76 @@ async def _avancar_pagina_nfse(page, button, previous_fingerprint: str, ctx: Flo
     )
 
 
-async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowContext) -> Dict[str, Any]:
+async def baixar_lotes_xml(
+    page,
+    tipo: str,
+    pasta_tipo_empresa: str,
+    checkpoint_dir: str,
+    ctx: FlowContext,
+) -> Dict[str, Any]:
     await log_flow(ctx, f"Exportando XML ({tipo})", event="STEP_DETAIL")
     ensure_dir(pasta_tipo_empresa)
+    ensure_dir(checkpoint_dir)
+
+    stale_partials = _cleanup_stale_partial_files(pasta_tipo_empresa, tipo, checkpoint_dir)
+    if stale_partials:
+        await log_flow(
+            ctx,
+            f"Removidos {stale_partials} arquivo(s) parcial(is) de execução interrompida.",
+            event="INFO",
+            code="NFSE_STALE_PARTIALS_REMOVED",
+        )
+
+    checkpoint_path = _checkpoint_path(checkpoint_dir, tipo)
+    checkpoint = _load_checkpoint(checkpoint_path, tipo, ctx)
+    seen_keys, checkpoint_exports = _validate_checkpoint_files(checkpoint)
+    checkpoint_files = {
+        str(Path(item.get("file") or "").resolve())
+        for item in checkpoint.get("pages", [])
+        if item.get("file")
+    }
+    orphan_exports = _scan_uncheckpointed_exports(
+        pasta_tipo_empresa,
+        tipo,
+        checkpoint_files,
+        seen_keys,
+    )
+
+    if checkpoint.get("pages"):
+        await log_flow(
+            ctx,
+            (
+                f"Checkpoint {tipo} carregado: páginas={len(checkpoint['pages'])}, "
+                f"registros={checkpoint.get('records_total', 0)}, "
+                f"status={checkpoint.get('status')}."
+            ),
+            event="INFO",
+            code="NFSE_CHECKPOINT_LOADED",
+        )
 
     qtd_inicial = await _esperar_grade_nfse(page, ctx)
     if qtd_inicial == 0:
+        if checkpoint.get("pages"):
+            raise FlowError(
+                "NFSE_CHECKPOINT_STALE_EMPTY_PORTAL",
+                "O checkpoint possui páginas, mas o portal agora informa ausência de registros.",
+                short_message="O conteúdo do portal divergiu do checkpoint.",
+                action="Iniciar uma nova run raiz para não misturar conjuntos diferentes.",
+                retryable=False,
+            )
+        checkpoint.update(
+            {
+                "status": "empty",
+                "last_completed_page": 0,
+                "next_page": 1,
+                "records_total": 0,
+                "files_total": 0,
+                "detected_total_pages": 0,
+                "terminal_reason": "portal_confirmed_no_records",
+                "completed_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        _save_checkpoint(checkpoint_path, checkpoint)
         await log_flow(ctx, f"Sem registros para {tipo}, confirmado pelo portal.", event="INFO")
         return {
             "baixou": False,
@@ -967,25 +1434,24 @@ async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowCo
             "arquivos": 0,
             "registros": 0,
             "paginas": 0,
+            "checkpoint": checkpoint_path,
+            "terminal_reason": "portal_confirmed_no_records",
         }
 
-    seen_keys: set[str] = set()
-    existing_files = sorted(
-        path
-        for path in Path(pasta_tipo_empresa).glob(f"{tipo}_lote*.xml")
-        if path.is_file()
-    )
-    for existing in existing_files:
-        try:
-            seen_keys.update(_chaves_nfse_xml(str(existing)))
-        except Exception:
-            continue
+    if checkpoint.get("status") == "empty":
+        checkpoint = _new_checkpoint(tipo, ctx)
+        _save_checkpoint(checkpoint_path, checkpoint)
+        await log_flow(
+            ctx,
+            "O checkpoint vazio foi reaberto porque o portal agora possui registros.",
+            event="WARN",
+            code="NFSE_CHECKPOINT_EMPTY_REOPENED",
+        )
 
     pagina = 1
-    lote = len(existing_files) + 1
     arquivos_novos = 0
     registros_novos = 0
-    fingerprints: set[str] = set()
+    fingerprints_seen: set[str] = set()
 
     while True:
         qtd = await _esperar_grade_nfse(page, ctx)
@@ -1007,131 +1473,222 @@ async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowCo
                 action="Repetir a consulta.",
                 retryable=True,
             )
-        if fingerprint in fingerprints:
+        if fingerprint in fingerprints_seen:
             raise FlowError(
                 "NFSE_PAGINATION_LOOP",
-                f"A página {pagina} repetiu um conteúdo já processado.",
+                f"A página {pagina} repetiu um conteúdo já percorrido nesta sessão.",
                 short_message="O paginador entrou em repetição.",
-                action="Interromper para não gerar XML duplicado e repetir a consulta.",
+                action="Interromper para não gerar XML duplicado.",
                 retryable=True,
             )
-        fingerprints.add(fingerprint)
+        fingerprints_seen.add(fingerprint)
 
-        await log_flow(
-            ctx,
-            f"Página {pagina}: {qtd} linha(s); selecionando e exportando esta página.",
-            event="STEP_DETAIL",
-        )
-        selecionadas = await _selecionar_pagina_nfse(page, qtd, ctx)
-
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        final_name = f"{tipo}_lote{lote:03}_{stamp}.xml"
-        final_path = os.path.join(pasta_tipo_empresa, final_name)
-        temp_path = final_path + ".part"
-
-        export_btn = await page.query_selector(_NFSE_EXPORT_SELECTOR)
-        if not export_btn:
+        snapshot_before = await _pagination_snapshot(page)
+        active_page = snapshot_before.get("active_page")
+        if active_page is not None and active_page != pagina:
             raise FlowError(
-                "EXPORT_BUTTON_MISSING",
-                "Botão 'Exportar XML' não encontrado.",
-                short_message="Botão de exportação XML não foi localizado.",
-                action="Revisar os seletores da tela de consulta NFS-e.",
-                retryable=False,
-            )
-
-        await log_flow(
-            ctx,
-            f"Exportando página {pagina} como lote {lote} ({selecionadas} selecionadas)...",
-            event="STEP_DETAIL",
-        )
-        await baixar_xml_com_fallback(
-            page,
-            _NFSE_EXPORT_SELECTOR,
-            temp_path,
-            ctx,
-            timeout_sec=180,
-        )
-
-        try:
-            quantidade_xml = _contar_nfse_xml(temp_path)
-            keys = _chaves_nfse_xml(temp_path)
-        except Exception as exc:
-            raise FlowError(
-                "NFSE_XML_COUNT_FAILED",
-                f"Não foi possível contar as NFS-e exportadas: {type(exc).__name__}: {exc}",
-                short_message="O XML foi salvo, mas sua quantidade não pôde ser validada.",
-                action="Repetir a exportação; arquivos sem validação não serão aceitos.",
+                "NFSE_ACTIVE_PAGE_MISMATCH",
+                f"Página lógica={pagina}, página ativa do portal={active_page}.",
+                short_message="O número da página ativa não coincide com o progresso esperado.",
+                action="Interromper para evitar pular ou repetir páginas.",
                 retryable=True,
             )
 
-        if quantidade_xml != selecionadas or len(keys) != quantidade_xml:
-            invalid_path = final_path + f".quantidade-{quantidade_xml}-esperado-{selecionadas}.invalido"
-            try:
-                os.replace(temp_path, invalid_path)
-            except OSError:
-                pass
-            raise FlowError(
-                "NFSE_XML_QUANTIDADE_DIVERGENTE",
-                f"Foram selecionadas {selecionadas} notas, mas o XML contém "
-                f"{quantidade_xml} registro(s) e {len(keys)} chave(s) única(s).",
-                short_message="O portal exportou uma quantidade diferente da seleção.",
-                action="Repetir a página; o lote parcial foi separado e não será considerado concluído.",
-                retryable=True,
-            )
-
-        overlap = keys.intersection(seen_keys)
-        if overlap:
-            if overlap == keys:
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-                await log_flow(
-                    ctx,
-                    f"Página {pagina} já estava integralmente salva nesta tentativa; pulando duplicata.",
-                    event="INFO",
-                    code="NFSE_PAGE_ALREADY_EXPORTED",
+        checkpoint_pages = checkpoint.get("pages", [])
+        if pagina <= len(checkpoint_pages):
+            expected = checkpoint_pages[pagina - 1]
+            if int(expected.get("rows") or 0) != qtd or expected.get("fingerprint") != fingerprint:
+                raise FlowError(
+                    "NFSE_CHECKPOINT_PAGE_CHANGED",
+                    (
+                        f"Página {pagina} divergiu do checkpoint: "
+                        f"rows atual={qtd}/salvo={expected.get('rows')}, "
+                        f"fingerprint atual={fingerprint}/salvo={expected.get('fingerprint')}."
+                    ),
+                    short_message="Uma página já confirmada mudou no portal.",
+                    action="Iniciar nova run raiz para não misturar versões da consulta.",
+                    retryable=False,
                 )
-            else:
-                invalid_path = final_path + ".sobreposicao-parcial.invalido"
+            await log_flow(
+                ctx,
+                (
+                    f"Página {pagina} retomada do checkpoint: "
+                    f"{expected.get('records')} NFS-e já validadas em {expected.get('file')}."
+                ),
+                event="INFO",
+                code="NFSE_CHECKPOINT_PAGE_SKIPPED",
+            )
+        else:
+            await log_flow(
+                ctx,
+                f"Página {pagina}: {qtd} linha(s); selecionando e exportando esta página.",
+                event="STEP_DETAIL",
+            )
+            selecionadas = await _selecionar_pagina_nfse(page, qtd, ctx)
+
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            final_name = f"{tipo}_lote{pagina:03}_{stamp}.xml"
+            final_path = os.path.join(pasta_tipo_empresa, final_name)
+            temp_path = final_path + ".part"
+
+            export_btn = await page.query_selector(_NFSE_EXPORT_SELECTOR)
+            if not export_btn:
+                raise FlowError(
+                    "EXPORT_BUTTON_MISSING",
+                    "Botão 'Exportar XML' não encontrado.",
+                    short_message="Botão de exportação XML não foi localizado.",
+                    action="Revisar os seletores da tela de consulta NFS-e.",
+                    retryable=False,
+                )
+
+            await log_flow(
+                ctx,
+                f"Exportando página {pagina} como lote {pagina} ({selecionadas} selecionadas)...",
+                event="STEP_DETAIL",
+            )
+            await baixar_xml_com_fallback(
+                page,
+                _NFSE_EXPORT_SELECTOR,
+                temp_path,
+                ctx,
+                timeout_sec=180,
+            )
+
+            try:
+                quantidade_xml = _contar_nfse_xml(temp_path)
+                keys = _chaves_nfse_xml(temp_path)
+            except Exception as exc:
+                raise FlowError(
+                    "NFSE_XML_COUNT_FAILED",
+                    f"Não foi possível contar as NFS-e exportadas: {type(exc).__name__}: {exc}",
+                    short_message="O XML foi salvo, mas sua quantidade não pôde ser validada.",
+                    action="Repetir a exportação; arquivos sem validação não serão aceitos.",
+                    retryable=True,
+                )
+
+            if quantidade_xml != selecionadas or len(keys) != quantidade_xml:
+                invalid_path = final_path + f".quantidade-{quantidade_xml}-esperado-{selecionadas}.invalido"
                 try:
                     os.replace(temp_path, invalid_path)
                 except OSError:
                     pass
                 raise FlowError(
-                    "NFSE_XML_PARTIAL_OVERLAP",
-                    f"O XML da página {pagina} mistura {len(overlap)} nota(s) já exportada(s) com notas novas.",
-                    short_message="A seleção acumulou notas de páginas diferentes.",
-                    action="Limpar a seleção e repetir a consulta para evitar duplicidade.",
+                    "NFSE_XML_QUANTIDADE_DIVERGENTE",
+                    f"Foram selecionadas {selecionadas} notas, mas o XML contém "
+                    f"{quantidade_xml} registro(s) e {len(keys)} chave(s) única(s).",
+                    short_message="O portal exportou uma quantidade diferente da seleção.",
+                    action="Repetir a página; o lote parcial foi separado e não será aceito.",
                     retryable=True,
                 )
-        else:
-            os.replace(temp_path, final_path)
+
+            digest = _keys_digest(keys)
+            overlap = keys.intersection(seen_keys)
+            recovered = orphan_exports.get(digest)
+            if recovered and recovered.get("keys") == keys:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+                final_path = str(recovered["file"])
+                quantidade_xml = int(recovered["records"])
+                await log_flow(
+                    ctx,
+                    f"Página {pagina} recuperada de XML válido gravado antes do checkpoint: {final_path}",
+                    event="INFO",
+                    code="NFSE_ORPHAN_XML_RECOVERED",
+                )
+            elif overlap:
+                invalid_path = final_path + ".sobreposicao.invalido"
+                try:
+                    os.replace(temp_path, invalid_path)
+                except OSError:
+                    pass
+                raise FlowError(
+                    "NFSE_XML_OVERLAP",
+                    f"O XML da página {pagina} repete {len(overlap)} nota(s) já confirmada(s).",
+                    short_message="A exportação repetiu notas de páginas anteriores.",
+                    action="Interromper para não aceitar duplicidade.",
+                    retryable=True,
+                )
+            else:
+                os.replace(temp_path, final_path)
+                if tipo == "tomadas":
+                    remover_canceladas_xml(final_path)
+                    valido, msg_validacao = _validar_xml_salvo(final_path)
+                    if not valido:
+                        raise FlowError(
+                            "XML_TOMADAS_INVALIDO_APOS_CANCELADAS",
+                            f"XML de tomadas ficou inválido após remover canceladas: {msg_validacao}",
+                            short_message="XML de tomadas ficou inválido após tratamento.",
+                            action="Verificar o arquivo exportado.",
+                            retryable=True,
+                        )
+                    quantidade_xml = _contar_nfse_xml(final_path)
+                    keys = _chaves_nfse_xml(final_path)
+                arquivos_novos += 1
+                registros_novos += quantidade_xml
+
+            if len(keys) != quantidade_xml:
+                raise FlowError(
+                    "NFSE_FINAL_XML_DUPLICATE_KEYS",
+                    f"Página {pagina}: registros finais={quantidade_xml}, chaves únicas={len(keys)}.",
+                    short_message="O XML final contém chaves duplicadas.",
+                    action="Não registrar checkpoint para esse arquivo.",
+                    retryable=True,
+                )
+
             seen_keys.update(keys)
-            arquivos_novos += 1
-            registros_novos += quantidade_xml
-
-            if tipo == "tomadas":
-                remover_canceladas_xml(final_path)
-                valido, msg_validacao = _validar_xml_salvo(final_path)
-                if not valido:
-                    raise FlowError(
-                        "XML_TOMADAS_INVALIDO_APOS_CANCELADAS",
-                        f"XML de tomadas ficou inválido após remover canceladas: {msg_validacao}",
-                        short_message="XML de tomadas ficou inválido após tratamento.",
-                        action="Verificar se o arquivo tinha somente notas canceladas ou se veio vazio.",
-                        retryable=True,
-                    )
-
+            _append_checkpoint_page(
+                checkpoint,
+                page=pagina,
+                rows=qtd,
+                fingerprint=fingerprint,
+                file_path=final_path,
+                records=quantidade_xml,
+                keys=keys,
+                pagination=_compact_pagination_snapshot(snapshot_before),
+            )
+            _save_checkpoint(checkpoint_path, checkpoint)
             await log_flow(
                 ctx,
-                f"Página {pagina} validada: {quantidade_xml} NFS-e em {final_path}",
+                (
+                    f"Página {pagina} validada e checkpointada: "
+                    f"{quantidade_xml} NFS-e em {final_path}"
+                ),
                 event="INFO",
+                code="NFSE_PAGE_CHECKPOINTED",
             )
-            lote += 1
 
-        next_button = await _proximo_botao_nfse(page)
-        if next_button is None:
+        next_button, pagination, terminal_reason = await _pagination_outcome(
+            page,
+            current_page=pagina,
+            rows=qtd,
+            ctx=ctx,
+        )
+
+        if terminal_reason:
+            if len(checkpoint.get("pages", [])) > pagina:
+                raise FlowError(
+                    "NFSE_CHECKPOINT_HAS_EXTRA_PAGES",
+                    f"O portal terminou na página {pagina}, mas o checkpoint possui {len(checkpoint['pages'])} páginas.",
+                    short_message="O portal terminou antes do checkpoint.",
+                    action="Iniciar uma nova run raiz para não reutilizar um conjunto antigo.",
+                    retryable=False,
+                )
+            checkpoint["status"] = "completed"
+            checkpoint["detected_total_pages"] = pagina
+            checkpoint["terminal_reason"] = terminal_reason
+            checkpoint["completed_at"] = datetime.now().isoformat(timespec="seconds")
+            _save_checkpoint(checkpoint_path, checkpoint)
+            await log_flow(
+                ctx,
+                (
+                    f"Fim da paginação confirmado: página={pagina}, motivo={terminal_reason}, "
+                    f"ativa={pagination.get('active_page')}, visíveis={pagination.get('visible_pages')}."
+                ),
+                event="INFO",
+                code="NFSE_PAGINATION_END_CONFIRMED",
+            )
             break
 
         await _avancar_pagina_nfse(page, next_button, fingerprint, ctx)
@@ -1140,15 +1697,20 @@ async def baixar_lotes_xml(page, tipo: str, pasta_tipo_empresa: str, ctx: FlowCo
     await log_flow(
         ctx,
         f"Exportação {tipo} concluída: páginas={pagina}, arquivos_novos={arquivos_novos}, "
-        f"registros_novos={registros_novos}, registros_unicos_total={len(seen_keys)}.",
+        f"registros_novos={registros_novos}, registros_unicos_total={len(seen_keys)}, "
+        f"checkpoint={checkpoint_path}.",
         event="INFO",
     )
     return {
         "baixou": bool(seen_keys),
         "sem_registros": False,
-        "arquivos": arquivos_novos,
+        "arquivos": int(checkpoint.get("files_total") or 0),
+        "arquivos_novos": arquivos_novos,
         "registros": len(seen_keys),
+        "registros_novos": registros_novos,
         "paginas": pagina,
+        "checkpoint": checkpoint_path,
+        "terminal_reason": checkpoint.get("terminal_reason"),
     }
 
 
@@ -1167,11 +1729,14 @@ async def job_notas(
     *,
     codigo_dominio: str = "",
     usar_codigo_dominio: bool = True,
+    checkpoint_dir: str = "",
     headless: bool = True,
 ) -> Dict[str, Any]:
     cnpj_norm = _norm_cnpj(cnpj)
 
     ensure_dir(run_dir)
+    checkpoint_dir = checkpoint_dir or os.path.join(run_dir, ".checkpoints", cnpj_norm, mes.replace("/", "-"))
+    ensure_dir(checkpoint_dir)
 
     if usar_codigo_dominio:
         ensure_dir(os.path.join(run_dir, "prestadas"))
@@ -1289,7 +1854,7 @@ async def job_notas(
         resultado_prestadas = await run_step(
             ctx,
             "Prestadas: exportar",
-            baixar_lotes_xml(page, "prestadas", pasta_prestadas, ctx),
+            baixar_lotes_xml(page, "prestadas", pasta_prestadas, checkpoint_dir, ctx),
             timeout_sec=export_timeout_sec,
         )
 
@@ -1316,7 +1881,7 @@ async def job_notas(
         resultado_tomadas = await run_step(
             ctx,
             "Tomadas: exportar",
-            baixar_lotes_xml(page, "tomadas", pasta_tomadas, ctx),
+            baixar_lotes_xml(page, "tomadas", pasta_tomadas, checkpoint_dir, ctx),
             timeout_sec=export_timeout_sec,
         )
 
@@ -1337,6 +1902,7 @@ async def job_notas(
             "pasta_tomadas": pasta_tomadas,
             "codigo_dominio": codigo_dominio,
             "usar_codigo_dominio": usar_codigo_dominio,
+            "checkpoint_dir": checkpoint_dir,
             "resultado_prestadas": resultado_prestadas,
             "resultado_tomadas": resultado_tomadas,
         }
