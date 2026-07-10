@@ -28,6 +28,20 @@ Versao: **1.0.38 - Portal Nacional com PFX e filtros ISS**
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
+| `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot vivo da arquitetura e producao |
+| `docs/C4_ARQUITETURA.md` | Diagramas C4 e fronteiras de confianca |
+| `docs/RELATORIO_AUDITORIA_2026-07-10.md` | Evidencias, achados e pendencias |
+
+## Chaves Cohere do Portal Nacional
+
+Para cadastrar ou trocar as tres chaves e atualizar o solver do Modal:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+python configurar_cohere_keys.py
+```
+
+As chaves sao digitadas de forma oculta, enviadas ao Secret do Modal e nao ficam gravadas no projeto.
 
 ## Deploy rapido
 

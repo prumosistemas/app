@@ -1444,7 +1444,7 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     runFlowRowsDirty=false, loadingRunDetail=false, lastRunDetailFetchAt=0,
     pendingRunDetailRefresh=false, pendingRunDetailForce=false,
     loadingState=false, pendingStateLoad=false,
-    logsTailTimer=null, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
+    logsTailTimer=null, logsTailInFlight=false, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
 const SESSION_TOKEN_KEY = "session_token";
 let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 const REQUEST_TIMEOUT_MS = 60000;
@@ -3007,6 +3007,8 @@ function modalAttemptRunId(cnpjKey=selectedModalCnpj, flow=selectedModalFlow){
 
 async function refreshLogsTail(){
   if(!selectedRunId||!$("cnpjModal").classList.contains("open"))return;
+  if(logsTailInFlight)return;
+  logsTailInFlight=true;
   try{
     const params = new URLSearchParams({
       limit_chars: "120000",
@@ -3023,6 +3025,13 @@ async function refreshLogsTail(){
     }
     if(!userIsSelectingText()) renderCnpjModal();
   } catch(err){}
+  finally{
+    logsTailInFlight=false;
+    clearTimeout(logsTailTimer);
+    if(selectedRunId&&$("cnpjModal").classList.contains("open")){
+      logsTailTimer=setTimeout(refreshLogsTail,900);
+    }
+  }
 }
 
 async function openCnpjModal(cnpjKey){
@@ -3032,8 +3041,7 @@ async function openCnpjModal(cnpjKey){
   document.querySelectorAll(".modal-tab").forEach(tab=>tab.classList.toggle("active",tab.dataset.modalFlow===selectedModalFlow));
   await refreshSelectedRunDetail(true);
   await refreshLogsTail();
-  clearInterval(logsTailTimer);
-  logsTailTimer=setInterval(refreshLogsTail,1200);
+  clearTimeout(logsTailTimer);
   renderCnpjModal();
 }
 
@@ -3125,7 +3133,7 @@ document.querySelectorAll(".modal-tab").forEach(tab=>tab.addEventListener("click
   refreshLogsTail();
 }));
 
-function closeModal(){ $("cnpjModal").classList.remove("open"); clearInterval(logsTailTimer); logsTailTimer=null; }
+function closeModal(){ $("cnpjModal").classList.remove("open"); clearTimeout(logsTailTimer); logsTailTimer=null; }
 $("btnCloseModal").addEventListener("click",closeModal);
 $("cnpjModal").addEventListener("click",event=>{ if(event.target===$("cnpjModal"))closeModal() });
 

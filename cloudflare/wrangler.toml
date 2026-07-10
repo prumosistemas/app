@@ -1,6 +1,6 @@
 name = "morning-credit-8a59"
 main = "worker.js"
-compatibility_date = "2026-06-01"
+compatibility_date = "2026-06-05"
 workers_dev = true
 
 [[d1_databases]]
@@ -16,3 +16,7 @@ PYTHON_API_URL = "https://api.prumosistemas.com.br"
 
 [triggers]
 crons = ["* * * * *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 0.25

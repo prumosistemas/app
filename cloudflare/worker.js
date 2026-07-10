@@ -433,7 +433,7 @@ async function handleLoginPost(request, env, ctx) {
     WHERE id = ?
   `).bind(ts, user.id).run();
 
-  await logEvent(env, request, {
+  scheduleLogEvent(env, request, ctx, {
     actor: {
       id: user.id,
       email: user.email,
@@ -3191,7 +3191,9 @@ function baseSecurityHeaders(extra = {}) {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
   headers.set("X-Frame-Options", "DENY");
-  headers.set("Cache-Control", "no-store");
+  if (!headers.has("Cache-Control")) {
+    headers.set("Cache-Control", "no-store");
+  }
   headers.set("Access-Control-Expose-Headers", "Content-Disposition");
 
   return headers;

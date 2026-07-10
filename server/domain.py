@@ -970,19 +970,43 @@ def files_for_result(all_files: List[Dict[str, Any]], result: Dict[str, Any]) ->
     ]
 
 
+def _read_log_tail(log_file: str, limit_chars: int) -> str:
+    """Read only the recent part of a log so polling stays O(tail), not O(file)."""
+    max_chars = max(5_000, int(limit_chars or 80_000))
+
+    try:
+        with open(log_file, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            if size <= max_chars * 4:
+                handle.seek(0, os.SEEK_SET)
+                raw = handle.read()
+                return raw.decode("utf-8", errors="replace")[-max_chars:]
+
+            scan_bytes = max(max_chars * 4, 256_000)
+            handle.seek(max(0, size - scan_bytes), os.SEEK_SET)
+            raw = handle.read()
+
+        # The first read may begin in the middle of an UTF-8 line. Drop that
+        # partial line; the endpoint is explicitly a tail, so this is safer
+        # than returning a misleading fragment.
+        if size > scan_bytes:
+            first_newline = raw.find(b"\n")
+            if first_newline >= 0:
+                raw = raw[first_newline + 1 :]
+
+        return raw.decode("utf-8", errors="replace")[-max_chars:]
+    except OSError:
+        return ""
+
+
 def read_run_logs(run_dir: str, limit_chars: int = 80_000) -> str:
     log_file = os.path.join(run_dir, "logs.txt")
 
     if not os.path.exists(log_file):
         return ""
 
-    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-        data = f.read()
-
-    if len(data) > limit_chars:
-        return data[-limit_chars:]
-
-    return data
+    return _read_log_tail(log_file, limit_chars)
 
 
 def read_run_logs_filtered(
@@ -1003,20 +1027,24 @@ def read_run_logs_filtered(
     lines: List[str] = []
     total_chars = 0
 
-    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-        for raw_line in f:
-            line = raw_line.rstrip("\n")
-            if cnpj_norm and cnpj_norm not in line:
-                continue
-            if flow_norm and f"flow={flow_norm}" not in line and f"flow_mode={flow_norm}" not in line:
-                continue
+    if os.path.getsize(log_file) <= 1_000_000:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as handle:
+            source = handle.read()
+    else:
+        source = _read_log_tail(log_file, max_chars * 4)
 
-            lines.append(line)
-            total_chars += len(line) + 1
+    for line in source.splitlines():
+        if cnpj_norm and cnpj_norm not in line:
+            continue
+        if flow_norm and f"flow={flow_norm}" not in line and f"flow_mode={flow_norm}" not in line:
+            continue
 
-            while lines and total_chars > max_chars:
-                removed = lines.pop(0)
-                total_chars -= len(removed) + 1
+        lines.append(line)
+        total_chars += len(line) + 1
+
+        while lines and total_chars > max_chars:
+            removed = lines.pop(0)
+            total_chars -= len(removed) + 1
 
     return "\n".join(lines)
 
