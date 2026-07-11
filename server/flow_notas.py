@@ -64,6 +64,21 @@ from flow_errors import (
 logger = logging.getLogger("iss.notas")
 
 
+def adaptive_timeout_ms(
+    name: str,
+    default: int,
+    *,
+    retry_level: int = 0,
+    configured_max_ms: int,
+    hard_max_ms: int,
+) -> int:
+    """Grow portal timeouts on later retries without allowing unbounded hangs."""
+    base = portal_timeout_ms(name, default, max_ms=configured_max_ms)
+    level = max(0, min(int(retry_level or 0), 5))
+    factor = 1.0 + (0.25 * level)
+    return min(hard_max_ms, max(base, int(round(base * factor))))
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # DOWNLOAD XML VIA BROWSER FETCH + FALLBACK
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1812,6 +1827,7 @@ async def job_notas(
     codigo_dominio: str = "",
     usar_codigo_dominio: bool = True,
     checkpoint_dir: str = "",
+    retry_level: int = 0,
     headless: bool = True,
 ) -> Dict[str, Any]:
     cnpj_norm = _norm_cnpj(cnpj)
@@ -1826,14 +1842,36 @@ async def job_notas(
 
     cnpj_dir = run_dir
 
+    step_timeout_ms = adaptive_timeout_ms(
+        "PORTAL_NOTAS_STEP_TIMEOUT_MS",
+        240_000,
+        retry_level=retry_level,
+        configured_max_ms=360_000,
+        hard_max_ms=720_000,
+    )
+    nav_timeout_ms = adaptive_timeout_ms(
+        "PORTAL_NAV_TIMEOUT_MS",
+        90_000,
+        retry_level=retry_level,
+        configured_max_ms=180_000,
+        hard_max_ms=300_000,
+    )
+    selector_timeout_ms = adaptive_timeout_ms(
+        "PORTAL_SELECTOR_TIMEOUT_MS",
+        60_000,
+        retry_level=retry_level,
+        configured_max_ms=180_000,
+        hard_max_ms=240_000,
+    )
+
     config = FlowConfig(
         run_id=run_id,
         run_dir=run_dir,
         run_log_file=run_log_file,
         cnpj_dir=cnpj_dir,
-        step_timeout_sec=portal_timeout_ms("PORTAL_NOTAS_STEP_TIMEOUT_MS", 240_000, max_ms=360_000) // 1000,
-        nav_timeout_ms=portal_timeout_ms("PORTAL_NAV_TIMEOUT_MS", 90_000, max_ms=180_000),
-        selector_timeout_ms=portal_timeout_ms("PORTAL_SELECTOR_TIMEOUT_MS", 60_000, max_ms=180_000),
+        step_timeout_sec=step_timeout_ms // 1000,
+        nav_timeout_ms=nav_timeout_ms,
+        selector_timeout_ms=selector_timeout_ms,
         close_timeout_sec=15,
         goto_retries=3,
         headless=headless,
@@ -1851,7 +1889,9 @@ async def job_notas(
         (
             f"=== INÍCIO (NOTAS) "
             f"codigo_dominio={codigo_dominio} "
-            f"usar_codigo_dominio={usar_codigo_dominio} ==="
+            f"usar_codigo_dominio={usar_codigo_dominio} "
+            f"retry_level={retry_level} timeouts_ms="
+            f"step:{step_timeout_ms},nav:{nav_timeout_ms},selector:{selector_timeout_ms} ==="
         ),
         event="FLOW_START",
     )
@@ -1927,10 +1967,12 @@ async def job_notas(
             "Prestadas: consultar",
             clicar_consultar(page, ctx),
         )
-        export_timeout_sec = portal_timeout_ms(
+        export_timeout_sec = adaptive_timeout_ms(
             "PORTAL_NOTAS_EXPORT_TIMEOUT_MS",
             1_800_000,
-            max_ms=3_600_000,
+            retry_level=retry_level,
+            configured_max_ms=3_600_000,
+            hard_max_ms=4_500_000,
         ) // 1000
 
         resultado_prestadas = await run_step(

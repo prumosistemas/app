@@ -16,7 +16,10 @@ CAPACITY_PER_CONTAINER = int(os.environ.get("PRUMO_MODAL_CAPACITY_PER_CONTAINER"
 MAX_CONTAINERS = int(os.environ.get("PRUMO_MODAL_MAX_CONTAINERS", "8"))
 TARGET_INPUTS = int(os.environ.get("PRUMO_MODAL_TARGET_INPUTS", str(max(1, CAPACITY_PER_CONTAINER - 2))))
 QUEUE_LENGTH = int(os.environ.get("PRUMO_MODAL_QUEUE_LENGTH", str(CAPACITY_PER_CONTAINER * MAX_CONTAINERS * 2)))
-PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "modal-proxy.prumosistemas.com.br").strip()
+# Direct egress is the production default after the 2026-07-11 full notes
+# validation. Set PRUMO_MODAL_PROXY_HOSTNAME to restore the server egress
+# fallback without changing code.
+PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "").strip()
 PROXY_LISTENER = os.environ.get("PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480").strip()
 PROXY_LOG_LEVEL = os.environ.get("PRUMO_MODAL_PROXY_LOG_LEVEL", "warn").strip() or "warn"
 

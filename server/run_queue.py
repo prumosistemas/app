@@ -296,6 +296,7 @@ async def execute_flow(
     run_key: str,
     attempt_run_dir: str,
     run_log_file: str,
+    retry_level: int = 0,
 ) -> Dict[str, Any]:
     cnpj = item.get("cnpj", "")
     codigo_dominio = item.get("codigo_dominio", "")
@@ -347,6 +348,7 @@ async def execute_flow(
             codigo_dominio=codigo_dominio,
             usar_codigo_dominio=bool(item.get("usar_codigo_dominio", True)),
             checkpoint_dir=checkpoint_dir,
+            retry_level=retry_level,
         )
         cancel_on_stop = True
     else:
@@ -444,12 +446,14 @@ async def run_one_item_unlocked(
         max_flow_retries = _transient_flow_retries() if run_auto_retry else 0
         while True:
             try:
+                run_attempt_number = max(1, int(RUNS.get(run_key, {}).get("attempt_number") or 1))
                 result = await execute_flow(
                     item=item,
                     mes=mes,
                     run_key=run_key,
                     attempt_run_dir=attempt_run_dir,
                     run_log_file=run_log_file,
+                    retry_level=max(0, run_attempt_number - 1) + flow_retry,
                 )
                 break
             except Exception as e:

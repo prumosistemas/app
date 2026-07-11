@@ -10,7 +10,7 @@ O trabalho desta rodada concentrou-se no ISS, observabilidade, login, limpeza e 
 
 - Código local e `/home/server/prumo-src` estavam no mesmo commit antes desta rodada.
 - Container de produção: `prumo-api`, imagem `1.0.40-notascheckpoint` no início da auditoria.
-- API: `version=1.0.38`, `allow_direct_local=false`, 30 slots Modal e 0 slots locais.
+- API: `version=1.0.42`, `allow_direct_local=false`, 30 slots Modal e 0 slots locais.
 - Dados persistentes: `/opt/prumo/data`; SQLite da API em `/opt/prumo/data/_api_data/iss_automacao.db`.
 - Saúde do host na inspeção: 72 dias de uptime, carga quase nula, 17% de disco usado e memória disponível ampla.
 - Túneis ativos e distintos:
@@ -58,5 +58,8 @@ As chaves Cohere que estavam literais no arquivo local também devem ser revogad
 - Não usar `server/output` local como prova de produção.
 - Não expor valores de `.env`, certificados, cookies, tokens ou blobs de contas em diagnósticos.
 - Manter `ISS_ALLOW_DIRECT_LOCAL=false` em produção.
-- Manter o proxy para o ISS enquanto o login direto do Modal continuar sujeito a bloqueio de origem; o Portal Nacional deve ser tratado separadamente.
+- Desde 2026-07-11 o ISS usa saida direta do Modal, validada com login, selecao
+  da empresa, tela de notas e exportacao completa (242 prestadas e 4 tomadas).
+  O tunel `prumo-proxy` foi preservado como fallback configuravel e nao deve ser
+  removido junto com essa mudanca. O Portal Nacional continua separado.
 - Ao reportar retry, sempre dizer qual é a raiz e qual é o último filho.

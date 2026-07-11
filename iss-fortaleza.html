@@ -3011,25 +3011,30 @@ async function refreshLogsTail(){
   logsTailInFlight=true;
   try{
     const params = new URLSearchParams({
-      limit_chars: "120000",
+      limit_chars: "60000",
       cnpj: selectedModalCnpj || "",
       flow: selectedModalFlow || "",
     });
     const attemptRunId = modalAttemptRunId();
     if(attemptRunId) params.set("attempt_run_id", attemptRunId);
     const cacheKey=modalLogCacheKey();
-    const payload=await apiFetch("/py/api/runs/"+encodeURIComponent(selectedRunId)+"/logs-tail?"+params.toString());
+    const payload=await apiFetch(
+      "/py/api/runs/"+encodeURIComponent(selectedRunId)+"/logs-tail?"+params.toString(),
+      { __showLoader: false }
+    );
     const nextLogs=payload.logs_by_attempt || [];
+    const previousLogs=modalLogsCache[cacheKey] || [];
+    const changed=JSON.stringify(previousLogs)!==JSON.stringify(nextLogs);
     if(nextLogs.some(attempt=>String(attempt.logs||"").trim()) || !modalLogsCache[cacheKey]){
       modalLogsCache[cacheKey]=nextLogs;
     }
-    if(!userIsSelectingText()) renderCnpjModal();
+    if(changed&&!userIsSelectingText()) renderCnpjModal();
   } catch(err){}
   finally{
     logsTailInFlight=false;
     clearTimeout(logsTailTimer);
     if(selectedRunId&&$("cnpjModal").classList.contains("open")){
-      logsTailTimer=setTimeout(refreshLogsTail,900);
+      logsTailTimer=setTimeout(refreshLogsTail,isActiveStatus(selectedRunFull?.status)?1200:3000);
     }
   }
 }
@@ -3041,7 +3046,6 @@ async function openCnpjModal(cnpjKey){
   document.querySelectorAll(".modal-tab").forEach(tab=>tab.classList.toggle("active",tab.dataset.modalFlow===selectedModalFlow));
   await refreshSelectedRunDetail(true);
   await refreshLogsTail();
-  clearTimeout(logsTailTimer);
   renderCnpjModal();
 }
 
