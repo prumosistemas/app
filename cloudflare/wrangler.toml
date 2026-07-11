@@ -3,6 +3,21 @@ main = "worker.js"
 compatibility_date = "2026-06-05"
 workers_dev = true
 
+routes = [
+  { pattern = "app.prumosistemas.com.br/", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/portal-nacional*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/iss-fortaleza*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/server/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/deploy/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/cloudflare/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/docs/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/legado/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/tests/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/tools/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/AGENTS.md", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/configurar_cohere_keys.py", zone_name = "prumosistemas.com.br" },
+]
+
 [[d1_databases]]
 binding = "db"
 database_name = "db"

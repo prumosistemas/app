@@ -8,7 +8,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from flow_errors import classify_exception
+from flow_errors import FlowError, classify_exception
 from flow_escrituracao import job_escrituracao
 from flow_dam import job_dam
 from flow_certidao import job_certidao
@@ -305,7 +305,13 @@ async def execute_flow(
     flow_mode = item.get("flow_mode", "")
 
     if not usuario or not senha:
-        raise RuntimeError("Conta sem usuário ou senha.")
+        raise FlowError(
+            "ACCOUNT_CREDENTIALS_MISSING",
+            "A conta vinculada ao item não possui usuário e senha completos.",
+            short_message="A conta ISS está sem usuário ou senha.",
+            action="Atualizar a conta ISS e executar uma nova run.",
+            retryable=False,
+        )
 
     task_run_dir = flow_dir_for_task(attempt_run_dir, flow_mode)
     Path(task_run_dir).mkdir(parents=True, exist_ok=True)
@@ -592,6 +598,22 @@ async def run_one_item_unlocked(
             f"[ERRO] scope={scope_id(ctx)} run={run_key} flow={flow_mode} cnpj={cnpj} conta={account_alias} "
             f"code={err.code} msg={err.short_message}"
         )
+        if err.code == "UNEXPECTED":
+            logger.exception(
+                "[ERRO_TECNICO] scope=%s run=%s flow=%s cnpj=%s conta=%s",
+                scope_id(ctx),
+                run_key,
+                flow_mode,
+                cnpj,
+                account_alias,
+            )
+            write_run_log(
+                run_log_file,
+                (
+                    f"[ITEM_ERROR_TECHNICAL] flow={flow_mode} cnpj={normalize_cnpj(cnpj)} "
+                    f"conta={account_alias} exception={type(e).__name__} detail={str(e)[:500]}"
+                ),
+            )
 
         msg = err.short_message
 

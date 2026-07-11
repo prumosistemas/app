@@ -1,4 +1,5 @@
 import indexHtml from "../index.html";
+import issFortalezaHtml from "../iss-fortaleza.html";
 import portalNacionalHtml from "../portal-nacional.html";
 
 // worker.js
@@ -63,12 +64,31 @@ export default {
         return optionsResponse(request, env);
       }
 
+      if (request.method === "GET" && isBlockedFrontendSourcePath(url.pathname)) {
+        return new Response("Not found", {
+          status: 404,
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=300",
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
+
       if (request.method === "GET" && (url.pathname === "/" || url.pathname === "")) {
         return htmlResponse(indexHtml);
       }
 
       if (request.method === "GET" && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
         return htmlResponse(portalNacionalHtml);
+      }
+
+      if (request.method === "GET" && (url.pathname === "/iss-fortaleza" || url.pathname === "/iss-fortaleza/")) {
+        return htmlResponse(issFortalezaHtml);
+      }
+
+      if (request.method === "GET" && url.pathname === "/iss-fortaleza.html") {
+        return Response.redirect(`${url.origin}/iss-fortaleza${url.search}`, 301);
       }
 
       if (request.method === "GET" && url.pathname === "/portal-nacional.html") {
@@ -502,6 +522,13 @@ async function handleLogout(request, env, ctx) {
   }
 
   return jsonResponse(request, env, { ok: true }, 200, clearSessionCookie(env));
+}
+
+function isBlockedFrontendSourcePath(pathname) {
+  const path = String(pathname || "").toLowerCase();
+  return ["/server/", "/deploy/", "/cloudflare/", "/docs/", "/legado/", "/tests/", "/tools/"].some(
+    (prefix) => path.startsWith(prefix),
+  ) || path === "/agents.md" || path === "/configurar_cohere_keys.py";
 }
 
 async function handleMe(request, env) {
