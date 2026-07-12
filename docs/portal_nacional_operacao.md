@@ -36,12 +36,12 @@ Uma run histórica pode servir para diagnóstico, mas nunca imprima a senha ou o
 
 ## Evidência de 2026-07-12
 
-Teste controlado do Alan na run `20260707-150940-emitidas-20260601-20260630-cert-202607061735-ambos`:
+Dois testes controlados do Alan na run `20260707-150940-emitidas-20260601-20260630-cert-202607061735-ambos`, incluindo um após o deploy 1.0.43:
 
 - limite: 1 nota;
 - resultado: `finalizado_parcial`;
-- item: 1 baixado, 0 erros;
+- acumulado validado: 2 baixados, 0 erros;
 - método: `requests_captcha_xml+requests_captcha_pdf`;
 - artefatos: XML e PDF.
 
-O status parcial é esperado porque restaram 433 itens fora do limite do teste.
+O status parcial é esperado porque restaram 432 itens fora dos limites dos testes.

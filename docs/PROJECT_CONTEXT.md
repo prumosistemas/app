@@ -19,12 +19,12 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-12
 
-- API preparada para produção: 1.0.43.
+- API em produção: 1.0.43.
 - ISS Laryssa: run real concluída na primeira tentativa, 242 prestadas e 4 tomadas.
 - ISS padrão: Modal direto; proxy brasileira preservada como fallback configurável.
 - ISS Gabriel: bloqueado por cadastro sem usuário/senha; erro agora é classificado como `ACCOUNT_CREDENTIALS_MISSING`.
-- Portal Alan: certificado recuperado e recriptografado; teste de 1 nota concluiu XML e PDF pelo modo IA.
-- Testes locais: consulte o resultado da suíte no handoff do deploy 1.0.43.
+- Portal Alan: certificado recuperado e recriptografado; dois testes controlados concluíram XML e PDF pelo modo IA, sem erro.
+- Testes locais: 53 aprovados no deploy 1.0.43.
 
 ## Regras operacionais
 
@@ -37,6 +37,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Pendências externas
 
+- O deploy automático Netlify recebe os commits, mas está sendo ignorado por limite de créditos da conta. O ISS otimizado está ao vivo; o novo HTML do Portal aguarda a regularização do Netlify.
 - Preencher as credenciais do Gabriel para concluir o teste ISS dele.
 - No servidor, habilitar linger do usuário e reiniciar o monitor com privilégios administrativos para ele carregar o segredo atual.
 - O resolvedor Google residencial depende do processo local/túnel; o Cohere Modal deve permanecer configurado como fallback.
