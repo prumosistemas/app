@@ -29,7 +29,7 @@ Versao: **1.0.43 - Portal resiliente, solver assíncrono e fallback**
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
 | `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot vivo da arquitetura e producao |
-| `docs/C4_ARQUITETURA.md` | Diagramas C4 e fronteiras de confianca |
+| `docs/C4.md` | C4 canônico e decisões arquiteturais atuais |
 | `docs/RELATORIO_AUDITORIA_2026-07-10.md` | Evidencias, achados e pendencias |
 
 ## Chaves Cohere do Portal Nacional
