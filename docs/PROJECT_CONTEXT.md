@@ -22,6 +22,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - API em produção: 1.0.43.
 - ISS Laryssa: run real concluída na primeira tentativa, 242 prestadas e 4 tomadas.
 - ISS padrão: Modal direto; proxy brasileira preservada como fallback configurável.
+- Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
 - ISS Gabriel: bloqueado por cadastro sem usuário/senha; erro agora é classificado como `ACCOUNT_CREDENTIALS_MISSING`.
 - Portal Alan: certificado recuperado e recriptografado; dois testes controlados concluíram XML e PDF pelo modo IA, sem erro.
 - Testes locais: 53 aprovados no deploy 1.0.43.
