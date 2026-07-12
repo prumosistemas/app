@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.38
-Data: 2026-07-06
+Versao: 1.0.43
+Data: 2026-07-12
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -68,7 +68,11 @@ Isso significa:
 - 0 navegadores locais.
 - 30 navegadores pelo Modal.
 - A fila da API cria no maximo 30 workers globais.
-- O portal ISS sai pelo IP do servidor porque o Browserless Modal sobe `cloudflared access tcp` e injeta proxy no Chrome.
+- O ISS sai direto pelo Modal por padrao. Em 2026-07-11 uma exportacao completa
+  sem proxy validou 25 paginas/242 notas prestadas e 1 pagina/4 notas tomadas.
+- O tunel `modal-proxy.prumosistemas.com.br` continua disponivel como fallback:
+  definir `PRUMO_MODAL_PROXY_HOSTNAME=modal-proxy.prumosistemas.com.br` antes do
+  deploy volta a injetar o proxy no Chrome sem alterar o codigo.
 
 Conferir pela API:
 
@@ -80,7 +84,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.38",
+  "version": "1.0.43",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -138,9 +142,18 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
   - `deploy/modal_portal_nacional_solver.py`
   - `deploy/portal_nacional_solver.py`
 - Secret esperado: `prumo-portal-nacional-solver`
-- Secret deve conter `COHERE_API_KEY`.
+- Secret deve conter `COHERE_API_KEY`, `COHERE_API_KEY_2` e `COHERE_API_KEY_3`. O solver distribui chamadas em round-robin e faz failover entre elas.
 
-Deploy:
+Configurar ou trocar as tres chaves e publicar o solver:
+
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+python configurar_cohere_keys.py
+```
+
+O script pede as chaves sem exibi-las, atualiza o Secret `prumo-portal-nacional-solver`, apaga o arquivo temporario e faz o deploy. Para atualizar apenas o Secret, use `python configurar_cohere_keys.py --no-deploy`.
+
+Deploy manual:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
@@ -443,8 +456,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -t ryang20/prumo-api:1.0.38 server
-docker push ryang20/prumo-api:1.0.38
+docker build -t ryang20/prumo-api:1.0.43 server
+docker push ryang20/prumo-api:1.0.43
 ```
 
 Atualizar servidor:
@@ -455,7 +468,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.38 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.43 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from domain import (
+    SECRET_ENC_PREFIX,
     WorkerContext,
     get_worker_context,
     member_output_root,
@@ -112,6 +113,20 @@ def _safe_run_dir(ctx: WorkerContext, run_id: str) -> Path:
     if not (run_dir / "run.json").exists():
         raise HTTPException(status_code=404, detail="Run não encontrada.")
     return Path(safe_path_inside(str(_runs_root(ctx)), str(run_dir)))
+
+
+def _delete_run_dir(ctx: WorkerContext, run_id: str) -> None:
+    run_dir = _safe_run_dir(ctx, run_id)
+    root = _runs_root(ctx).resolve()
+    target = run_dir.resolve()
+    if target == root or root not in target.parents:
+        raise HTTPException(status_code=400, detail="Caminho de run inválido.")
+    runtime = _active_runtime(ctx)
+    if runtime and runtime.get("run_id") == run_id:
+        raise HTTPException(status_code=409, detail="Não é permitido excluir run ativa.")
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail="Run não encontrada.")
+    shutil.rmtree(target)
 
 
 def _run_paths(run_dir: Path) -> Dict[str, Path]:
@@ -211,6 +226,28 @@ def _validate_pfx_bytes(raw: bytes, password: str, tmp_path: Path) -> Dict[str, 
         "thumbprint": identity.get("thumbprint"),
         "not_after": identity.get("not_after"),
     }
+
+
+def _uploaded_certificate_password(cert: Dict[str, Any]) -> str:
+    """Falha cedo quando uma troca de segredo tornou a senha indecifrável."""
+    stored = str(cert["meta"].get("password") or "")
+    password = unprotect_secret(stored)
+    if stored.startswith(SECRET_ENC_PREFIX) and not password:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A senha deste certificado não pode mais ser aberta com o segredo atual. "
+                "Envie novamente o PFX para atualizar a credencial."
+            ),
+        )
+    try:
+        load_pfx_identity(cert["file"], password)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="A senha salva não abre o PFX. Envie novamente o certificado.",
+        ) from exc
+    return password
 
 
 def _normalize_date(value: str) -> str:
@@ -319,12 +356,13 @@ def _attach_certificate_to_run(ctx: WorkerContext, cfg: Dict[str, Any], run_dir:
     cert_id = str(cfg.get("cert_id") or "").strip()
     if cert_id:
         cert = _get_uploaded_certificate(ctx, cert_id)
+        password = _uploaded_certificate_password(cert)
         cert_run_dir = run_dir / "certificado"
         cert_run_dir.mkdir(parents=True, exist_ok=True)
         pfx_path = cert_run_dir / "cert.pfx"
         password_path = cert_run_dir / "password.txt"
         shutil.copy2(cert["file"], pfx_path)
-        password_path.write_text(unprotect_secret(cert["meta"].get("password") or ""), encoding="utf-8")
+        password_path.write_text(password, encoding="utf-8")
         try:
             pfx_path.chmod(0o600)
             password_path.chmod(0o600)
@@ -493,7 +531,13 @@ def _run_process(scope: str, run_dir: Path, cfg: Dict[str, Any], retry_only: boo
     paths = _run_paths(run_dir)
     log_path = paths["logs"] / f"automacao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     cmd = _build_command(cfg, run_dir, retry_only)
-    _update_run(run_dir, status="rodando", last_command=cmd, last_log=str(log_path))
+    _update_run(
+        run_dir,
+        status="rodando",
+        last_error=None,
+        last_command=cmd,
+        last_log=str(log_path),
+    )
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("PORTAL_NACIONAL_SOLVER_URL", DEFAULT_SOLVER_URL)
@@ -720,6 +764,11 @@ async def stop_portal_run(run_id: str, ctx: WorkerContext = Depends(get_worker_c
     except Exception:
         pass
     return {"ok": True, "stopped": True}
+
+@router.delete("/runs/{run_id}")
+async def delete_portal_run(run_id: str, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    _delete_run_dir(ctx, run_id)
+    return {"ok": True, "run_id": run_id}
 
 
 @router.get("/runs/{run_id}/download")

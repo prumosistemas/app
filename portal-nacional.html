@@ -42,7 +42,7 @@
     .notice{border:1px solid var(--border2);background:var(--panel2);border-radius:8px;padding:10px 12px;color:var(--text2);font-size:12.5px;white-space:pre-line}.notice.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.notice.err{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.notice.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
     .metric{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
     .pill{display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:800;white-space:nowrap}.pill.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.pill.bad{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.pill.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
-    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}tbody tr{transition:background .15s}tbody tr:hover{background:#fafbff}tbody tr.selected{background:#eef2ff;box-shadow:inset 3px 0 var(--accent)}
     .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
     .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
     code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
@@ -137,7 +137,7 @@
               <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
             </div>
             <div class="card">
-              <div class="card-head"><h3>Detalhe</h3><button class="secondary" id="btnRetry" type="button">Retry</button></div>
+              <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnRetry" type="button">Retry</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
               <div class="card-body stack">
                 <div id="detailBox" class="small">Selecione uma run.</div>
                 <div id="filesBox"></div>
@@ -180,7 +180,7 @@
       if(!res.ok){ const detail=data?.error || data?.detail || data?.message || data; throw new Error(typeof detail==="string"?detail:JSON.stringify(detail)); }
       return data;
     }
-    function dateIso(d){ return d.toISOString().slice(0,10); }
+    function dateIso(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
     function formatTs(value){ if(!value) return "-"; const d=new Date(value); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
     function bytes(n){ n=Number(n||0); if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
     function statusPill(status){
@@ -250,7 +250,7 @@
       if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
       $("runsTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Run</th><th>Resumo</th><th>Criada</th></tr></thead><tbody>${runs.map(run => {
         const s = run.summary || {};
-        return `<tr data-run="${esc(run.run_id)}" style="cursor:pointer">
+        return `<tr data-run="${esc(run.run_id)}" class="${run.run_id===selectedRunId ? "selected" : ""}" style="cursor:pointer">
           <td>${statusPill(run.status)}</td>
           <td><code>${esc(run.run_id)}</code><br><span class="small">${esc(run.config?.modo || "-")} · ${esc(run.config?.tipo_download || "-")}</span></td>
           <td>${Number(s.baixados || 0)}/${Number(s.portal_registros || s.capturados || 0)} ok<br><span class="small">${Number(s.erros || 0)} erro · ${Number(s.pendentes || 0)} pendente</span></td>
@@ -261,6 +261,7 @@
     }
     function renderDetail(run){
       selectedRunId = run?.run_id || "";
+      document.querySelectorAll("#runsTable [data-run]").forEach(row => row.classList.toggle("selected", row.dataset.run===selectedRunId));
       const s = run?.summary || {};
       $("detailBox").innerHTML = run ? `
         <div class="notice ${/erro|parado|interrompida/.test(run.status||"") ? "warn" : "ok"}">
@@ -271,6 +272,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const files = run?.files || [];
       $("filesBox").innerHTML = files.length ? `<div class="table-wrap"><table><thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead><tbody>${files.map(file => `<tr><td>${esc(file.relative_path)}</td><td>${bytes(file.size)}</td><td><button class="secondary" data-file="${esc(file.relative_path)}" type="button">Baixar</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="small">Nenhum arquivo disponível.</div>`;
       $("filesBox").querySelectorAll("[data-file]").forEach(btn => btn.onclick = () => downloadFile(run.run_id, btn.dataset.file, btn));
+      $("btnDeleteRun").disabled = !run || run.run_id === activeRunId;
     }
     async function downloadBlob(path, fallbackName){
       const headers = new Headers();
@@ -360,6 +362,17 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
         .catch(err => setMsg("err", err.message))
         .finally(() => buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"));
     };
+    $("btnDeleteRun").onclick = async () => {
+      if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
+      if(selectedRunId===activeRunId){ setMsg("warn", "Pare a run antes de excluir."); return; }
+      if(!confirm("Excluir esta run e todos os arquivos dela?")) return;
+      buttonLoading($("btnDeleteRun"), true, "Excluindo");
+      try{
+        await api(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}`, {method:"DELETE"});
+        selectedRunId=""; await loadState(); setMsg("ok", "Run excluída.");
+      }catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnDeleteRun"), false, "Excluir run"); }
+    };
     $("btnRefresh").onclick = () => loadState().catch(err => setMsg("err", err.message));
     $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
     document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
@@ -381,8 +394,17 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
       $("dataInicial").value = dateIso(first);
       $("dataFinal").value = dateIso(now);
-      loadState().catch(err => setMsg("err", err.message));
-      setInterval(() => loadState().catch(() => {}), 5000);
+      let polling=false;
+      const poll = async () => {
+        if(!polling && !document.hidden){
+          polling=true;
+          try{ await loadState(); }catch(err){ if(!latestState) setMsg("err",err.message); }
+          finally{ polling=false; }
+        }
+        const delay = document.hidden ? 15000 : activeRunId ? 2000 : 8000;
+        setTimeout(poll, delay);
+      };
+      poll();
     })();
   </script>
 </body>

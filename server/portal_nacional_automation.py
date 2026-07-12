@@ -15,6 +15,8 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 import requests
 import websocket
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_FILE = BASE_DIR / "sessao_nfse.txt"
@@ -30,6 +32,7 @@ SESSION_GENERATOR = BASE_DIR / "portal_nacional_session.py"
 DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
 SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "240"))
+SOLVER_FALLBACK_URL = os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL", "").strip()
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -665,6 +668,19 @@ def consolidate_page_totals(index: dict) -> None:
 
 def requests_session_from_data(session_data: dict) -> requests.Session:
     session = requests.Session()
+    network_retry = Retry(
+        total=4,
+        connect=4,
+        read=2,
+        status=2,
+        backoff_factor=1.0,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=network_retry, pool_connections=8, pool_maxsize=16)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1012,45 +1028,108 @@ def extract_modal_data(html_text: str, base_url: str) -> dict:
 
 
 def solver_api_health_url(solver_url: str) -> str:
-    return solver_url.rsplit("/", 1)[0] + "/health"
+    parsed = urlparse(solver_url)
+    base_path = parsed.path.rsplit("/", 1)[0]
+    return parsed._replace(path=base_path + "/health", fragment="").geturl()
 
 
-def require_solver_api(solver_url: str) -> None:
+def solver_api_job_url(solver_url: str, job_id: str) -> str:
+    parsed = urlparse(solver_url)
+    base_path = parsed.path.rsplit("/", 1)[0]
+    return parsed._replace(
+        path=base_path + "/jobs/" + quote(str(job_id), safe=""),
+        fragment="",
+    ).geturl()
+
+
+def solver_url_candidates(primary: str) -> list[str]:
+    return list(dict.fromkeys(url for url in (primary, SOLVER_FALLBACK_URL) if url))
+
+
+def require_solver_api(solver_url: str) -> str:
     last_error: Exception | None = None
+    candidates = solver_url_candidates(solver_url)
+    for candidate_index, candidate in enumerate(candidates):
+        attempts = 2 if candidate_index == 0 and len(candidates) > 1 else 6
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.get(solver_api_health_url(candidate), timeout=12)
+                response.raise_for_status()
+                health = response.json()
+                fatal = health.get("fatal_circuit") or {}
+                if fatal.get("open"):
+                    raise RuntimeError(f"circuito aberto: {fatal.get('reason') or 'solver'}")
+                if candidate != solver_url:
+                    print(f"[Solver] Usando fallback saudavel: {candidate}")
+                return candidate
+            except Exception as exc:
+                last_error = exc
+                print(f"[Solver] Health indisponivel ({attempt}/{attempts}) em {candidate}: {exc}")
+                if attempt < attempts:
+                    time.sleep(min(3 * attempt, 12))
+    raise RuntimeError(f"Nenhum solver ficou disponivel: {last_error}")
 
-    for attempt in range(1, 7):
-        try:
-            response = requests.get(
-                solver_api_health_url(solver_url),
-                timeout=30,
-            )
-            response.raise_for_status()
-            return
-        except Exception as exc:
-            last_error = exc
-            print(f"[Solver] Health ainda indisponivel ({attempt}/6): {exc}")
-            if attempt < 6:
-                time.sleep(min(5 * attempt, 20))
 
-    raise RuntimeError(
-        f"Solver nao ficou disponivel apos aquecimento: {last_error}"
-    )
+def solver_response_json(response: requests.Response) -> dict:
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError:
+        # Gateways com keepalive podem deixar framing residual depois do JSON.
+        # Aceite somente o primeiro objeto completo e continue validando os
+        # campos success/token normalmente.
+        raw = response.text.lstrip()
+        data, _ = json.JSONDecoder().raw_decode(raw)
+    if not isinstance(data, dict):
+        raise RuntimeError("solver:invalid_json_object")
+    return data
 
 
-def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
+def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | None:
     response = requests.post(
         solver_url,
         json={"sitekey": sitekey, "request_id": request_id},
         timeout=SOLVER_REQUEST_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    data = response.json()
+    data = solver_response_json(response)
+    if data.get("accepted") and data.get("job_id"):
+        job_url = solver_api_job_url(solver_url, str(data["job_id"]))
+        deadline = time.monotonic() + SOLVER_REQUEST_TIMEOUT_SECONDS
+        poll_failures = 0
+        while time.monotonic() < deadline:
+            try:
+                poll = requests.get(job_url, timeout=20)
+            except requests.RequestException as exc:
+                poll_failures += 1
+                delay = min(2 * poll_failures, 12)
+                print(f"[Solver] Poll transitorio ({poll_failures}): {exc}; nova tentativa em {delay}s")
+                time.sleep(delay)
+                continue
+            if poll.status_code == 202:
+                time.sleep(3)
+                continue
+            poll.raise_for_status()
+            data = solver_response_json(poll)
+            break
+        else:
+            raise RuntimeError("solver:async_job_timeout")
     if data.get("success") and data.get("token"):
         return data["token"]
     reason = data.get("reason") or data.get("error") or "solver_no_token"
     detail = data.get("error") or reason
     raise RuntimeError(f"solver:{reason}: {detail}")
     return None
+
+
+def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
+    errors = []
+    for candidate in solver_url_candidates(solver_url):
+        try:
+            return solve_captcha_once(candidate, sitekey, request_id)
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+            print(f"[Solver] Falha em {candidate}; tentando proximo endpoint: {exc}")
+    raise RuntimeError("solver:all_endpoints_failed: " + " | ".join(errors))
 
 
 def submit_captcha_requests(session: requests.Session, modal: dict, token: str, item: dict) -> requests.Response:
@@ -1290,7 +1369,7 @@ def run_requests_downloads(
     pfx_file: str | None = None,
     pfx_password_file: str | None = None,
 ) -> None:
-    require_solver_api(solver_url)
+    solver_url = require_solver_api(solver_url)
     tipos_download = normalize_download_tipos(tipo_download)
     index["tipo_download"] = tipo_download
     index["download_tipos"] = tipos_download
@@ -1428,7 +1507,18 @@ def run_requests_downloads(
             queue.extend(retry_items)
 
             if retry_items:
-                time.sleep(1)
+                retry_level = max(int(item.get("requests_attempts") or 1) for item in retry_items)
+                retry_delay = min(2 ** retry_level, 30)
+                save_index(
+                    index_path,
+                    index,
+                    "baixando_requests",
+                    "retry_backoff_wait",
+                    seconds=retry_delay,
+                    retry_level=retry_level,
+                    items=len(retry_items),
+                )
+                time.sleep(retry_delay)
 
             while queue and len(futures) < max_workers:
                 submit_next(executor, futures)

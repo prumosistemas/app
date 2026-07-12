@@ -123,7 +123,7 @@ from portal_nacional import router as portal_nacional_router
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.42",
+    version="1.0.43",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
 )
 
@@ -473,7 +473,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "Prumo API",
-        "version": "1.0.42",
+        "version": "1.0.43",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
