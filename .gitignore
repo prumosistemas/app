@@ -18,6 +18,8 @@ solver/google_ai_mode/session_recovery_state.json
 solver/google_ai_mode/.session_recovery.lock
 *.sqlite3
 latest.json
+AccountID.txt
+token.txt
 
 # Local Netlify folder
 .netlify
