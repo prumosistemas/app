@@ -33,7 +33,6 @@ DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
 SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "240"))
 SOLVER_FALLBACK_URL = os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL", "").strip()
-MANUAL_CAPTCHA_OUTAGE_STREAK = max(1, int(os.environ.get("PORTAL_NACIONAL_MANUAL_CAPTCHA_OUTAGE_STREAK", "4")))
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -308,8 +307,6 @@ def save_index(path: Path, index: dict, status: str | None = None, event: str | 
 
 
 def final_download_status(index: dict, max_items: int = 0) -> str:
-    if index.get("status") == "aguardando_captcha_manual":
-        return "aguardando_captcha_manual"
     totals = index.get("totals", {}) or {}
     if totals.get("erros"):
         return "finalizado_com_erros"
@@ -1547,26 +1544,6 @@ def run_requests_downloads(
                 solver_outage_streak += 1
             else:
                 solver_outage_streak = 0
-
-            if (
-                retry_items
-                and saw_solver_outage
-                and solver_outage_streak >= MANUAL_CAPTCHA_OUTAGE_STREAK
-            ):
-                for retry_item in retry_items:
-                    retry_item["status"] = "pendente"
-                    retry_item["updated_at"] = now_iso()
-                save_index(
-                    index_path,
-                    index,
-                    "aguardando_captcha_manual",
-                    "manual_captcha_required",
-                    solver_outage_streak=solver_outage_streak,
-                    pending=len(queue),
-                    message="Solver indisponivel; indice preservado para retomada apos checkpoint manual.",
-                )
-                print("Solver indisponivel repetidamente. Execucao pausada para checkpoint manual.")
-                return
 
             if retry_items:
                 retry_level = max(int(item.get("requests_attempts") or 1) for item in retry_items)

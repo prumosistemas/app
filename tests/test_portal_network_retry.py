@@ -99,11 +99,3 @@ def test_solver_outage_backoff_grows_across_different_items() -> None:
         64,
         120,
     ]
-
-
-def test_manual_captcha_checkpoint_is_preserved_as_final_status() -> None:
-    index = {
-        "status": "aguardando_captcha_manual",
-        "totals": {"pendentes": 169, "baixados": 0, "erros": 0},
-    }
-    assert automation.final_download_status(index) == "aguardando_captcha_manual"
