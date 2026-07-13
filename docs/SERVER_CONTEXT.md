@@ -70,9 +70,10 @@ Isso significa:
 - A fila da API cria no maximo 30 workers globais.
 - O ISS sai direto pelo Modal por padrao. Em 2026-07-11 uma exportacao completa
   sem proxy validou 25 paginas/242 notas prestadas e 1 pagina/4 notas tomadas.
-- O tunel `modal-proxy.prumosistemas.com.br` continua disponivel como fallback:
-  definir `PRUMO_MODAL_PROXY_HOSTNAME=modal-proxy.prumosistemas.com.br` antes do
-  deploy volta a injetar o proxy no Chrome sem alterar o codigo.
+- O proxy em `127.0.0.1:31381` e o tunel `modal-proxy.prumosistemas.com.br`
+  continuam ativos no ThinkPad. O probe HTTPS a partir do Modal expira no
+  Cloudflare Access; nao definir `PRUMO_MODAL_PROXY_HOSTNAME` antes de criar e
+  validar um service token de máquina.
 
 Conferir pela API:
 

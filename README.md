@@ -9,7 +9,7 @@ Versao: **1.0.44 - filas resilientes, logs incrementais e Modo IA v11**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA direto no Modal; proxy residencial apenas como fallback configuravel.
+- Portal Nacional: Google Modo IA direto no Modal; proxy do ThinkPad preservado, mas bloqueado para o Modal até existir autenticação de máquina.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 

@@ -19,9 +19,9 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-13
 
-- API preparada para produção: 1.0.44.
+- API em produção: 1.0.44.
 - ISS Laryssa: run real concluída na primeira tentativa, 242 prestadas e 4 tomadas.
-- ISS padrão: Modal direto; proxy brasileira preservada como fallback configurável.
+- ISS padrão: Modal direto. O proxy continua no ThinkPad, mas não deve ser ativado no Modal sem autenticação de máquina no Cloudflare Access.
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
 - ISS Gabriel: bloqueado por cadastro sem usuário/senha; erro agora é classificado como `ACCOUNT_CREDENTIALS_MISSING`.
 - Portal Alan: `finalizado_parcial` com 18 baixados, 0 erros e 10 novos arquivos sobre a base inicial; Google Modo IA v11 foi o único resolvedor.
@@ -38,7 +38,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Pendências externas
 
-- O deploy automático Netlify recebe os commits, mas está sendo ignorado por limite de créditos da conta. O ISS otimizado está ao vivo; o novo HTML do Portal aguarda a regularização do Netlify.
+- O deploy automático Netlify recebe os commits, mas pode ser ignorado por limite de créditos da conta. ISS e Portal atualizados já estão ao vivo pelas rotas do Worker Cloudflare.
 - Preencher as credenciais do Gabriel para concluir o teste ISS dele.
 - No servidor, habilitar linger do usuário e reiniciar o monitor com privilégios administrativos para ele carregar o segredo atual.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.
