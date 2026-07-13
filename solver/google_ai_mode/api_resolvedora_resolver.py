@@ -3,6 +3,7 @@ import base64
 import html
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -23,30 +24,18 @@ try:
 except Exception:
     pass
 
-# --- CONFIGURAÇÕES DO COHERE ---
-# Compatibilidade: COHERE_API_KEY continua sendo a chave 1.
-# As chaves 2 e 3 sao opcionais e entram no round-robin/failover quando configuradas.
-COHERE_API_KEYS = tuple(
-    dict.fromkeys(
-        key
-        for key in (
-            os.environ.get("COHERE_API_KEY", "").strip(),
-            os.environ.get("COHERE_API_KEY_2", "").strip(),
-            os.environ.get("COHERE_API_KEY_3", "").strip(),
-        )
-        if key
-    )
-)
-COHERE_MODEL = "command-a-vision-07-2025"
+# O provedor visual antigo foi desativado. O nucleo e reutilizado somente pelo
+# adaptador Google Modo IA e nao deve conter credenciais de terceiros.
+LEGACY_PROVIDER_API_KEY_1 = ""
+LEGACY_PROVIDER_API_KEY_2 = ""
+LEGACY_PROVIDER_API_KEY_3 = ""
+LEGACY_PROVIDER_API_KEY_4 = ""
+LEGACY_PROVIDER_API_KEY_5 = ""
+LEGACY_PROVIDER_MODEL = "disabled"
 
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
-SOLVER_API_VERSION = "2026-07-07-modal-six-browsers-cohere-cooldown"
-SOLVER_PAGE_HOST = os.environ.get("SOLVER_PAGE_HOST", "www.nfse.gov.br").strip() or "www.nfse.gov.br"
-NON_9_SETTLE_SECONDS = float(os.environ.get("SOLVER_NON_9_SETTLE_SECONDS", "5"))
-NON_9_RELOADS_BEFORE_AI = int(os.environ.get("SOLVER_NON_9_RELOADS_BEFORE_AI", "3"))
-PROXY_HOSTNAME = os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "").strip()
-PROXY_LISTENER = os.environ.get("PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480").strip()
+SOLVER_API_VERSION = "2026-07-06-triple-key-profile-cleanup"
 SOLVER_PROFILES = API_DIR / "chrome-profiles-hcaptcha"
 CAPTCHA_DIR = API_DIR / "hcaptcha-imagens"
 CHALLENGES_DIR = CAPTCHA_DIR / "desafios"
@@ -58,7 +47,351 @@ ACTIVE_SOLVERS = 0
 ACTIVE_LOCK = threading.Lock()
 MAX_BROWSERS = 1
 FAST_RELOAD_NON_9 = False
+# Perfil de temporizacao configuravel. A API antiga preserva os valores historicos;
+# adaptadores podem ajustar estes valores sem duplicar o nucleo do solver.
+BROWSER_EXTRA_ARGS: list[str] = []
+CHALLENGE_STABLE_REQUIRED_POLLS = 3
+CHALLENGE_STABLE_POLL_SECONDS = 0.4
+CHALLENGE_STABLE_SETTLE_SECONDS = 0.6
+NON9_CAPTURE_SETTLE_SECONDS = 1.0
+OPEN_CHALLENGE_RETRY_DELAY_SECONDS = 2.0
+NON9_POST_CLICK_DELAY_SECONDS = 0.8
+NON9_NEXT_CHALLENGE_DELAY_SECONDS = 1.5
+TOKEN_POLL_SECONDS = 0.4
+TOKEN_RETRY_ABORT_SECONDS = 10.0
+CHECKMARK_TOKEN_EXTENSION_SECONDS = 8.0
+BROWSER_RESTART_LIMIT = 3
+TILE_CLICK_INTERVAL_SECONDS = 0.1
+TILE_POST_SELECTION_DELAY_SECONDS = 1.0
 LAST_SOLVER_ERROR = threading.local()
+PROVIDER_FAILURE_LIMIT = 10
+PROVIDER_FAILURE_COUNT = 0
+PROVIDER_FAILURE_TOTAL = 0
+PROVIDER_CIRCUIT_OPEN = False
+PROVIDER_LAST_ERROR = None
+PROVIDER_LOCK = threading.Lock()
+PROVIDER_ABORT_FILE = API_DIR / "legacy_provider-circuit-open.json"
+SOLVER_FAILURE_LIMIT = 10
+SOLVER_FAILURE_COUNT = 0
+SOLVER_FAILURE_TOTAL = 0
+SOLVER_CIRCUIT_OPEN = False
+SOLVER_LAST_ERROR = None
+SOLVER_LOCK = threading.Lock()
+SOLVER_ABORT_FILE = API_DIR / "solver-circuit-open.json"
+MAX_SOLVE_SECONDS = 180
+SERVER_INSTANCE = None
+
+LEGACY_PROVIDER_API_KEYS = (
+    LEGACY_PROVIDER_API_KEY_1.strip(),
+    LEGACY_PROVIDER_API_KEY_2.strip(),
+    LEGACY_PROVIDER_API_KEY_3.strip(),
+    LEGACY_PROVIDER_API_KEY_4.strip(),
+    LEGACY_PROVIDER_API_KEY_5.strip(),
+)
+LEGACY_PROVIDER_KEY_INDEX = 0
+LEGACY_PROVIDER_KEY_LOCK = threading.Lock()
+LEGACY_PROVIDER_KEY_FAILURE_COUNTS = [0 for _ in LEGACY_PROVIDER_API_KEYS]
+LEGACY_PROVIDER_KEY_SUCCESS_COUNTS = [0 for _ in LEGACY_PROVIDER_API_KEYS]
+LEGACY_PROVIDER_KEY_LAST_ERRORS = [None for _ in LEGACY_PROVIDER_API_KEYS]
+LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL = [0.0 for _ in LEGACY_PROVIDER_API_KEYS]
+LEGACY_PROVIDER_KEY_COOLDOWN_SECONDS = 180
+LEGACY_PROVIDER_FAILOVER_STATUSES = {401, 403, 408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class LegacyProviderUnavailable(RuntimeError):
+    pass
+
+
+def configured_legacy_provider_key_indices() -> list[int]:
+    return [index for index, key in enumerate(LEGACY_PROVIDER_API_KEYS) if key]
+
+
+def legacy_provider_key_state() -> dict:
+    with LEGACY_PROVIDER_KEY_LOCK:
+        configured = configured_legacy_provider_key_indices()
+        active = LEGACY_PROVIDER_KEY_INDEX if LEGACY_PROVIDER_KEY_INDEX in configured else (configured[0] if configured else None)
+        return {
+            "configured_keys": len(configured),
+            "total_slots": len(LEGACY_PROVIDER_API_KEYS),
+            "active_slot": (active + 1) if active is not None else None,
+            "slots": [
+                {
+                    "slot": index + 1,
+                    "configured": bool(LEGACY_PROVIDER_API_KEYS[index]),
+                    "successes": LEGACY_PROVIDER_KEY_SUCCESS_COUNTS[index],
+                    "failures": LEGACY_PROVIDER_KEY_FAILURE_COUNTS[index],
+                    "last_error": LEGACY_PROVIDER_KEY_LAST_ERRORS[index],
+                    "cooldown_until": LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[index],
+                    "cooldown_remaining_seconds": max(0, int(LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[index] - time.time())),
+                }
+                for index in range(len(LEGACY_PROVIDER_API_KEYS))
+            ],
+        }
+
+
+def _legacy_provider_key_order() -> list[int]:
+    configured = configured_legacy_provider_key_indices()
+    if not configured:
+        return []
+    now = time.time()
+    with LEGACY_PROVIDER_KEY_LOCK:
+        available = [index for index in configured if LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[index] <= now]
+        if not available:
+            return []
+        start = LEGACY_PROVIDER_KEY_INDEX if LEGACY_PROVIDER_KEY_INDEX in available else available[0]
+    position = available.index(start)
+    return available[position:] + available[:position]
+
+
+def _record_legacy_provider_key_success(index: int) -> None:
+    global LEGACY_PROVIDER_KEY_INDEX
+    with LEGACY_PROVIDER_KEY_LOCK:
+        LEGACY_PROVIDER_KEY_INDEX = index
+        LEGACY_PROVIDER_KEY_SUCCESS_COUNTS[index] += 1
+        LEGACY_PROVIDER_KEY_LAST_ERRORS[index] = None
+        LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[index] = 0.0
+
+
+def _record_legacy_provider_key_failure(index: int, detail: str, cooldown: bool = False) -> None:
+    global LEGACY_PROVIDER_KEY_INDEX
+    with LEGACY_PROVIDER_KEY_LOCK:
+        LEGACY_PROVIDER_KEY_FAILURE_COUNTS[index] += 1
+        LEGACY_PROVIDER_KEY_LAST_ERRORS[index] = str(detail)[:500]
+        if cooldown:
+            LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[index] = time.time() + LEGACY_PROVIDER_KEY_COOLDOWN_SECONDS
+        configured = configured_legacy_provider_key_indices()
+        available = [slot for slot in configured if LEGACY_PROVIDER_KEY_COOLDOWN_UNTIL[slot] <= time.time()] or configured
+        if len(available) > 1 and index in available:
+            LEGACY_PROVIDER_KEY_INDEX = available[(available.index(index) + 1) % len(available)]
+        elif available:
+            LEGACY_PROVIDER_KEY_INDEX = available[0]
+
+
+def request_legacy_provider(payload: dict, timeout: int) -> requests.Response:
+    raise LegacyProviderUnavailable(
+        "Provedor visual legado desativado; use o adaptador Google Modo IA."
+    )
+
+    # Codigo abaixo permanece inacessivel apenas para compatibilidade de leitura
+    # com snapshots historicos do projeto organizado.
+    order = _legacy_provider_key_order()
+    if not order:
+        raise LegacyProviderUnavailable(
+            "Nenhuma chave provedor visual configurada ou todas em cooldown temporario."
+        )
+
+    errors = []
+    for index in order:
+        headers = {
+            "Authorization": f"bearer {LEGACY_PROVIDER_API_KEYS[index]}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        try:
+            response = requests.post(
+                "https://api.legacy_provider.com/v2/chat",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            detail = f"slot {index + 1}: {type(exc).__name__}: {exc}"
+            _record_legacy_provider_key_failure(index, detail, cooldown=False)
+            errors.append(detail)
+            print(f"[provedor visual] Chave {index + 1} falhou na rede; tentando a proxima.")
+            continue
+
+        if response.status_code < 400:
+            _record_legacy_provider_key_success(index)
+            print(f"[provedor visual] Requisicao atendida pela chave {index + 1}.")
+            return response
+
+        detail = f"slot {index + 1}: HTTP {response.status_code}"
+        if response.status_code in LEGACY_PROVIDER_FAILOVER_STATUSES:
+            _record_legacy_provider_key_failure(index, detail, cooldown=(response.status_code == 429))
+            errors.append(detail)
+            print(f"[provedor visual] Chave {index + 1} retornou HTTP {response.status_code}; tentando a proxima.")
+            continue
+
+        response.raise_for_status()
+
+    raise LegacyProviderUnavailable("Todas as chaves do provedor visual falharam: " + "; ".join(errors))
+
+
+def provider_circuit_state() -> dict:
+    with PROVIDER_LOCK:
+        return {
+            "open": PROVIDER_CIRCUIT_OPEN,
+            "consecutive_failures": PROVIDER_FAILURE_COUNT,
+            "total_failures": PROVIDER_FAILURE_TOTAL,
+            "failure_limit": PROVIDER_FAILURE_LIMIT,
+            "last_error": PROVIDER_LAST_ERROR,
+        }
+
+
+def provider_request_allowed() -> bool:
+    with PROVIDER_LOCK:
+        return not PROVIDER_CIRCUIT_OPEN
+
+
+def record_provider_success() -> None:
+    global PROVIDER_FAILURE_COUNT, PROVIDER_LAST_ERROR
+    with PROVIDER_LOCK:
+        if PROVIDER_CIRCUIT_OPEN:
+            return
+        PROVIDER_FAILURE_COUNT = 0
+        PROVIDER_LAST_ERROR = None
+
+
+def record_provider_failure(detail: str) -> dict:
+    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR
+    opened_now = False
+    with PROVIDER_LOCK:
+        PROVIDER_FAILURE_TOTAL += 1
+        PROVIDER_FAILURE_COUNT += 1
+        PROVIDER_LAST_ERROR = str(detail)[:1000]
+        if not PROVIDER_CIRCUIT_OPEN and PROVIDER_FAILURE_COUNT >= PROVIDER_FAILURE_LIMIT:
+            PROVIDER_CIRCUIT_OPEN = True
+            opened_now = True
+        state = {
+            "open": PROVIDER_CIRCUIT_OPEN,
+            "consecutive_failures": PROVIDER_FAILURE_COUNT,
+            "total_failures": PROVIDER_FAILURE_TOTAL,
+            "failure_limit": PROVIDER_FAILURE_LIMIT,
+            "last_error": PROVIDER_LAST_ERROR,
+        }
+    if opened_now:
+        payload = {**state, "opened_at": datetime.now().isoformat(timespec="seconds"), "provider": "legacy_provider"}
+        try:
+            PROVIDER_ABORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PROVIDER_ABORT_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            print(f"[Circuit] Nao consegui gravar sentinela: {exc}")
+        print(f"[Circuit] ABERTO: {state['consecutive_failures']} falhas consecutivas da provedor visual. Novos solves serao recusados.")
+    else:
+        print(f"[Circuit] Falha provedor visual {state['consecutive_failures']}/{state['failure_limit']}: {detail}")
+    return state
+
+
+def reset_provider_circuit() -> None:
+    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR
+    with PROVIDER_LOCK:
+        PROVIDER_FAILURE_COUNT = 0
+        PROVIDER_FAILURE_TOTAL = 0
+        PROVIDER_CIRCUIT_OPEN = False
+        PROVIDER_LAST_ERROR = None
+    try:
+        PROVIDER_ABORT_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def solver_circuit_state() -> dict:
+    with SOLVER_LOCK:
+        return {
+            "open": SOLVER_CIRCUIT_OPEN,
+            "consecutive_failures": SOLVER_FAILURE_COUNT,
+            "total_failures": SOLVER_FAILURE_TOTAL,
+            "failure_limit": SOLVER_FAILURE_LIMIT,
+            "last_error": SOLVER_LAST_ERROR,
+        }
+
+
+def record_solver_success() -> None:
+    global SOLVER_FAILURE_COUNT, SOLVER_LAST_ERROR
+    with SOLVER_LOCK:
+        if SOLVER_CIRCUIT_OPEN:
+            return
+        SOLVER_FAILURE_COUNT = 0
+        SOLVER_LAST_ERROR = None
+
+
+def record_solver_failure(detail: str) -> dict:
+    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR
+    opened_now = False
+    with SOLVER_LOCK:
+        SOLVER_FAILURE_TOTAL += 1
+        SOLVER_FAILURE_COUNT += 1
+        SOLVER_LAST_ERROR = str(detail)[:1000]
+        if not SOLVER_CIRCUIT_OPEN and SOLVER_FAILURE_COUNT >= SOLVER_FAILURE_LIMIT:
+            SOLVER_CIRCUIT_OPEN = True
+            opened_now = True
+        state = {
+            "open": SOLVER_CIRCUIT_OPEN,
+            "consecutive_failures": SOLVER_FAILURE_COUNT,
+            "total_failures": SOLVER_FAILURE_TOTAL,
+            "failure_limit": SOLVER_FAILURE_LIMIT,
+            "last_error": SOLVER_LAST_ERROR,
+        }
+    if opened_now:
+        payload = {**state, "opened_at": datetime.now().isoformat(timespec="seconds"), "circuit": "solver"}
+        try:
+            SOLVER_ABORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SOLVER_ABORT_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            print(f"[Circuit] Nao consegui gravar sentinela do solver: {exc}")
+        print(f"[Circuit] SOLVER ABERTO: {state['consecutive_failures']} solves consecutivos sem token.")
+    else:
+        print(f"[Circuit] Falha solve {state['consecutive_failures']}/{state['failure_limit']}: {detail}")
+    return state
+
+
+def reset_solver_circuit() -> None:
+    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR
+    with SOLVER_LOCK:
+        SOLVER_FAILURE_COUNT = 0
+        SOLVER_FAILURE_TOTAL = 0
+        SOLVER_CIRCUIT_OPEN = False
+        SOLVER_LAST_ERROR = None
+    try:
+        SOLVER_ABORT_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def fatal_circuit_state() -> dict:
+    provider = provider_circuit_state()
+    solver = solver_circuit_state()
+    if provider["open"]:
+        return {
+            "open": True,
+            "reason": "provider_circuit_open",
+            "error": provider.get("last_error") or "provedor visual indisponivel",
+            "provider_state": provider,
+            "solver_state": solver,
+        }
+    if solver["open"]:
+        return {
+            "open": True,
+            "reason": "solver_circuit_open",
+            "error": solver.get("last_error") or "Muitos solves sem token",
+            "provider_state": provider,
+            "solver_state": solver,
+        }
+    return {
+        "open": False,
+        "reason": None,
+        "error": None,
+        "provider_state": provider,
+        "solver_state": solver,
+    }
+
+
+def shutdown_server_when_idle() -> None:
+    def worker():
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            with ACTIVE_LOCK:
+                active = ACTIVE_SOLVERS
+            if active <= 0:
+                break
+            time.sleep(0.25)
+        time.sleep(1.0)
+        server = SERVER_INSTANCE
+        if server is not None:
+            print("[Solver API] Encerrando servidor apos circuito fatal.")
+            server.shutdown()
+    threading.Thread(target=worker, name="solver-shutdown", daemon=True).start()
 
 
 def set_solver_error(reason: str, detail: str | None = None) -> None:
@@ -70,157 +403,6 @@ def get_solver_error(default_reason: str = "solver_failed") -> dict:
     if isinstance(value, dict) and value.get("reason"):
         return value
     return {"reason": default_reason, "detail": default_reason}
-
-
-def has_solver_error() -> bool:
-    value = getattr(LAST_SOLVER_ERROR, "value", None)
-    return isinstance(value, dict) and bool(value.get("reason"))
-
-
-def should_reload_non_9_before_ai(non_9_reloads: int) -> bool:
-    return FAST_RELOAD_NON_9 and non_9_reloads < max(0, NON_9_RELOADS_BEFORE_AI)
-
-
-COHERE_KEY_LOCK = threading.Lock()
-COHERE_KEY_INDEX = 0
-COHERE_LAST_SUCCESSFUL_KEY_INDEX = None
-COHERE_KEY_FAILURE_COUNTS = [0 for _ in COHERE_API_KEYS]
-COHERE_KEY_SUCCESS_COUNTS = [0 for _ in COHERE_API_KEYS]
-COHERE_KEY_LAST_ERRORS = [None for _ in COHERE_API_KEYS]
-COHERE_KEY_COOLDOWN_UNTIL = [0.0 for _ in COHERE_API_KEYS]
-COHERE_429_COOLDOWN_SECONDS = max(30.0, float(os.environ.get("COHERE_429_COOLDOWN_SECONDS", "300")))
-COHERE_FAILOVER_STATUSES = {401, 403, 408, 409, 425, 429, 500, 502, 503, 504}
-
-
-class CohereKeysUnavailable(RuntimeError):
-    def __init__(self, errors: list[str]):
-        self.errors = errors
-        detail = "; ".join(errors) if errors else "nenhuma chave configurada"
-        super().__init__(f"Todas as chaves Cohere falharam: {detail}")
-
-    @property
-    def all_rate_limited(self) -> bool:
-        return bool(self.errors) and all(("HTTP 429" in error or "cooldown" in error.lower()) for error in self.errors)
-
-
-def cohere_key_state() -> dict:
-    now = time.monotonic()
-    with COHERE_KEY_LOCK:
-        next_slot = (COHERE_KEY_INDEX % len(COHERE_API_KEYS)) + 1 if COHERE_API_KEYS else None
-        active_slot = (
-            COHERE_LAST_SUCCESSFUL_KEY_INDEX + 1
-            if COHERE_LAST_SUCCESSFUL_KEY_INDEX is not None
-            else next_slot
-        )
-        return {
-            "configured_keys": len(COHERE_API_KEYS),
-            "active_slot": active_slot,
-            "next_slot": next_slot,
-            "rate_limit_cooldown_seconds": COHERE_429_COOLDOWN_SECONDS,
-            "slots": [
-                {
-                    "slot": index + 1,
-                    "successes": COHERE_KEY_SUCCESS_COUNTS[index],
-                    "failures": COHERE_KEY_FAILURE_COUNTS[index],
-                    "last_error": COHERE_KEY_LAST_ERRORS[index],
-                    "available": COHERE_KEY_COOLDOWN_UNTIL[index] <= now,
-                    "cooldown_remaining_seconds": max(
-                        0,
-                        int(round(COHERE_KEY_COOLDOWN_UNTIL[index] - now)),
-                    ),
-                }
-                for index in range(len(COHERE_API_KEYS))
-            ],
-        }
-
-
-def _reserve_cohere_start_index() -> int | None:
-    global COHERE_KEY_INDEX
-    with COHERE_KEY_LOCK:
-        if not COHERE_API_KEYS:
-            return None
-        start = COHERE_KEY_INDEX % len(COHERE_API_KEYS)
-        COHERE_KEY_INDEX = (COHERE_KEY_INDEX + 1) % len(COHERE_API_KEYS)
-        return start
-
-
-def _record_cohere_result(
-    index: int,
-    *,
-    success: bool,
-    error: str | None = None,
-    status_code: int | None = None,
-) -> None:
-    global COHERE_LAST_SUCCESSFUL_KEY_INDEX
-    with COHERE_KEY_LOCK:
-        if success:
-            COHERE_KEY_SUCCESS_COUNTS[index] += 1
-            COHERE_KEY_LAST_ERRORS[index] = None
-            COHERE_KEY_COOLDOWN_UNTIL[index] = 0.0
-            COHERE_LAST_SUCCESSFUL_KEY_INDEX = index
-        else:
-            COHERE_KEY_FAILURE_COUNTS[index] += 1
-            COHERE_KEY_LAST_ERRORS[index] = error
-            if status_code == 429:
-                COHERE_KEY_COOLDOWN_UNTIL[index] = max(
-                    COHERE_KEY_COOLDOWN_UNTIL[index],
-                    time.monotonic() + COHERE_429_COOLDOWN_SECONDS,
-                )
-
-
-def post_to_cohere(payload: dict, *, timeout: float) -> tuple[requests.Response, int]:
-    """Round-robin com failover e cooldown para chaves temporariamente bloqueadas."""
-    start = _reserve_cohere_start_index()
-    if start is None:
-        raise CohereKeysUnavailable([])
-
-    errors: list[str] = []
-    for offset in range(len(COHERE_API_KEYS)):
-        index = (start + offset) % len(COHERE_API_KEYS)
-        slot = index + 1
-        now = time.monotonic()
-        with COHERE_KEY_LOCK:
-            cooldown_remaining = COHERE_KEY_COOLDOWN_UNTIL[index] - now
-        if cooldown_remaining > 0:
-            errors.append(f"slot {slot}: cooldown {int(round(cooldown_remaining))}s")
-            continue
-
-        headers = {
-            "Authorization": f"bearer {COHERE_API_KEYS[index]}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        try:
-            response = requests.post(
-                "https://api.cohere.com/v2/chat",
-                headers=headers,
-                json=payload,
-                timeout=timeout,
-            )
-        except requests.RequestException as exc:
-            detail = f"slot {slot}: {type(exc).__name__}: {exc}"
-            _record_cohere_result(index, success=False, error=detail)
-            errors.append(detail)
-            continue
-
-        if 200 <= response.status_code < 300:
-            _record_cohere_result(index, success=True)
-            return response, slot
-
-        detail = f"slot {slot}: HTTP {response.status_code}"
-        _record_cohere_result(
-            index,
-            success=False,
-            error=detail,
-            status_code=response.status_code,
-        )
-        if response.status_code in COHERE_FAILOVER_STATUSES:
-            errors.append(detail)
-            continue
-
-        response.raise_for_status()
-
-    raise CohereKeysUnavailable(errors)
 
 
 class TokenState:
@@ -281,10 +463,6 @@ def find_browser(explicit: str | None = None) -> str:
     pf = os.environ.get("PROGRAMFILES", r"C:\\Program Files")
     pfx86 = os.environ.get("PROGRAMFILES(X86)", r"C:\\Program Files (x86)")
     candidates += [
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
         rf"{pf}\\Google\\Chrome\\Application\\chrome.exe",
         rf"{pfx86}\\Google\\Chrome\\Application\\chrome.exe",
         rf"{local}\\Google\\Chrome\\Application\\chrome.exe",
@@ -301,42 +479,38 @@ def list_pages(port: int) -> list[dict]:
     return requests.get(f"http://127.0.0.1:{port}/json/list", timeout=1).json()
 
 
-def is_solver_page_url(url: str) -> bool:
-    value = url or ""
-    return "127.0.0.1" in value or "localhost" in value or SOLVER_PAGE_HOST in value
+def solver_browser_alive(port: int, proc: subprocess.Popen | None = None) -> bool:
+    """Confirma que o navegador do solve ainda responde ao CDP local."""
+    try:
+        response = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=0.75)
+        response.raise_for_status()
+        return True
+    except Exception:
+        return False
 
 
 def open_solver_browser(browser: str, url: str) -> tuple[int, Path, subprocess.Popen]:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     tid = threading.get_ident()
-    profile = SOLVER_PROFILES / f"solver-{stamp}"
     profile = SOLVER_PROFILES / f"solver-{stamp}-{tid}"
     profile.mkdir(parents=True, exist_ok=True)
     port = free_port()
-    headless = os.environ.get("SOLVER_HEADLESS", "1").strip().lower() not in {"0", "false", "no", "off"}
-    args = [
+    proc = subprocess.Popen(
+        [
             browser,
             f"--user-data-dir={profile}",
             f"--remote-debugging-port={port}",
             "--remote-allow-origins=*",
-            f"--host-resolver-rules=MAP {SOLVER_PAGE_HOST} 127.0.0.1",
-            f"--unsafely-treat-insecure-origin-as-secure={url.rstrip('/')}",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--window-size=1365,900",
+            "--new-window",
             "--no-first-run",
             "--disable-default-apps",
             "--disable-background-mode",
+            *BROWSER_EXTRA_ARGS,
             url,
-    ]
-    if PROXY_HOSTNAME and PROXY_LISTENER:
-        args.insert(-1, f"--proxy-server=http://{PROXY_LISTENER}")
-        args.insert(-1, f"--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;{SOLVER_PAGE_HOST}")
-    if headless:
-        args[4:4] = ["--headless=new", "--disable-gpu"]
-    else:
-        args.insert(-1, "--new-window")
-    proc = subprocess.Popen(args)
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     return port, profile, proc
 
 
@@ -374,6 +548,7 @@ def start_solver_page(sitekey: str) -> tuple[ThreadingHTTPServer, int, TokenStat
   <div class="h-captcha" data-sitekey="{escaped_sitekey}" data-callback="captchaOk" data-error-callback="captchaErro" data-expired-callback="captchaExpirou"></div>
   <script>
     function captchaOk(token) {{
+      window.__lastHcaptchaToken = token || '';
       fetch('/token?t=' + encodeURIComponent(token)).catch(() => {{}});
     }}
     function captchaErro() {{}}
@@ -393,7 +568,7 @@ def start_solver_page(sitekey: str) -> tuple[ThreadingHTTPServer, int, TokenStat
     return server, port, token_state
 
 
-def close_solver_browser(port: int, proc: subprocess.Popen | None) -> None:
+def close_solver_browser(port: int, proc: subprocess.Popen | None, profile: Path | None = None) -> None:
     try:
         version = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=1).json()
         ws_url = version.get("webSocketDebuggerUrl")
@@ -416,6 +591,19 @@ def close_solver_browser(port: int, proc: subprocess.Popen | None) -> None:
             except subprocess.TimeoutExpired:
                 pass
 
+    if profile and profile.exists():
+        last_error = None
+        for attempt in range(5):
+            try:
+                shutil.rmtree(profile)
+                print(f"[Solver API] Perfil temporario removido: {profile.name}")
+                break
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.5 * (attempt + 1))
+        else:
+            print(f"[Solver API] Nao consegui remover perfil temporario {profile}: {last_error}")
+
 
 def wait_solver_page(port: int) -> dict:
     end = time.time() + 30
@@ -423,7 +611,7 @@ def wait_solver_page(port: int) -> dict:
         try:
             pages = list_pages(port)
             for page in pages:
-                if page.get("type") == "page" and is_solver_page_url(page.get("url", "")):
+                if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
                     return page
         except Exception:
             pass
@@ -452,7 +640,7 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
                     page
                     for page in pages
                     if page.get("type") == "page"
-                    and is_solver_page_url(page.get("url", ""))
+                    and "127.0.0.1" in page.get("url", "")
                     and page.get("webSocketDebuggerUrl")
                 ),
                 None,
@@ -532,7 +720,7 @@ def challenge_grid_visible(port: int) -> bool:
             (
                 page
                 for page in pages
-                if page.get("type") == "page" and is_solver_page_url(page.get("url", "")) and page.get("webSocketDebuggerUrl")
+                if page.get("type") == "page" and "127.0.0.1" in page.get("url", "") and page.get("webSocketDebuggerUrl")
             ),
             None,
         )
@@ -665,17 +853,6 @@ def wait_for_stable_9_tile_challenge(port: int, timeout: int = 8) -> tuple[dict 
             client.close()
         last_state = state
         if state and (state.get("checkmark") or state.get("imageCanvas")):
-            if state.get("imageCanvas") and NON_9_SETTLE_SECONDS > 0:
-                print(f"[Debug] Canvas de imagem detectado; aguardando {NON_9_SETTLE_SECONDS:.1f}s para estabilizar.")
-                time.sleep(NON_9_SETTLE_SECONDS)
-                try:
-                    client = CdpClient(page["webSocketDebuggerUrl"])
-                    try:
-                        state = _challenge_dom_snapshot(client) or state
-                    finally:
-                        client.close()
-                except Exception:
-                    pass
             marker = "marca de verificacao" if state.get("checkmark") else "canvas de imagem"
             print(f"[Debug] Desafio nao e grade de 9 tiles: {marker}.")
             return None, state
@@ -694,13 +871,13 @@ def wait_for_stable_9_tile_challenge(port: int, timeout: int = 8) -> tuple[dict 
             else:
                 stable_signature = signature
                 stable_count = 1
-            if stable_count >= 3:
-                time.sleep(0.6)
+            if stable_count >= CHALLENGE_STABLE_REQUIRED_POLLS:
+                time.sleep(CHALLENGE_STABLE_SETTLE_SECONDS)
                 return page, state
         else:
             stable_signature = None
             stable_count = 0
-        time.sleep(0.4)
+        time.sleep(CHALLENGE_STABLE_POLL_SECONDS)
     if last_state:
         task_count = len(last_state.get("tasks") or [])
         loaded = sum(1 for task in last_state.get("tasks") or [] if task.get("loaded") and task.get("visible"))
@@ -727,7 +904,7 @@ def screenshot_solver(port: int, note_index: int, attempt: int, label: str = "gr
         target = None
         clip = None
         for page in pages:
-            if page.get("type") == "page" and is_solver_page_url(page.get("url", "")):
+            if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
                 target = page
                 try:
                     client = CdpClient(page["webSocketDebuggerUrl"])
@@ -762,7 +939,7 @@ def screenshot_solver(port: int, note_index: int, attempt: int, label: str = "gr
                 break
         if not target:
             for page in pages:
-                if page.get("type") == "page" and is_solver_page_url(page.get("url", "")):
+                if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
                     target = page
                     break
         if not target:
@@ -801,7 +978,7 @@ def top_level_solver_page(port: int) -> dict | None:
                 page
                 for page in list_pages(port)
                 if page.get("type") == "page"
-                and is_solver_page_url(page.get("url", ""))
+                and "127.0.0.1" in page.get("url", "")
                 and page.get("webSocketDebuggerUrl")
             ),
             None,
@@ -1110,7 +1287,7 @@ def save_9_tile_challenge_debug(port: int, state: dict, request_id: str, attempt
         encoding="utf-8",
     )
 
-    time.sleep(1)
+    time.sleep(NON9_CAPTURE_SETTLE_SECONDS)
     capture_challenge_png(port, folder / "desafio.png")
     if state.get("grid"):
         capture_challenge_png(port, folder / "grade.png", state["grid"])
@@ -1139,7 +1316,7 @@ def save_non_9_challenge_debug(port: int, state: dict, request_id: str, attempt:
         encoding="utf-8",
     )
 
-    time.sleep(1)
+    time.sleep(NON9_CAPTURE_SETTLE_SECONDS)
     if not capture_non_9_canvas_artifacts(port, folder):
         (folder / "canvas-erro.txt").write_text(
             "Nao consegui capturar o canvas selecionavel de forma valida; vou tentar novamente.\n",
@@ -1311,24 +1488,44 @@ def captcha_checkmark_visible(port: int) -> bool:
     return False
 
 
-def wait_token_or_retry_after_submit(port: int, timeout: float = 15.0) -> str | None:
+def wait_token_or_retry_after_submit(
+    port: int,
+    timeout: float = 15.0,
+    browser_proc: subprocess.Popen | None = None,
+) -> str | None:
     print("[Auto] Aguardando token...")
     end = time.time() + timeout
     saw_checkmark = False
+    retry_since = None
+    retry_logged = False
     while time.time() < end:
+        if not solver_browser_alive(port, browser_proc):
+            set_solver_error("browser_closed", "Navegador do solve foi fechado ou deixou de responder.")
+            print("[Auto] Navegador foi fechado; encerrando esta janela para reabrir outra.")
+            return None
         token = extract_token_from_page(port)
         if token:
             print(f"[Auto] Token obtido com sucesso! ({len(token)} chars)")
             return token
         if captcha_checkmark_visible(port):
             if not saw_checkmark:
-                print("[Auto] Marca de verificacao apareceu; aguardando token/callback.")
+                print("[Auto] Marca de verificacao apareceu; aguardando token/callback por prazo limitado.")
+                end = max(end, time.time() + CHECKMARK_TOKEN_EXTENSION_SECONDS)
             saw_checkmark = True
-            end = max(end, time.time() + 8)
-        if captcha_retry_error_visible(port):
-            print("[Auto] hCaptcha mostrou 'tentar novamente'; aguardando troca/token.")
-            time.sleep(1.2)
-        time.sleep(0.4)
+            retry_since = None
+        elif captcha_retry_error_visible(port):
+            if retry_since is None:
+                retry_since = time.time()
+            if not retry_logged:
+                print("[Auto] hCaptcha mostrou 'tentar novamente'; confirmando rejeicao pelo DOM.")
+                retry_logged = True
+            if time.time() - retry_since >= TOKEN_RETRY_ABORT_SECONDS:
+                print("[Auto] Rejeicao confirmada; seguindo imediatamente para o proximo desafio.")
+                return None
+        else:
+            retry_since = None
+            retry_logged = False
+        time.sleep(TOKEN_POLL_SECONDS)
     return None
 
 
@@ -1425,7 +1622,7 @@ def click_hcaptcha_tasks(port: int, indexes: list[int]) -> bool:
                         "Input.dispatchMouseEvent",
                         {"type": "mouseReleased", "x": task["x"], "y": task["y"], "button": "left", "clickCount": 1},
                     )
-                    time.sleep(0.1)
+                    time.sleep(TILE_CLICK_INTERVAL_SECONDS)
                 return True
             finally:
                 client.close()
@@ -1526,16 +1723,16 @@ def image_as_data_url(image_path: Path) -> str:
     return f"data:image/png;base64,{encoded_string}"
 
 
-def solve_with_cohere(image_path: Path, captcha_question: str, challenge_dir: Path | None = None) -> list[int] | None:
+def solve_with_legacy_provider(image_path: Path, captcha_question: str, challenge_dir: Path | None = None) -> list[int] | None:
     """
-    Envia a imagem para o Cohere e retorna a lista de índices [1-9] ou None se falhar.
+    Envia a imagem para o provedor visual e retorna a lista de índices [1-9] ou None se falhar.
     """
-    if not image_path or not image_path.exists():
-        print("[Cohere] Imagem não encontrada.")
+    if not provider_request_allowed():
+        state = provider_circuit_state()
+        set_solver_error("provider_circuit_open", f"provedor visual bloqueada apos {state['consecutive_failures']} falhas consecutivas.")
         return None
-    if not COHERE_API_KEYS:
-        print("[Cohere] Nenhuma chave Cohere configurada no ambiente.")
-        set_solver_error("cohere_key_missing", "Nenhuma chave Cohere configurada no Secret do Modal.")
+    if not image_path or not image_path.exists():
+        print("[provedor visual] Imagem não encontrada.")
         return None
 
     bot_response = ""
@@ -1551,8 +1748,6 @@ As imagens anexadas vêm nesta ordem:
 
 Regras de decisão:
 - Responda à pergunta original literalmente.
-- Se a pergunta mencionar "imagem de exemplo", primeiro identifique o objeto/alvo mostrado nessa imagem de exemplo e só depois compare cada tile com esse alvo.
-- Em desafios com "imagem de exemplo", nunca selecione quase todos os tiles por precaução. Só selecione os tiles que correspondem claramente ao exemplo.
 - Analise cada tile individualmente usando o recorte do próprio tile como fonte principal.
 - Use a imagem geral só para contexto e para confirmar a numeração.
 - Se o alvo aparecer parcialmente, selecione apenas quando ainda for claramente identificável.
@@ -1596,7 +1791,7 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
                     content.append({"type": "image_url", "image_url": {"url": image_as_data_url(tile_path)}})
 
         payload = {
-            "model": COHERE_MODEL,
+            "model": LEGACY_PROVIDER_MODEL,
             "messages": [
                 {
                     "role": "user",
@@ -1607,29 +1802,24 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
             "response_format": {"type": "json_object"}
         }
         
-        response, key_slot = post_to_cohere(payload, timeout=20)
-        print(f"[Cohere] Resposta recebida pelo slot {key_slot}.")
+        response = request_legacy_provider(payload, timeout=20)
+        response.raise_for_status()
+        
         data = response.json()
         bot_response = data["message"]["content"][0]["text"]
         
         # Parsing mais robusto
         result_json = json.loads(bot_response.strip())
+        record_provider_success()
         resposta_direta = result_json.get("resposta_direta", "")
         
         indices = parse_task_numbers(resposta_direta)
-        if "imagem de exemplo" in (captcha_question or "").casefold() and len(indices) >= 7:
-            print("[Cohere] Resposta rejeitada: desafio com imagem de exemplo selecionou quase todos os tiles.")
-            set_solver_error(
-                "resposta_ambigua_imagem_exemplo",
-                "IA selecionou quase todos os tiles em desafio com imagem de exemplo; recarregando desafio.",
-            )
-            indices = []
         if challenge_dir:
             (challenge_dir / "resposta.json").write_text(
                 json.dumps(
                     {
                         "pergunta": captcha_question,
-                        "modelo": COHERE_MODEL,
+                        "modelo": LEGACY_PROVIDER_MODEL,
                         "resposta_direta": resposta_direta,
                         "indices": indices,
                         "resposta_parseada": result_json,
@@ -1641,20 +1831,22 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
                 encoding="utf-8",
             )
         
-        print(f"[Cohere] Pergunta: '{captcha_question}'")
-        print(f"[Cohere] Resposta direta: '{resposta_direta}' -> Indices: {indices}")
+        print(f"[provedor visual] Pergunta: '{captcha_question}'")
+        print(f"[provedor visual] Resposta direta: '{resposta_direta}' -> Indices: {indices}")
         
         return indices if indices else None
 
     except json.JSONDecodeError as e:
-        print(f"[Cohere] Erro ao fazer parse do JSON: {e}")
-        print(f"[Cohere] Resposta bruta: {bot_response[:500]}...")
+        state = record_provider_failure(f"json_decode: {e}")
+        set_solver_error("provider_circuit_open" if state["open"] else "legacy_provider_bad_response", str(e))
+        print(f"[provedor visual] Erro ao fazer parse do JSON: {e}")
+        print(f"[provedor visual] Resposta bruta: {bot_response[:500]}...")
         if challenge_dir:
             (challenge_dir / "resposta.json").write_text(
                 json.dumps(
                     {
                         "pergunta": captcha_question,
-                        "modelo": COHERE_MODEL,
+                        "modelo": LEGACY_PROVIDER_MODEL,
                         "erro": "json_decode",
                         "detalhe": str(e),
                         "resposta_bruta": bot_response,
@@ -1666,19 +1858,16 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
             )
         return None
     except Exception as e:
-        if isinstance(e, CohereKeysUnavailable):
-            if e.all_rate_limited:
-                set_solver_error("cohere_rate_limited", str(e))
-            else:
-                set_solver_error("cohere_all_keys_failed", str(e))
-        print(f"[Cohere] Erro ao resolver captcha: {e}")
+        state = record_provider_failure(str(e))
+        set_solver_error("provider_circuit_open" if state["open"] else "legacy_provider_request_failed", str(e))
+        print(f"[provedor visual] Erro ao resolver captcha: {e}")
         if challenge_dir:
             (challenge_dir / "resposta.json").write_text(
                 json.dumps(
                     {
                         "pergunta": captcha_question,
-                        "modelo": COHERE_MODEL,
-                        "erro": "cohere_exception",
+                        "modelo": LEGACY_PROVIDER_MODEL,
+                        "erro": "legacy_provider_exception",
                         "detalhe": str(e),
                         "resposta_bruta": bot_response,
                     },
@@ -1690,17 +1879,17 @@ Retorne **exclusivamente** um JSON válido com esta estrutura exata:
         return None
 
 
-def analyze_non_9_with_cohere(challenge_dir: Path, captcha_question: str) -> dict | None:
+def analyze_non_9_with_legacy_provider(challenge_dir: Path, captcha_question: str) -> dict | None:
     image_path = challenge_dir / "desafio-grade-15.png"
     if not image_path.exists():
         image_path = challenge_dir / "desafio.png"
     if not image_path.exists():
         return None
-    if not COHERE_API_KEYS:
-        print("[Cohere] Nenhuma chave Cohere configurada no ambiente.")
-        set_solver_error("cohere_key_missing", "Nenhuma chave Cohere configurada no Secret do Modal.")
-        return None
 
+    if not provider_request_allowed():
+        state = provider_circuit_state()
+        set_solver_error("provider_circuit_open", f"provedor visual bloqueada apos {state['consecutive_failures']} falhas consecutivas.")
+        return None
     bot_response = ""
     try:
         prompt = f"""
@@ -1745,16 +1934,17 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
         ]
 
         payload = {
-            "model": COHERE_MODEL,
+            "model": LEGACY_PROVIDER_MODEL,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
-        response, key_slot = post_to_cohere(payload, timeout=90)
-        print(f"[Cohere] Analise nao-9 recebida pelo slot {key_slot}.")
+        response = request_legacy_provider(payload, timeout=90)
+        response.raise_for_status()
         data = response.json()
         bot_response = data["message"]["content"][0]["text"]
         parsed = json.loads(bot_response.strip())
+        record_provider_success()
         alvo = parsed.get("alvo_da_pergunta") or ""
         escolha = parsed.get("escolha") or {}
         (challenge_dir / "resposta.json").write_text(
@@ -1762,7 +1952,7 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
                 {
                     "tipo": "nao_9_tiles",
                     "pergunta": captcha_question,
-                    "modelo": COHERE_MODEL,
+                    "modelo": LEGACY_PROVIDER_MODEL,
                     "resposta_parseada": parsed,
                     "resposta_bruta": bot_response,
                 },
@@ -1771,16 +1961,18 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
             ),
             encoding="utf-8",
         )
-        print(f"[Cohere] Analise nao-9 salva em: {challenge_dir / 'resposta.json'}")
-        print(f"[Cohere] Nao-9 alvo='{alvo}' escolha='{escolha}'")
+        print(f"[provedor visual] Analise nao-9 salva em: {challenge_dir / 'resposta.json'}")
+        print(f"[provedor visual] Nao-9 alvo='{alvo}' escolha='{escolha}'")
         return escolha if isinstance(escolha, dict) else None
     except json.JSONDecodeError as e:
+        state = record_provider_failure(f"json_decode: {e}")
+        set_solver_error("provider_circuit_open" if state["open"] else "legacy_provider_bad_response", str(e))
         (challenge_dir / "resposta.json").write_text(
             json.dumps(
                 {
                     "tipo": "nao_9_tiles",
                     "pergunta": captcha_question,
-                    "modelo": COHERE_MODEL,
+                    "modelo": LEGACY_PROVIDER_MODEL,
                     "erro": "json_decode",
                     "detalhe": str(e),
                     "resposta_bruta": bot_response,
@@ -1792,25 +1984,15 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
         )
         return None
     except Exception as e:
-        if isinstance(e, CohereKeysUnavailable):
-            if e.all_rate_limited:
-                set_solver_error("cohere_rate_limited", str(e))
-            else:
-                set_solver_error("cohere_all_keys_failed", str(e))
-        elif isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 429:
-            set_solver_error(
-                "cohere_rate_limited",
-                "Cohere retornou 429 ao analisar desafio hCaptcha nao-9; tente novamente depois ou reduza paralelismo.",
-            )
-        else:
-            set_solver_error("cohere_non9_error", str(e))
+        state = record_provider_failure(str(e))
+        set_solver_error("provider_circuit_open" if state["open"] else "legacy_provider_request_failed", str(e))
         (challenge_dir / "resposta.json").write_text(
             json.dumps(
                 {
                     "tipo": "nao_9_tiles",
                     "pergunta": captcha_question,
-                    "modelo": COHERE_MODEL,
-                    "erro": "cohere_exception",
+                    "modelo": LEGACY_PROVIDER_MODEL,
+                    "erro": "legacy_provider_exception",
                     "detalhe": str(e),
                     "resposta_bruta": bot_response,
                 },
@@ -1819,7 +2001,7 @@ Retorne uma única escolha. Não liste múltiplos candidatos.
             ),
             encoding="utf-8",
         )
-        print(f"[Cohere] Erro ao analisar desafio nao-9: {e}")
+        print(f"[provedor visual] Erro ao analisar desafio nao-9: {e}")
         return None
 
 
@@ -1834,12 +2016,20 @@ def save_and_analyze_non_9_challenge(port: int, state: dict, request_id: str, at
         return None
     folder = save_non_9_challenge_debug(port, state, request_id, attempt)
     if folder:
-        return analyze_non_9_with_cohere(folder, str(state.get("prompt") or ""))
+        return analyze_non_9_with_legacy_provider(folder, str(state.get("prompt") or ""))
     return None
 
 
 
-def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = "request", max_refreshes: int = 10) -> str | None:
+def auto_solve_grid(
+    port: int,
+    note_index: int,
+    attempt: int,
+    request_id: str = "request",
+    max_refreshes: int = 10,
+    deadline: float | None = None,
+    browser_proc: subprocess.Popen | None = None,
+) -> str | None:
     """
     Fluxo automático completo:
     1. Abre o desafio.
@@ -1854,14 +2044,26 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
     print("[Auto] Iniciando resolução automática...")
     non_9_reloads = 0
     grid_seen = False
-    cohere_failed = False
+    legacy_provider_failed = False
     
     for i in range(max_refreshes):
+        if not solver_browser_alive(port, browser_proc):
+            set_solver_error("browser_closed", "Navegador do solve foi fechado ou deixou de responder.")
+            print("[Auto] Navegador do solve nao responde mais; vou reabrir outra janela.")
+            return None
+        fatal = fatal_circuit_state()
+        if fatal["open"]:
+            set_solver_error(fatal["reason"], fatal["error"])
+            return None
+        if deadline is not None and time.time() >= deadline:
+            set_solver_error("solve_timeout", f"Solve excedeu {MAX_SOLVE_SECONDS} segundos.")
+            print(f"[Auto] Timeout global de {MAX_SOLVE_SECONDS}s atingido.")
+            break
         # 1. Garantir que o desafio está aberto
         if not ensure_challenge_open(port):
             print("[Auto] Falha ao abrir o desafio. Tentando clicar no checkbox...")
             click_hcaptcha_checkbox(port)
-            time.sleep(2)
+            time.sleep(OPEN_CHALLENGE_RETRY_DELAY_SECONDS)
             if not challenge_grid_visible(port):
                 continue
 
@@ -1871,7 +2073,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
             print("[Auto] Grade de 9 tiles nao estabilizou.")
             if state:
                 if state.get("checkmark") and not state.get("imageCanvas"):
-                    token = wait_token_or_retry_after_submit(port, timeout=12)
+                    token = wait_token_or_retry_after_submit(port, timeout=12, browser_proc=browser_proc)
                     if token:
                         return token
                     print("[Auto] Marca apareceu mas token ainda nao voltou; vou continuar aguardando/procurando.")
@@ -1882,7 +2084,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
                     set_solver_error("captcha_prompt_mudou", "Pergunta continha 'mudou'; desafio pulado.")
                     refresh_hcaptcha_and_wait(port)
                     continue
-                if should_reload_non_9_before_ai(non_9_reloads):
+                if FAST_RELOAD_NON_9:
                     non_9_reloads += 1
                     reload_non_9_challenge(port, non_9_reloads, max_refreshes)
                     continue
@@ -1890,17 +2092,17 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
                 if escolha:
                     print(f"[Auto] Clicando escolha nao-9: {escolha}")
                     if click_non_9_choice(port, escolha):
-                        time.sleep(0.8)
+                        time.sleep(NON9_POST_CLICK_DELAY_SECONDS)
                         if click_hcaptcha_submit(port):
-                            token = wait_token_or_retry_after_submit(port, timeout=10)
+                            token = wait_token_or_retry_after_submit(port, timeout=10, browser_proc=browser_proc)
                             if token:
                                 return token
                             print("[Auto] Sem token ainda; vou continuar para o proximo desafio.")
-                            time.sleep(1.5)
+                            time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)
                             continue
                 if not FAST_RELOAD_NON_9:
                     print("[Auto] Desafio nao-9 sem token; vou aguardar/procurar proximo desafio.")
-                    time.sleep(1.5)
+                    time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)
                     continue
             non_9_reloads += 1
             reload_non_9_challenge(port, non_9_reloads, max_refreshes)
@@ -1920,7 +2122,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
         
         if task_count != 9 or not prompt_text:
             print("[Auto] Formato inesperado.")
-            if should_reload_non_9_before_ai(non_9_reloads):
+            if FAST_RELOAD_NON_9:
                 non_9_reloads += 1
                 reload_non_9_challenge(port, non_9_reloads, max_refreshes)
                 continue
@@ -1928,17 +2130,17 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
             if escolha:
                 print(f"[Auto] Clicando escolha nao-9: {escolha}")
                 if click_non_9_choice(port, escolha):
-                    time.sleep(0.8)
+                    time.sleep(NON9_POST_CLICK_DELAY_SECONDS)
                     if click_hcaptcha_submit(port):
-                        token = wait_token_or_retry_after_submit(port, timeout=10)
+                        token = wait_token_or_retry_after_submit(port, timeout=10, browser_proc=browser_proc)
                         if token:
                             return token
                         print("[Auto] Sem token ainda; vou continuar para o proximo desafio.")
-                        time.sleep(1.5)
+                        time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)
                         continue
             if not FAST_RELOAD_NON_9:
                 print("[Auto] Desafio nao-9 sem token; vou aguardar/procurar proximo desafio.")
-                time.sleep(1.5)
+                time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)
                 continue
             non_9_reloads += 1
             reload_non_9_challenge(port, non_9_reloads, max_refreshes)
@@ -1952,12 +2154,12 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
             refresh_hcaptcha_and_wait(port)
             continue
 
-        # 4. Resolver com Cohere
-        indices = solve_with_cohere(image_path, prompt_text, challenge_dir)
+        # 4. Resolver com provedor visual
+        indices = solve_with_legacy_provider(image_path, prompt_text, challenge_dir)
         if not indices:
-            cohere_failed = True
+            legacy_provider_failed = True
             set_solver_error("nao_consegui_resolver_9_tiles", "Achei o 9 tiles, mas a IA nao retornou resposta valida.")
-            print("[Auto] Cohere nao retornou resposta valida. Recarregando...")
+            print("[Auto] provedor visual nao retornou resposta valida. Recarregando...")
             try:
                 page = wait_solver_page(port)
                 client = CdpClient(page["webSocketDebuggerUrl"])
@@ -1975,7 +2177,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
             print("[Auto] Falha ao clicar nas tarefas.")
             time.sleep(1)
 
-        time.sleep(1)
+        time.sleep(TILE_POST_SELECTION_DELAY_SECONDS)
 
         # 6. Submeter
         if not click_hcaptcha_submit(port):
@@ -1984,7 +2186,7 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
             continue
 
         # 7. Aguardar o token aparecer
-        token = wait_token_or_retry_after_submit(port, timeout=10)
+        token = wait_token_or_retry_after_submit(port, timeout=10, browser_proc=browser_proc)
         if token:
             return token
         
@@ -1992,12 +2194,12 @@ def auto_solve_grid(port: int, note_index: int, attempt: int, request_id: str = 
         set_solver_error("token_nao_voltou", "hCaptcha nao devolveu token depois do submit.")
         time.sleep(2)
     
-    if not grid_seen and not has_solver_error():
+    if not grid_seen:
         if non_9_reloads:
             set_solver_error("nao_achou_9_tiles", f"Nao conseguiu achar 9 tiles apos {non_9_reloads} recarregamentos.")
         else:
             set_solver_error("grade_9_nao_estabilizou", f"Grade de 9 tiles nao estabilizou apos {max_refreshes} tentativas.")
-    elif cohere_failed and not has_solver_error():
+    elif legacy_provider_failed:
         set_solver_error("nao_consegui_resolver_9_tiles", "Achei 9 tiles, mas nao consegui resolver com a IA dentro do limite.")
     print("[Auto] Falha apos todas as tentativas.")
     return None
@@ -2011,7 +2213,7 @@ def extract_token_from_page(port: int) -> str | None:
             (
                 page
                 for page in pages
-                if page.get("type") == "page" and is_solver_page_url(page.get("url", "")) and page.get("webSocketDebuggerUrl")
+                if page.get("type") == "page" and "127.0.0.1" in page.get("url", "") and page.get("webSocketDebuggerUrl")
             ),
             None,
         )
@@ -2023,7 +2225,15 @@ def extract_token_from_page(port: int) -> str | None:
             token = client.eval(
                 """
 (() => {
-  const field = document.querySelector('[name="h-captcha-response"]') || 
+  const callbackToken = window.__lastHcaptchaToken || '';
+  if (callbackToken && callbackToken.length > 10) return callbackToken;
+  try {
+    const apiToken = window.hcaptcha && typeof window.hcaptcha.getResponse === 'function'
+      ? window.hcaptcha.getResponse()
+      : '';
+    if (apiToken && apiToken.length > 10) return apiToken;
+  } catch (_) {}
+  const field = document.querySelector('[name="h-captcha-response"]') ||
                 document.querySelector('#h-captcha-response');
   return field ? field.value : null;
 })()
@@ -2044,8 +2254,15 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
         pass
     
     def do_POST(self):
-        """Recebe requisição POST com sitekey e URL"""
+        """Recebe requisicoes de solve e encerramento controlado."""
         global ACTIVE_SOLVERS
+        if self.path == "/shutdown":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "status": "shutdown_scheduled"}).encode("utf-8"))
+            shutdown_server_when_idle()
+            return
         if self.path != "/solve":
             self.send_response(404)
             self.end_headers()
@@ -2059,6 +2276,22 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
             sitekey = data.get("sitekey")
             url = data.get("url", "https://www.nfse.gov.br/")
             
+            fatal_state = fatal_circuit_state()
+            if fatal_state["open"]:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": fatal_state["error"],
+                    "reason": fatal_state["reason"],
+                    "success": False,
+                    "fatal": True,
+                    "provider": "legacy_provider" if fatal_state["reason"] == "provider_circuit_open" else None,
+                    "provider_state": fatal_state["provider_state"],
+                    "solver_state": fatal_state["solver_state"],
+                }, ensure_ascii=False).encode("utf-8"))
+                return
+
             if not sitekey:
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
@@ -2084,6 +2317,7 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                     SOLVER_SEMAPHORE.release()
             
             if token:
+                record_solver_success()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -2092,13 +2326,21 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 print(f"[Solver API] {request_id}: token enviado: {len(token)} chars")
             else:
                 error_info = get_solver_error("solver_failed")
-                self.send_response(200)
+                solver_state = record_solver_failure(f"{error_info.get('reason')}: {error_info.get('detail')}")
+                fatal_state = fatal_circuit_state()
+                fatal = bool(fatal_state["open"] or solver_state["open"])
+                reason = fatal_state["reason"] if fatal_state["open"] else (error_info.get("reason") or "solver_failed")
+                self.send_response(503 if fatal else 200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 response = {
-                    "error": error_info.get("detail") or "Falha ao resolver captcha",
-                    "reason": error_info.get("reason") or "solver_failed",
+                    "error": fatal_state["error"] if fatal_state["open"] else (error_info.get("detail") or "Falha ao resolver captcha"),
+                    "reason": reason,
                     "success": False,
+                    "fatal": fatal,
+                    "provider": "legacy_provider" if reason == "provider_circuit_open" else None,
+                    "provider_state": fatal_state["provider_state"],
+                    "solver_state": fatal_state["solver_state"],
                     "request_id": request_id,
                 }
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
@@ -2125,9 +2367,11 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 "version": SOLVER_API_VERSION,
                 "max_browsers": MAX_BROWSERS,
                 "active_browsers": active,
-                "reload_non_9": FAST_RELOAD_NON_9,
-                "non_9_reloads_before_ai": NON_9_RELOADS_BEFORE_AI,
-                "cohere_keys": cohere_key_state(),
+                "provider": "disabled",
+                "provider_state": provider_circuit_state(),
+                "solver_state": solver_circuit_state(),
+                "max_solve_seconds": MAX_SOLVE_SECONDS,
+                "fatal_circuit": fatal_circuit_state(),
             }).encode())
         else:
             self.send_response(404)
@@ -2135,65 +2379,107 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
 
 
 def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request") -> str | None:
-    """
-    Abre navegador isolado, carrega página com hCaptcha, resolve e retorna token.
-    """
+    """Abre navegador isolado, resolve o hCaptcha e recupera de janela fechada."""
     browser = find_browser(BROWSER_OVERRIDE)
     server = None
-    
-    solver_port = None
-    profile = None
-    proc = None
-    
+    solve_deadline = time.time() + MAX_SOLVE_SECONDS
+
     try:
         server, server_port, token_state = start_solver_page(sitekey)
-        solver_url = f"http://{SOLVER_PAGE_HOST}:{server_port}/"
-        solver_port, profile, proc = open_solver_browser(browser, solver_url)
-        print(f"[Solver API] Navegador aberto na porta {solver_port}")
-        
-        wait_solver_page(solver_port)
-        
-        token = auto_solve_grid(solver_port, 0, 1, request_id=request_id)
-        if token:
-            return token
+        solver_url = f"http://127.0.0.1:{server_port}/"
 
-        end = time.time() + 10
-        while time.time() < end:
-            token = token_state.get()
-            if token:
-                return token
-            token = extract_token_from_page(solver_port)
-            if token:
-                return token
-            time.sleep(0.5)
-        
-        if not has_solver_error():
-            set_solver_error("token_nao_voltou", "Captcha pode ter resolvido, mas o token nao voltou para a pagina local.")
-        return None
-        
-    except Exception as e:
-        set_solver_error("solver_exception", str(e))
-        print(f"[Solver API] Erro durante resolucao: {e}")
+        for browser_attempt in range(1, BROWSER_RESTART_LIMIT + 1):
+            if time.time() >= solve_deadline:
+                set_solver_error("solve_timeout", f"Solve excedeu {MAX_SOLVE_SECONDS} segundos.")
+                break
+
+            solver_port = None
+            profile = None
+            proc = None
+            try:
+                solver_port, profile, proc = open_solver_browser(browser, solver_url)
+                print(
+                    f"[Solver API] Navegador aberto na porta {solver_port} "
+                    f"(janela {browser_attempt}/{BROWSER_RESTART_LIMIT})"
+                )
+                wait_solver_page(solver_port)
+
+                token = auto_solve_grid(
+                    solver_port,
+                    0,
+                    browser_attempt,
+                    request_id=request_id,
+                    deadline=solve_deadline,
+                    browser_proc=proc,
+                )
+                if token:
+                    record_solver_success()
+                    return token
+
+                end = min(time.time() + 5, solve_deadline)
+                while time.time() < end:
+                    token = token_state.get()
+                    if token:
+                        record_solver_success()
+                        return token
+                    if not solver_browser_alive(solver_port, proc):
+                        set_solver_error("browser_closed", "Navegador do solve foi fechado ou deixou de responder.")
+                        break
+                    token = extract_token_from_page(solver_port)
+                    if token:
+                        record_solver_success()
+                        return token
+                    time.sleep(0.25)
+
+                error_info = get_solver_error("solver_failed")
+                reason = str(error_info.get("reason") or "solver_failed")
+                if browser_attempt < BROWSER_RESTART_LIMIT and time.time() < solve_deadline:
+                    print(
+                        f"[Solver API] {request_id}: janela sem token ({reason}); "
+                        "fechando e abrindo outra automaticamente."
+                    )
+                    continue
+
+                set_solver_error(
+                    reason,
+                    str(error_info.get("detail") or "Captcha nao devolveu token para a pagina local."),
+                )
+                return None
+            except Exception as exc:
+                set_solver_error("solver_exception", str(exc))
+                print(f"[Solver API] Erro durante resolucao na janela {browser_attempt}: {exc}")
+                if browser_attempt >= BROWSER_RESTART_LIMIT or time.time() >= solve_deadline:
+                    return None
+                print(f"[Solver API] {request_id}: reabrindo navegador apos erro.")
+            finally:
+                if solver_port:
+                    close_solver_browser(solver_port, proc, profile)
+
         return None
     finally:
         if server:
             server.shutdown()
-        # Limpar
-        if solver_port:
-            close_solver_browser(solver_port, proc)
 
 
 def main():
-    global BROWSER_OVERRIDE, SOLVER_SEMAPHORE, MAX_BROWSERS, FAST_RELOAD_NON_9
+    global BROWSER_OVERRIDE, SOLVER_SEMAPHORE, MAX_BROWSERS, FAST_RELOAD_NON_9, PROVIDER_FAILURE_LIMIT, SOLVER_FAILURE_LIMIT, MAX_SOLVE_SECONDS, SERVER_INSTANCE
     parser = argparse.ArgumentParser(description="API Server para resolver hCaptcha")
     parser.add_argument("--port", type=int, default=8765, help="Porta do servidor API")
     parser.add_argument("--browser", default=None, help="Caminho do navegador")
     parser.add_argument("--max-browsers", type=int, default=1, help="Quantidade maxima de navegadores resolvedores em paralelo.")
     parser.add_argument("--recarregar-nao-9", action="store_true", help="Recarrega automaticamente desafios que nao forem grade de 9 tiles.")
+    parser.add_argument("--max-provider-failures", type=int, default=10, help="Abre o circuito apos N falhas consecutivas do provedor visual ativo.")
+    parser.add_argument("--max-solver-failures", type=int, default=10, help="Aborta apos N solves consecutivos sem token.")
+    parser.add_argument("--max-solve-seconds", type=int, default=180, help="Tempo maximo por navegador/solve.")
     args = parser.parse_args()
     BROWSER_OVERRIDE = args.browser
     MAX_BROWSERS = max(1, args.max_browsers)
     FAST_RELOAD_NON_9 = bool(args.recarregar_nao_9)
+    PROVIDER_FAILURE_LIMIT = max(1, args.max_provider_failures)
+    SOLVER_FAILURE_LIMIT = max(1, args.max_solver_failures)
+    MAX_SOLVE_SECONDS = max(30, args.max_solve_seconds)
+    reset_provider_circuit()
+    reset_solver_circuit()
     SOLVER_SEMAPHORE = threading.BoundedSemaphore(MAX_BROWSERS)
     
     print(f"=" * 60)
@@ -2203,14 +2489,17 @@ def main():
     print(f"Health: http://127.0.0.1:{args.port}/health")
     print(f"Navegadores simultaneos: {MAX_BROWSERS}")
     print(f"Recarregar nao-9 automaticamente: {FAST_RELOAD_NON_9}")
+    print(f"Corte por falhas consecutivas do provedor visual: {PROVIDER_FAILURE_LIMIT}")
+    print(f"Corte por solves consecutivos sem token: {SOLVER_FAILURE_LIMIT}")
+    print(f"Tempo maximo por solve: {MAX_SOLVE_SECONDS}s")
     print(f"=" * 60)
     print(f"Aguardando requisicoes...\\n")
     
     class SolverHTTPServer(ThreadingHTTPServer):
         daemon_threads = True
 
-    host = os.environ.get("HOST", "127.0.0.1")
-    server = SolverHTTPServer((host, args.port), SolverRequestHandler)
+    server = SolverHTTPServer(("127.0.0.1", args.port), SolverRequestHandler)
+    SERVER_INSTANCE = server
     
     try:
         server.serve_forever()

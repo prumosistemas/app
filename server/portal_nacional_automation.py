@@ -1355,6 +1355,33 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
     }
 
 
+def is_transient_solver_outage(result: dict) -> bool:
+    detail = json.dumps(result or {}, ensure_ascii=False).lower()
+    return any(
+        marker in detail
+        for marker in (
+            "429",
+            "503",
+            "too many requests",
+            "service unavailable",
+            "all_endpoints_failed",
+            "provider_circuit_open",
+            "solver_circuit_open",
+            "connection refused",
+            "connection reset",
+            "name or service not known",
+        )
+    )
+
+
+def retry_backoff_seconds(retry_level: int, outage_streak: int) -> int:
+    item_delay = min(2 ** max(1, retry_level), 30)
+    if outage_streak <= 0:
+        return item_delay
+    outage_delay = min(2 ** min(outage_streak + 1, 7), 120)
+    return max(item_delay, outage_delay)
+
+
 def run_requests_downloads(
     index: dict,
     index_path: Path,
@@ -1400,6 +1427,7 @@ def run_requests_downloads(
     queue = list(pending)
     max_workers = max(1, concurrency)
     started_count = 0
+    solver_outage_streak = 0
 
     def submit_next(executor: concurrent.futures.ThreadPoolExecutor, futures: dict) -> bool:
         nonlocal started_count
@@ -1427,6 +1455,8 @@ def run_requests_downloads(
             done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
             retry_items = []
             login_errors = []
+            saw_solver_outage = False
+            saw_success = False
 
             for future in done:
                 key = futures.pop(future)
@@ -1436,6 +1466,7 @@ def run_requests_downloads(
                     result = {"ok": False, "reason": str(exc)}
 
                 if result.get("ok"):
+                    saw_success = True
                     index["items"][key]["status"] = "baixado"
                     existing_files = list(index["items"][key].get("files") or [])
                     for file_path in result.get("files", []) or []:
@@ -1457,6 +1488,7 @@ def run_requests_downloads(
                     continue
 
                 reason = str(result.get("reason") or "")
+                saw_solver_outage = saw_solver_outage or is_transient_solver_outage(result)
                 attempts = int(index["items"][key].get("requests_attempts") or 1)
                 index["items"][key]["last_error"] = result
                 if result.get("files_by_tipo"):
@@ -1506,9 +1538,16 @@ def run_requests_downloads(
             retry_items.sort(key=lambda item: (int(item.get("page") or 0), item.get("id") or ""))
             queue.extend(retry_items)
 
+            if saw_success:
+                solver_outage_streak = 0
+            elif saw_solver_outage:
+                solver_outage_streak += 1
+            else:
+                solver_outage_streak = 0
+
             if retry_items:
                 retry_level = max(int(item.get("requests_attempts") or 1) for item in retry_items)
-                retry_delay = min(2 ** retry_level, 30)
+                retry_delay = retry_backoff_seconds(retry_level, solver_outage_streak)
                 save_index(
                     index_path,
                     index,
@@ -1516,6 +1555,7 @@ def run_requests_downloads(
                     "retry_backoff_wait",
                     seconds=retry_delay,
                     retry_level=retry_level,
+                    solver_outage_streak=solver_outage_streak,
                     items=len(retry_items),
                 )
                 time.sleep(retry_delay)

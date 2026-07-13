@@ -358,12 +358,28 @@ async function handleLoginPost(request, env, ctx) {
 
   const ip = getClientIp(request);
 
-  const ipLimit = await checkRateLimit(
-    env.db,
-    `login:ip:${ip}`,
-    getIntEnv(env, "LOGIN_IP_LIMIT", DEFAULT_LOGIN_IP_LIMIT, 1, 1000),
-    getIntEnv(env, "LOGIN_WINDOW_SECONDS", DEFAULT_LOGIN_WINDOW_SECONDS, 30, 86400)
+  const emailHash = await sha256Hex(email);
+  const loginWindowSeconds = getIntEnv(
+    env,
+    "LOGIN_WINDOW_SECONDS",
+    DEFAULT_LOGIN_WINDOW_SECONDS,
+    30,
+    86400
   );
+  const [ipLimit, emailLimit] = await Promise.all([
+    checkRateLimit(
+      env.db,
+      `login:ip:${ip}`,
+      getIntEnv(env, "LOGIN_IP_LIMIT", DEFAULT_LOGIN_IP_LIMIT, 1, 1000),
+      loginWindowSeconds
+    ),
+    checkRateLimit(
+      env.db,
+      `login:email:${emailHash}`,
+      getIntEnv(env, "LOGIN_EMAIL_LIMIT", DEFAULT_LOGIN_EMAIL_LIMIT, 1, 1000),
+      loginWindowSeconds
+    ),
+  ]);
 
   if (!ipLimit.ok) {
     await fakePasswordDelay(env);
@@ -373,15 +389,6 @@ async function handleLoginPost(request, env, ctx) {
       retry_after: ipLimit.retryAfter,
     }, 429);
   }
-
-  const emailHash = await sha256Hex(email);
-
-  const emailLimit = await checkRateLimit(
-    env.db,
-    `login:email:${emailHash}`,
-    getIntEnv(env, "LOGIN_EMAIL_LIMIT", DEFAULT_LOGIN_EMAIL_LIMIT, 1, 1000),
-    getIntEnv(env, "LOGIN_WINDOW_SECONDS", DEFAULT_LOGIN_WINDOW_SECONDS, 30, 86400)
-  );
 
   if (!emailLimit.ok) {
     await fakePasswordDelay(env);
@@ -398,6 +405,7 @@ async function handleLoginPost(request, env, ctx) {
       u.email,
       u.password_hash,
       u.disabled,
+      u.manual_disabled,
       u.company_id,
       u.role,
       u.must_change_password,
@@ -409,22 +417,10 @@ async function handleLoginPost(request, env, ctx) {
   `).bind(email).first();
 
   if (user) {
-    await maybeApplyBillingStateForCompany(env.db, user.company_id);
-    user = await env.db.prepare(`
-      SELECT
-        u.id,
-        u.email,
-        u.password_hash,
-        u.disabled,
-        u.company_id,
-        u.role,
-        u.must_change_password,
-        c.disabled AS company_disabled
-      FROM users u
-      JOIN companies c ON c.id = u.company_id
-      WHERE u.email = ?
-      LIMIT 1
-    `).bind(email).first();
+    const billingState = await maybeApplyBillingStateForCompany(env.db, user.company_id);
+    if (user.role === "member") {
+      user.disabled = Number(user.manual_disabled) === 1 || !billingState.active ? 1 : 0;
+    }
   }
 
   if (
@@ -526,9 +522,9 @@ async function handleLogout(request, env, ctx) {
 
 function isBlockedFrontendSourcePath(pathname) {
   const path = String(pathname || "").toLowerCase();
-  return ["/server/", "/deploy/", "/cloudflare/", "/docs/", "/legado/", "/tests/", "/tools/"].some(
+  return ["/server/", "/deploy/", "/cloudflare/", "/docs/", "/legado/", "/tests/", "/tools/", "/solver/"].some(
     (prefix) => path.startsWith(prefix),
-  ) || path === "/agents.md" || path === "/configurar_cohere_keys.py";
+  ) || path === "/agents.md";
 }
 
 async function handleMe(request, env) {
@@ -2105,45 +2101,22 @@ function scheduleCleanup(env, ctx, options = {}) {
 
 async function checkRateLimit(db, key, limit, windowSeconds) {
   const nowTs = now();
-
+  const resetAt = nowTs + windowSeconds;
   const row = await db.prepare(`
-    SELECT count, reset_at
-    FROM rate_limits
-    WHERE key = ?
-    LIMIT 1
-  `).bind(key).first();
+    INSERT INTO rate_limits (key, count, reset_at)
+    VALUES (?, 1, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      count = CASE WHEN rate_limits.reset_at <= ? THEN 1 ELSE rate_limits.count + 1 END,
+      reset_at = CASE WHEN rate_limits.reset_at <= ? THEN ? ELSE rate_limits.reset_at END
+    RETURNING count, reset_at
+  `).bind(key, resetAt, nowTs, nowTs, resetAt).first();
 
-  if (!row) {
-    await db.prepare(`
-      INSERT INTO rate_limits (key, count, reset_at)
-      VALUES (?, 1, ?)
-    `).bind(key, nowTs + windowSeconds).run();
-
-    return { ok: true };
-  }
-
-  if (nowTs >= Number(row.reset_at)) {
-    await db.prepare(`
-      UPDATE rate_limits
-      SET count = 1, reset_at = ?
-      WHERE key = ?
-    `).bind(nowTs + windowSeconds, key).run();
-
-    return { ok: true };
-  }
-
-  if (Number(row.count) >= limit) {
+  if (Number(row?.count || 0) > limit) {
     return {
       ok: false,
-      retryAfter: Math.max(1, Number(row.reset_at) - nowTs),
+      retryAfter: Math.max(1, Number(row?.reset_at || resetAt) - nowTs),
     };
   }
-
-  await db.prepare(`
-    UPDATE rate_limits
-    SET count = count + 1
-    WHERE key = ?
-  `).bind(key).run();
 
   return { ok: true };
 }

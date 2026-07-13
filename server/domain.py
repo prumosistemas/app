@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import shutil
+import threading
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
@@ -1009,6 +1010,69 @@ def read_run_logs(run_dir: str, limit_chars: int = 80_000) -> str:
     return _read_log_tail(log_file, limit_chars)
 
 
+_FILTERED_LOG_CACHE_LOCK = threading.Lock()
+_FILTERED_LOG_CACHE: Dict[tuple[str, str, str, int], Dict[str, Any]] = {}
+
+
+def _read_run_logs_filtered_incremental(
+    log_file: str,
+    cnpj_norm: str,
+    flow_norm: str,
+    max_chars: int,
+) -> str:
+    """Read only bytes appended since the previous poll for this filter."""
+    key = (os.path.abspath(log_file), cnpj_norm, flow_norm, max_chars)
+    with _FILTERED_LOG_CACHE_LOCK:
+        entry = _FILTERED_LOG_CACHE.get(key)
+        try:
+            file_size = os.path.getsize(log_file)
+        except OSError:
+            return ""
+
+        if entry and file_size == entry["offset"]:
+            return entry["value"]
+
+        if not entry or file_size < entry["offset"]:
+            entry = {"offset": 0, "lines": [], "total_chars": 0, "value": ""}
+
+        offset = int(entry["offset"])
+        try:
+            with open(log_file, "rb") as handle:
+                handle.seek(offset, os.SEEK_SET)
+                raw = handle.read()
+        except OSError:
+            return str(entry.get("value") or "")
+
+        # Log writers append complete newline-terminated records. If a write is
+        # observed midway, leave the final fragment for the next poll.
+        last_newline = raw.rfind(b"\n")
+        if last_newline < 0:
+            return str(entry.get("value") or "")
+        complete = raw[: last_newline + 1]
+        entry["offset"] = offset + len(complete)
+
+        lines = list(entry["lines"])
+        total_chars = int(entry["total_chars"])
+        for line in complete.decode("utf-8", errors="replace").splitlines():
+            if cnpj_norm and cnpj_norm not in line:
+                continue
+            if flow_norm and f"flow={flow_norm}" not in line and f"flow_mode={flow_norm}" not in line:
+                continue
+            lines.append(line)
+            total_chars += len(line) + 1
+            while lines and total_chars > max_chars:
+                removed = lines.pop(0)
+                total_chars -= len(removed) + 1
+
+        entry["lines"] = lines
+        entry["total_chars"] = total_chars
+        entry["value"] = "\n".join(lines)
+        _FILTERED_LOG_CACHE[key] = entry
+        if len(_FILTERED_LOG_CACHE) > 256:
+            _FILTERED_LOG_CACHE.pop(next(iter(_FILTERED_LOG_CACHE)))
+        return entry["value"]
+
+
 def read_run_logs_filtered(
     run_dir: str,
     *,
@@ -1024,29 +1088,12 @@ def read_run_logs_filtered(
     cnpj_norm = normalize_cnpj(cnpj) if str(cnpj or "").strip() else ""
     flow_norm = str(flow or "").strip()
     max_chars = max(5_000, int(limit_chars or 80_000))
-    lines: List[str] = []
-    total_chars = 0
-
-    if os.path.getsize(log_file) <= 1_000_000:
-        with open(log_file, "r", encoding="utf-8", errors="replace") as handle:
-            source = handle.read()
-    else:
-        source = _read_log_tail(log_file, max_chars * 4)
-
-    for line in source.splitlines():
-        if cnpj_norm and cnpj_norm not in line:
-            continue
-        if flow_norm and f"flow={flow_norm}" not in line and f"flow_mode={flow_norm}" not in line:
-            continue
-
-        lines.append(line)
-        total_chars += len(line) + 1
-
-        while lines and total_chars > max_chars:
-            removed = lines.pop(0)
-            total_chars -= len(removed) + 1
-
-    return "\n".join(lines)
+    return _read_run_logs_filtered_incremental(
+        log_file,
+        cnpj_norm,
+        flow_norm,
+        max_chars,
+    )
 
 
 def logs_by_attempt_for_root_filtered(

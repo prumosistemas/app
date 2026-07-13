@@ -119,6 +119,29 @@ class RunArtifactTests(unittest.TestCase):
         self.assertEqual(payload["logs_by_attempt"][0]["run_id"], "attempt_2")
         self.assertIn("[ITEM_OK]", payload["logs_by_attempt"][0]["logs"])
 
+    def test_filtered_log_poll_reads_only_new_append_and_keeps_tail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary)
+            log_file = run_dir / "logs.txt"
+            log_file.write_text(
+                "[STEP_1] flow=notas cnpj=12345678000190\n"
+                "[OTHER] flow=dam cnpj=99999999000199\n",
+                encoding="utf-8",
+            )
+            first = domain.read_run_logs_filtered(
+                str(run_dir), cnpj="12345678000190", flow="notas", limit_chars=5000
+            )
+            with log_file.open("a", encoding="utf-8") as handle:
+                handle.write("[STEP_2] flow=notas cnpj=12345678000190\n")
+            second = domain.read_run_logs_filtered(
+                str(run_dir), cnpj="12345678000190", flow="notas", limit_chars=5000
+            )
+
+        self.assertIn("[STEP_1]", first)
+        self.assertIn("[STEP_1]", second)
+        self.assertIn("[STEP_2]", second)
+        self.assertNotIn("[OTHER]", second)
+
     def test_notas_without_codigo_dominio_uses_company_folder_even_when_option_is_enabled(self):
         validation = {
             "valid": True,

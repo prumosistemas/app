@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.43 - Portal resiliente, solver assíncrono e fallback**
+Versao: **1.0.44 - filas resilientes, logs incrementais e Modo IA v11**
 
 ## Estado atual
 
@@ -9,6 +9,7 @@ Versao: **1.0.43 - Portal resiliente, solver assíncrono e fallback**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
+- Portal Nacional: Google Modo IA direto no Modal; proxy residencial apenas como fallback configuravel.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -25,6 +26,7 @@ Versao: **1.0.43 - Portal resiliente, solver assíncrono e fallback**
 | `cloudflare/worker.js` | Auth, empresas, usuarios, pagamentos, D1 e proxy da API |
 | `server/` | API FastAPI, filas e fluxos Playwright |
 | `deploy/modal_browserless.py` | Browserless no Modal |
+| `solver/google_ai_mode/` | Código versionado do único resolvedor do Portal |
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
@@ -32,16 +34,17 @@ Versao: **1.0.43 - Portal resiliente, solver assíncrono e fallback**
 | `docs/C4.md` | C4 canônico e decisões arquiteturais atuais |
 | `docs/RELATORIO_AUDITORIA_2026-07-10.md` | Evidencias, achados e pendencias |
 
-## Chaves Cohere do Portal Nacional
+## Solver do Portal Nacional
 
-Para cadastrar ou trocar as tres chaves e atualizar o solver do Modal:
+O unico resolvedor ativo e o Google Modo IA do projeto organizado. Ele usa
+saida direta do Modal por padrao e guarda apenas o estado anonimo em Volume
+privado. O código validado está versionado em `solver/google_ai_mode/`. Para publicar:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-python configurar_cohere_keys.py
+modal profile use jorhinhogames
+modal deploy deploy\modal_portal_nacional_google_solver.py
 ```
-
-As chaves sao digitadas de forma oculta, enviadas ao Secret do Modal e nao ficam gravadas no projeto.
 
 ## Deploy rapido
 
@@ -69,8 +72,8 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -t ryang20/prumo-api:1.0.43 server
-docker push ryang20/prumo-api:1.0.43
+docker build -t ryang20/prumo-api:1.0.44 server
+docker push ryang20/prumo-api:1.0.44
 ```
 
 Servidor:

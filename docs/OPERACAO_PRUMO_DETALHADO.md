@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.43.
+Este documento e a fonte de contexto operacional da versao 1.0.44.
 
 ## Estado desejado
 
@@ -13,7 +13,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.43.
 - `prumo-api` como unico container principal da Prumo.
 - Browserless local desligado.
 - Modal `prumo-browserless` com 30 sessoes turbo pela API.
-- Modal `prumo-portal-nacional-solver` separado, usado so para resolver hCaptcha do Portal Nacional.
+- Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
 - GitHub, pasta local e servidor na mesma versao.
 
 ## Onde fica cada coisa
@@ -49,8 +49,8 @@ Modal:
 - Perfil CLI: `jorhinhogames`
 - App ISS: `prumo-browserless`
 - Arquivo ISS: `deploy/modal_browserless.py`
-- App Portal Nacional: `prumo-portal-nacional-solver`
-- Arquivo Portal Nacional: `deploy/modal_portal_nacional_solver.py`
+- App Portal Nacional: `prumo-portal-nacional-google-solver`
+- Arquivo Portal Nacional: `deploy/modal_portal_nacional_google_solver.py`
 
 ## Dados e volatilidade
 
@@ -138,7 +138,7 @@ Pagina publica: `/portal-nacional`.
 O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 
 - servidor Python para guardar usuario, sessao, indice, runs e arquivos;
-- Modal `prumo-portal-nacional-solver` apenas para hCaptcha;
+- Modal `prumo-portal-nacional-google-solver` apenas para hCaptcha;
 - upload de certificado `.pfx`/`.p12` por colaborador, com senha validada e protegida no servidor;
 - sessao gerada diretamente pelo PFX no runtime atual, sem depender da store Windows no Linux.
 
@@ -151,16 +151,15 @@ portal-nacional.html
 server/portal_nacional.py
 server/portal_nacional_automation.py
 server/portal_nacional_session.py
-deploy/modal_portal_nacional_solver.py
-deploy/portal_nacional_solver.py
+deploy/modal_portal_nacional_google_solver.py
 ```
 
 Teste local confirmado em 2026-07-06:
 
-- PFX `LOQUICENTER LOCADORA 11728000148` com senha `Loqui450` abriu e gerou sessao logada no Portal Nacional;
+- PFX `LOQUICENTER LOCADORA 11728000148` abriu com a senha fornecida fora do Git e gerou sessao logada no Portal Nacional;
 - upload local pela API retornou `200`, apareceu no estado e foi excluido com `200`;
 - indexacao por requests para 01/07/2026 a 06/07/2026 capturou `26/26` notas recebidas em 2 paginas;
-- download real `XML e PDF`, `max=1`, falhou no solver por `solver:cohere_rate_limited` (`Cohere 429`), sem falha de certificado/sessao;
+- o resolvedor antigo foi removido depois de limitar downloads; o caminho atual usa somente Google Modo IA;
 - teste anterior em 2026-07-05: indexacao por requests com 86 notas recebidas;
 - teste anterior em 2026-07-05: download local com 1 XML e 1 PDF validos;
 - producao Gabriel: run `20260705-210520-recebidas-20260601-20260630-cert00-pdf`, 1 PDF valido, status `finalizado_parcial`, erros `0`;
@@ -168,9 +167,8 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- XML em producao recebeu hCaptcha canvas nao-9 e falhou quando a Cohere retornou `429 Too Many Requests`; o erro agora aparece como `solver:cohere_rate_limited`, sem mascarar como `token_nao_voltou`.
-- O solver Modal `2026-07-05-modal-xvfb-proxy-hybrid-non9` usa proxy do servidor, recarrega desafios nao-9 algumas vezes e depois chama IA uma vez para evitar queima de cota.
-- desafios hCaptcha ainda dependem da API de visao; por isso o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
+- O solver v11 usa exclusivamente Google Modo IA por rota direta, reposiciona alvos animados com OpenCV e separa código versionado de estado anônimo; a proxy do ThinkPad exige autenticação de máquina antes de ser contingência utilizável pelo Modal.
+- desafios hCaptcha ainda dependem do Modo IA; por isso o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
 
@@ -184,14 +182,14 @@ Em producao, prefira cadastrar o PFX pela aba `Certificados` em `/portal-naciona
 Health do solver:
 
 ```powershell
-Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health
+Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health
 ```
 
 Deploy do solver:
 
 ```powershell
 modal profile use jorhinhogames
-modal deploy deploy\modal_portal_nacional_solver.py
+modal deploy deploy\modal_portal_nacional_google_solver.py
 ```
 
 ## Fallback local de navegador

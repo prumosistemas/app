@@ -84,3 +84,18 @@ def test_solver_async_urls_preserve_access_token() -> None:
     assert automation.solver_api_job_url(solver, "job com espaço") == (
         "https://solver.example/internal/jobs/job%20com%20espa%C3%A7o?token=segredo"
     )
+
+
+def test_solver_outage_backoff_grows_across_different_items() -> None:
+    assert automation.is_transient_solver_outage(
+        {"reason": "solver:all_endpoints_failed: 503 Service Unavailable"}
+    )
+    assert not automation.is_transient_solver_outage({"reason": "arquivo_invalido"})
+    assert [automation.retry_backoff_seconds(2, streak) for streak in range(1, 7)] == [
+        4,
+        8,
+        16,
+        32,
+        64,
+        120,
+    ]

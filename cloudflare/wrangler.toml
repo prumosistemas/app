@@ -14,8 +14,8 @@ routes = [
   { pattern = "app.prumosistemas.com.br/legado/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/tests/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/tools/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/solver/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/AGENTS.md", zone_name = "prumosistemas.com.br" },
-  { pattern = "app.prumosistemas.com.br/configurar_cohere_keys.py", zone_name = "prumosistemas.com.br" },
 ]
 
 [[d1_databases]]

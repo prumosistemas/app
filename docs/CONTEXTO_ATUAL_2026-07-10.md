@@ -34,7 +34,7 @@ A run raiz e o último retry não são o mesmo registro histórico.
 3. A gravação do evento de login foi movida para `ctx.waitUntil`, sem atrasar a criação da sessão.
 4. HTML estático entregue pelo Worker pode usar cache curto; respostas de API continuam `no-store`.
 5. Observabilidade do Worker foi habilitada com amostragem de 25%.
-6. O configurador Cohere deixou de conter chaves literais e passa a solicitar entrada oculta em runtime.
+6. O antigo configurador do provedor de visão deixou de conter chaves literais e foi removido na migração para Google Modo IA.
 7. O Secret/app do Browserless Modal foi republicado com token novo; o pool no servidor foi corrigido e o handshake respondeu HTTP `101`.
 8. O `linger` do usuário `server` foi auditado, mas não pôde ser habilitado porque o SSH não tem `sudo` sem senha.
 
@@ -51,7 +51,7 @@ sudo loginctl enable-linger server
 
 Depois disso, gerar um segredo novo, atualizar `ISS_INTERNAL_SECRET` no Worker e nos arquivos `/opt/prumo/app/deploy/.env` e `/opt/prumo/config/monitor-agent.env`, recriar `prumo-api` e confirmar `/api/internal/runtime-metrics`.
 
-As chaves Cohere que estavam literais no arquivo local também devem ser revogadas e substituídas no Secret do solver. O arquivo agora não armazena chaves.
+As chaves do provedor anterior que estavam literais no arquivo local devem permanecer revogadas. O arquivo e o Secret correspondente foram removidos.
 
 ## Regras de manutenção
 

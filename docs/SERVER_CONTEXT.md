@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.43
-Data: 2026-07-12
+Versao: 1.0.44
+Data: 2026-07-13
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -12,7 +12,7 @@ A Prumo roda em quatro partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando de login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
-5. API resolvedora do Portal Nacional no Modal, app `prumo-portal-nacional-solver`, usada apenas para hCaptcha.
+5. API Google Modo IA no Modal, app `prumo-portal-nacional-google-solver`, usada apenas para hCaptcha do Portal Nacional.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -84,7 +84,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.43",
+  "version": "1.0.44",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -135,42 +135,34 @@ Nunca versionar esses tokens.
 
 O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 
-- Nome: `prumo-portal-nacional-solver`
-- URL: `https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/solve`
-- Health: `https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health`
-- Arquivos locais:
-  - `deploy/modal_portal_nacional_solver.py`
-  - `deploy/portal_nacional_solver.py`
-- Secret esperado: `prumo-portal-nacional-solver`
-- Secret deve conter `COHERE_API_KEY`, `COHERE_API_KEY_2` e `COHERE_API_KEY_3`. O solver distribui chamadas em round-robin e faz failover entre elas.
-
-Configurar ou trocar as tres chaves e publicar o solver:
-
-```powershell
-cd C:\Users\ryang\Desktop\projetosv2\projeto
-python configurar_cohere_keys.py
-```
-
-O script pede as chaves sem exibi-las, atualiza o Secret `prumo-portal-nacional-solver`, apaga o arquivo temporario e faz o deploy. Para atualizar apenas o Secret, use `python configurar_cohere_keys.py --no-deploy`.
+- Nome: `prumo-portal-nacional-google-solver`
+- URL: `https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve`
+- Health: `https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health`
+- Arquivo local: `deploy/modal_portal_nacional_google_solver.py`
+- Fonte versionada: `solver/google_ai_mode/`.
+- Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
+- Volume privado: `prumo-portal-google-ai-state`.
+- Rota padrao: direta, sem proxy. O proxy local responde no ThinkPad, mas o probe a partir do Modal expira no Cloudflare Access; só definir `PRUMO_MODAL_PROXY_HOSTNAME` após configurar e validar autenticação de máquina.
 
 Deploy manual:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
 modal profile use jorhinhogames
-modal deploy deploy\modal_portal_nacional_solver.py
+modal deploy deploy\modal_portal_nacional_google_solver.py
 ```
 
 Validar:
 
 ```powershell
-Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/health
+Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health
 ```
 
 Configuracao da API Python:
 
 ```env
-PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/solve
+PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve
+PORTAL_NACIONAL_SOLVER_FALLBACK_URL=
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240
 ```
 
@@ -358,7 +350,7 @@ Arquivos:
 - Router FastAPI: `server/portal_nacional.py`
 - Automacao por requests/browser: `server/portal_nacional_automation.py`
 - Gerador de sessao por certificado: `server/portal_nacional_session.py`
-- Solver Modal: `deploy/modal_portal_nacional_solver.py` e `deploy/portal_nacional_solver.py`
+- Solver Modal: `deploy/modal_portal_nacional_google_solver.py`
 
 Endpoints Python:
 
@@ -412,12 +404,12 @@ O caminho acima e legado/local. Em producao, prefira cadastrar o PFX pela aba `C
 
 Teste confirmado em 2026-07-06:
 
-- PFX `LOQUICENTER LOCADORA 11728000148` abriu com senha `Loqui450`, subject `LOQUICENTER LOCADORA COMERCIAL LTDA:11711728000148`, validade `2027-03-12`.
+- PFX `LOQUICENTER LOCADORA 11728000148` abriu com a senha fornecida fora do Git; validade confirmada até `2027-03-12`.
 - Geracao de sessao por PFX retornou `target_looks_logged_in=true`, status `200`, cookies `ASP.NET_SessionId`, `Emissor` e `ARRAffinity`.
 - Upload local pela API retornou `200`, apareceu em `/api/portal-nacional/state` e a exclusao retornou `200`.
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
-- Download real `tipo-download=ambos`, `max=1`, `concorrencia=1`, `retries=3` ficou bloqueado no solver por `solver:cohere_rate_limited` (`Cohere 429`), sem falha de certificado/sessao.
-- O XML em producao recebeu hCaptcha canvas nao-9 e ficou bloqueado por `solver:cohere_rate_limited` quando a Cohere retornou HTTP 429. O Modal/proxy/browser estavam saudaveis; a dependencia limitante era a API de visao. O solver usa estrategia hibrida: recarrega desafios nao-9 algumas vezes e depois chama IA uma vez, preservando erros especificos.
+- O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
+- Em 2026-07-13 o Modo IA v11 passou a enviar a area clicavel limpa, validar e reposicionar alvos animados com OpenCV, separar código/estado e manter Google Modo IA como unico resolvedor.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
@@ -456,8 +448,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -t ryang20/prumo-api:1.0.43 server
-docker push ryang20/prumo-api:1.0.43
+docker build -t ryang20/prumo-api:1.0.44 server
+docker push ryang20/prumo-api:1.0.44
 ```
 
 Atualizar servidor:
@@ -468,7 +460,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.43 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.44 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

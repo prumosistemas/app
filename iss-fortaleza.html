@@ -3011,7 +3011,7 @@ async function refreshLogsTail(){
   logsTailInFlight=true;
   try{
     const params = new URLSearchParams({
-      limit_chars: "60000",
+      limit_chars: "20000",
       cnpj: selectedModalCnpj || "",
       flow: selectedModalFlow || "",
     });
@@ -3034,7 +3034,7 @@ async function refreshLogsTail(){
     logsTailInFlight=false;
     clearTimeout(logsTailTimer);
     if(selectedRunId&&$("cnpjModal").classList.contains("open")){
-      logsTailTimer=setTimeout(refreshLogsTail,isActiveStatus(selectedRunFull?.status)?1200:3000);
+      logsTailTimer=setTimeout(refreshLogsTail,isActiveStatus(selectedRunFull?.status)?800:2500);
     }
   }
 }

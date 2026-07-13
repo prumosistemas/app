@@ -32,7 +32,7 @@ BASE_DIR = Path(__file__).resolve().parent
 AUTOMATION_SCRIPT = BASE_DIR / "portal_nacional_automation.py"
 DEFAULT_SOLVER_URL = os.getenv(
     "PORTAL_NACIONAL_SOLVER_URL",
-    "https://jorhinhogames--prumo-portal-nacional-solver-solver-server.modal.run/solve",
+    "https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve",
 ).strip()
 
 router = APIRouter(prefix="/api/portal-nacional", tags=["portal-nacional"])

@@ -17,6 +17,8 @@
     }
     *{box-sizing:border-box;margin:0;padding:0}
     body{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font);font-size:13.5px;line-height:1.5}
+    .skip-link{position:fixed;left:12px;top:12px;z-index:1000;transform:translateY(-160%);background:var(--text);color:#fff;padding:9px 12px;border-radius:7px;text-decoration:none;font-weight:800}
+    .skip-link:focus{transform:translateY(0)}
     .app{min-height:100vh;display:grid;grid-template-columns:232px minmax(0,1fr)}
     aside{background:var(--panel);border-right:1px solid var(--border);position:sticky;top:0;height:100vh;display:flex;flex-direction:column}
     .brand{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
@@ -38,6 +40,7 @@
     input:focus,select:focus,textarea:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(99,102,241,.13)}
     button,.button{height:34px;border:1px solid transparent;border-radius:7px;padding:0 13px;background:var(--accent);color:#fff;font:inherit;font-size:12px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:fit-content}
     button:hover,.button:hover{opacity:.88}button.secondary,.button.secondary{background:#fff;color:var(--text2);border-color:var(--border2)}button.danger{background:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}
+    button:focus-visible,.button:focus-visible,.nav-btn:focus-visible,.dropzone:focus-within,a:focus-visible{outline:3px solid rgba(99,102,241,.28);outline-offset:2px}
     .actions{display:flex;flex-wrap:wrap;gap:8px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.full{grid-column:1/-1}
     .notice{border:1px solid var(--border2);background:var(--panel2);border-radius:8px;padding:10px 12px;color:var(--text2);font-size:12.5px;white-space:pre-line}.notice.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.notice.err{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.notice.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
     .metric{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
@@ -46,10 +49,12 @@
     .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
     .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
     code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-    @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}}
+    @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}button,.button,.nav-btn{min-height:44px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">Ir para o conteúdo</a>
   <div class="app">
     <aside>
       <div class="brand">
@@ -63,7 +68,7 @@
       </nav>
       <div class="sidebar-footer"><button class="nav-btn" id="btnLogout" type="button">Sair</button></div>
     </aside>
-    <main>
+    <main id="mainContent" tabindex="-1">
       <div class="topline">
         <div>
           <h2 id="pageTitle">Certificados</h2>
@@ -74,7 +79,7 @@
           <button class="secondary" id="btnStop" type="button">Parar run</button>
         </div>
       </div>
-      <div id="msg"></div>
+      <div id="msg" aria-live="polite"></div>
 
       <section id="certificatesSection" class="section active">
         <div class="grid two">
@@ -123,8 +128,8 @@
                   <div><label>Notas</label><select name="modo"><option value="recebidas">Recebidas</option><option value="emitidas">Emitidas</option><option value="ambos">Recebidas e emitidas</option></select></div>
                   <div><label>Arquivos</label><select name="tipo_download"><option value="ambos">XML e PDF</option><option value="xml">Só XML</option><option value="pdf">Só PDF</option></select></div>
                   <div><label>Limite teste</label><input name="max_items" type="number" min="0" max="5000" value="0"></div>
-                  <div><label>Concorrência</label><input name="concorrencia" type="number" min="1" max="16" value="4"></div>
-                  <div><label>Tentativas</label><input name="retries" type="number" min="1" max="20" value="6"></div>
+                  <div><label>Concorrência</label><input name="concorrencia" type="number" min="1" max="16" value="1"></div>
+                  <div><label>Tentativas</label><input name="retries" type="number" min="1" max="20" value="8"></div>
                 </div>
                 <div class="actions"><button id="btnStart" type="submit">Iniciar run</button></div>
               </form>
@@ -157,6 +162,8 @@
     let selectedRunId = "";
     let activeRunId = "";
     let latestState = null;
+    let selectedRunSnapshot = null;
+    let selectedRunLoadedAt = 0;
 
     const $ = id => document.getElementById(id);
     const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -171,7 +178,20 @@
       if(options.body !== undefined && options.body !== null && !isForm && !headers.has("Content-Type")) headers.set("Content-Type","application/json");
       if(csrf) headers.set("X-CSRF-Token", csrf);
       if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
-      const res = await fetch(apiPath(path), {credentials:"include", ...options, headers});
+      const method = String(options.method || "GET").toUpperCase();
+      const attempts = method === "GET" ? 2 : 1;
+      let res;
+      for(let attempt=1; attempt<=attempts; attempt++){
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20000);
+        try{
+          res = await fetch(apiPath(path), {credentials:"include", ...options, headers, signal:controller.signal});
+          break;
+        }catch(err){
+          if(attempt === attempts) throw new Error(err?.name === "AbortError" ? "Servidor demorou mais de 20 segundos para responder." : "Falha de rede ao acessar o servidor.");
+          await new Promise(resolve => setTimeout(resolve, 350));
+        }finally{ clearTimeout(timeout); }
+      }
       const type = res.headers.get("content-type") || "";
       const data = type.includes("application/json") ? await res.json() : await res.text();
       if(data?.csrf) saveCsrf(data.csrf);
@@ -209,8 +229,8 @@
         modo: fd.get("modo"),
         tipo_download: fd.get("tipo_download"),
         max_items: Number(fd.get("max_items") || 0),
-        concorrencia: Number(fd.get("concorrencia") || 4),
-        retries: Number(fd.get("retries") || 6),
+        concorrencia: Number(fd.get("concorrencia") || 1),
+        retries: Number(fd.get("retries") || 8),
         renovar_sessao: true
       };
     }
@@ -225,7 +245,7 @@
         <div class="metric"><span>Baixados</span><b>${Number(summary.baixados || 0)}</b></div>
         <div class="metric"><span>Erros</span><b>${Number(summary.erros || 0)}</b></div>
       `;
-      $("solverPill").textContent = state.solver_url ? "Modal solver" : "Solver ausente";
+      $("solverPill").textContent = state.solver_url ? "Modo IA direto" : "Solver ausente";
       $("solverPill").className = "pill " + (state.solver_url ? "ok" : "bad");
       $("btnStop").disabled = !active;
     }
@@ -296,16 +316,25 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading(btn, false, "Baixar"); }
     }
-    async function loadState(){
+    async function loadState(forceDetail=false){
       const state = await api("/py/api/portal-nacional/state");
       latestState = state;
       activeRunId = state.active_run_id || "";
-      renderMetrics(state); renderCertificates(state); renderRuns(state.runs || []);
-      if(selectedRunId && (state.runs || []).some(r => r.run_id === selectedRunId)) await loadRun(selectedRunId, false);
-      else if((state.runs || [])[0]) await loadRun(state.runs[0].run_id, false);
+      const runs = state.runs || [];
+      const target = runs.find(run => run.run_id === selectedRunId) || runs[0] || null;
+      const selectionChanged = Boolean(target && target.run_id !== selectedRunId);
+      if(target) selectedRunId = target.run_id;
+      renderMetrics(state); renderCertificates(state); renderRuns(runs);
+      if(!target){ selectedRunSnapshot=null; renderDetail(null); return; }
+      if(selectedRunSnapshot?.run_id === target.run_id){
+        selectedRunSnapshot = {...selectedRunSnapshot, ...target, files:selectedRunSnapshot.files || []};
+        renderDetail(selectedRunSnapshot);
+      }
+      const detailDue = forceDetail || selectionChanged || selectedRunSnapshot?.run_id !== target.run_id || (target.run_id === activeRunId && Date.now() - selectedRunLoadedAt >= 5000);
+      if(detailDue) await loadRun(target.run_id, false);
     }
     async function loadRun(runId, showErr=true){
-      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); renderDetail(data.run); }
+      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); selectedRunSnapshot=data.run; selectedRunLoadedAt=Date.now(); renderDetail(data.run); }
       catch(err){ if(showErr) setMsg("err", err.message); }
     }
     async function deleteCertificate(certId, btn){
@@ -373,7 +402,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnDeleteRun"), false, "Excluir run"); }
     };
-    $("btnRefresh").onclick = () => loadState().catch(err => setMsg("err", err.message));
+    $("btnRefresh").onclick = () => loadState(true).catch(err => setMsg("err", err.message));
     $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
     document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
     $("certFile").addEventListener("change", () => {
@@ -401,7 +430,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
           try{ await loadState(); }catch(err){ if(!latestState) setMsg("err",err.message); }
           finally{ polling=false; }
         }
-        const delay = document.hidden ? 15000 : activeRunId ? 2000 : 8000;
+        const delay = document.hidden ? 15000 : activeRunId ? 2500 : 8000;
         setTimeout(poll, delay);
       };
       poll();

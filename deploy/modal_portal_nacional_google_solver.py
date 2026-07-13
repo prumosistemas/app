@@ -1,41 +1,45 @@
-"""Deploy do resolvedor Google Modo IA validado no projeto organizado.
+"""Deploy reproduzivel do resolvedor Google Modo IA do Portal Nacional.
 
-O codigo-fonte do resolvedor continua no projeto de referencia pedido para o
-Portal Nacional. Os cookies anonimos do Google ficam em um Volume privado do
-Modal e nunca entram no Git nem na imagem.
+O codigo validado no projeto organizado fica versionado em ``solver/``. Apenas
+cookies anonimos e estado efemero ficam no Volume privado do Modal.
 """
 
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import socket
 import subprocess
 import time
 from pathlib import Path
 
 import modal
+import requests
 
 
+BUNDLED_ROOT = Path(__file__).resolve().parents[1] / "solver" / "google_ai_mode"
 SOURCE_ROOT = Path(
     os.environ.get(
         "PORTAL_GOOGLE_SOLVER_SOURCE",
-        r"C:\Users\ryang\Desktop\projetosv2\avancar\portal-nacional\projeto organizado definitido",
+        str(BUNDLED_ROOT),
     )
 )
 DETECTOR_ROOT = Path(
     os.environ.get(
         "PORTAL_GOOGLE_DETECTOR_SOURCE",
-        r"C:\Users\ryang\Desktop\projetosv2\modo_ia_detector_visual",
+        str(BUNDLED_ROOT),
     )
 )
 
 LEGACY_SOLVER = SOURCE_ROOT / "api_resolvedora_resolver.py"
 GOOGLE_SOLVER = SOURCE_ROOT / "api_resolvedora_resolver_google_ia.py"
 DETECTOR = DETECTOR_ROOT / "detector_visual.py"
+GOOGLE_CLIENT = SOURCE_ROOT / "google_ia_requests.py"
 CHROME_WRAPPER = Path(__file__).with_name("chrome_modal_no_sandbox.sh")
 
 if modal.is_local():
-    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, DETECTOR, CHROME_WRAPPER):
+    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, DETECTOR, CHROME_WRAPPER):
         if not required.is_file():
             raise RuntimeError(f"Arquivo obrigatorio ausente: {required}")
 
@@ -46,7 +50,7 @@ BROWSERLESS_IMAGE = (
 PORT = int(os.environ.get("PORTAL_GOOGLE_SOLVER_PORT", "8765"))
 INTERNAL_PORT = PORT + 1
 PROXY_HOSTNAME = os.environ.get(
-    "PRUMO_MODAL_PROXY_HOSTNAME", "modal-proxy.prumosistemas.com.br"
+    "PRUMO_MODAL_PROXY_HOSTNAME", ""
 ).strip()
 PROXY_LISTENER = os.environ.get(
     "PRUMO_MODAL_PROXY_LISTENER", "127.0.0.1:31480"
@@ -64,16 +68,11 @@ image = (
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 "
         "-o /usr/local/bin/cloudflared",
         "chmod +x /usr/local/bin/cloudflared",
-        "curl -fsSL 'https://download.mozilla.org/?product=firefox-latest&os=linux64&lang=en-US' "
-        "-o /tmp/firefox.tar.xz",
-        "tar -xf /tmp/firefox.tar.xz -C /opt",
-        "ln -sf /opt/firefox/firefox /usr/local/bin/firefox",
-        "rm -f /tmp/firefox.tar.xz",
-        "firefox --version",
     )
     .pip_install(
         "beautifulsoup4",
         "browser-cookie3",
+        "opencv-python-headless",
         "pillow",
         "requests",
         "websocket-client",
@@ -86,6 +85,7 @@ image = (
     .run_commands("chmod +x /usr/local/bin/google-chrome-prumo")
     .add_local_file(LEGACY_SOLVER, "/app/api_resolvedora_resolver.py")
     .add_local_file(GOOGLE_SOLVER, "/app/api_resolvedora_resolver_google_ia.py")
+    .add_local_file(GOOGLE_CLIENT, "/app/google-ai-client/google_ia_requests.py")
     .add_local_file(DETECTOR, "/app/detector/detector_visual.py")
 )
 
@@ -130,29 +130,84 @@ def _start_proxy_tunnel() -> None:
 
 
 @app.function(
+    cpu=0.25,
+    memory=512,
+    timeout=120,
+    env={
+        "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
+        "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
+    },
+)
+def proxy_probe() -> str:
+    """Comprova o egress da proxy sem expor o IP nem subir navegador."""
+    _start_proxy_tunnel()
+
+    direct = requests.Session()
+    direct.trust_env = False
+    proxied = requests.Session()
+    proxied.trust_env = False
+    if PROXY_HOSTNAME:
+        proxied.proxies.update(
+            {"http": f"http://{PROXY_LISTENER}", "https": f"http://{PROXY_LISTENER}"}
+        )
+
+    def check_ip(session: requests.Session) -> str:
+        response = session.get("https://api64.ipify.org", timeout=30)
+        response.raise_for_status()
+        return hashlib.sha256(response.text.strip().encode()).hexdigest()
+
+    started = time.monotonic()
+    direct_hash = check_ip(direct)
+    direct_seconds = time.monotonic() - started
+    started = time.monotonic()
+    proxy_hash = check_ip(proxied)
+    proxy_seconds = time.monotonic() - started
+    started = time.monotonic()
+    google = proxied.get("https://www.google.com/generate_204", timeout=30)
+    google_seconds = time.monotonic() - started
+    return json.dumps({
+        "direct_hash": direct_hash,
+        "proxy_hash": proxy_hash,
+        "route": "residential" if PROXY_HOSTNAME else "direct",
+        "same_egress": direct_hash == proxy_hash,
+        "direct_seconds": round(direct_seconds, 3),
+        "proxy_seconds": round(proxy_seconds, 3),
+        "google_status": google.status_code,
+        "google_seconds": round(google_seconds, 3),
+    }, sort_keys=True)
+
+
+@app.function(
     volumes={"/google-ai": google_state},
     min_containers=1,
     max_containers=1,
     startup_timeout=240,
     timeout=86400,
     scaledown_window=600,
-    cpu=(2.0, 4.0),
-    memory=(3072, 8192),
+    cpu=(1.5, 2.0),
+    memory=(2048, 3072),
     env={
-        "GOOGLE_AI_PROJECT": "/google-ai",
+        "GOOGLE_AI_PROJECT": "/app/google-ai-client",
+        "GOOGLE_AI_STATE_DIR": "/google-ai",
+        "GOOGLE_AI_ARTIFACT_ROOT": "/google-ai/solver-artifacts",
         "MODO_IA_DETECTOR_PROJECT": "/app/detector",
         "HOST": "0.0.0.0",
         "SOLVER_HEADLESS": "0",
+        "GOOGLE_AI_RECOVERY_VERBOSE": "1",
+        # No Modal, o Chrome/CDP foi validado. O Firefox falha no runtime e
+        # consumia ate 102 s antes de devolver o mesmo erro.
+        "GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS": "1",
+        "GOOGLE_AI_FIREFOX_FALLBACK": "0",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
         "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
-        # Mantem Google, hCaptcha e Portal na mesma saida brasileira. O
-        # cliente requests respeita estas variaveis; localhost fica fora.
+        # Direto por padrao. O hostname residencial permanece como fallback
+        # configuravel para incidentes de rota/origem.
         "HTTP_PROXY": f"http://{PROXY_LISTENER}" if PROXY_HOSTNAME else "",
         "HTTPS_PROXY": f"http://{PROXY_LISTENER}" if PROXY_HOSTNAME else "",
         "NO_PROXY": "127.0.0.1,localhost",
     },
 )
-@modal.concurrent(max_inputs=1, target_inputs=1)
+@modal.concurrent(max_inputs=2, target_inputs=2)
 @modal.web_server(PORT, startup_timeout=240)
 def solver_server() -> None:
     _start_proxy_tunnel()
@@ -181,10 +236,10 @@ def solver_server() -> None:
             "--max-browsers",
             "1",
             "--max-provider-failures",
-            "6",
+            "4",
             "--max-solver-failures",
-            "8",
+            "6",
             "--max-solve-seconds",
-            "240",
+            "180",
         ]
     )

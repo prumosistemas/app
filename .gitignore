@@ -11,6 +11,11 @@ node_modules/
 Nova pasta/
 deploy/monitor-agent.env
 deploy/.env
+solver/google_ai_mode/api/
+solver/google_ai_mode/cookies_google_limpo*.json
+solver/google_ai_mode/seed_firefox_profile/
+solver/google_ai_mode/session_recovery_state.json
+solver/google_ai_mode/.session_recovery.lock
 *.sqlite3
 latest.json
 

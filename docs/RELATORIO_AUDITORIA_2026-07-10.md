@@ -30,7 +30,7 @@ O backend agora evita reler arquivos de log grandes a cada polling. O frontend e
 ## Achados de segurança
 
 1. O diagnóstico inicial desta rodada expôs valores secretos no output por uma máscara inadequada. Esses valores devem ser tratados como comprometidos.
-2. O script local do solver continha chaves Cohere literais. Isso foi removido; o script agora usa `getpass`.
+2. O script local do solver continha chaves literais de um provedor desativado. O script e o Secret correspondente foram removidos na migração para Google Modo IA.
 3. O token do Browserless foi republicado e atualizado no pool do servidor.
 4. A rotação do segredo Worker↔API/monitor foi tentada, mas revertida porque o serviço root do monitor não pôde ser reiniciado pela conta SSH. A ação final está em `CONTEXTO_ATUAL_2026-07-10.md`.
 
