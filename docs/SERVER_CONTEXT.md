@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.44
+Versao: 1.0.45
 Data: 2026-07-13
 Modo atual: producao unica, sem homologacao ativa
 
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.44",
+  "version": "1.0.45",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,

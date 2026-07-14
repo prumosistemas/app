@@ -5,7 +5,10 @@ WORKDIR /app
 COPY server/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt \
-    && python -m playwright install --with-deps chromium
+    && python -m playwright install --with-deps chromium \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends xauth \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY server/ .
 COPY solver/google_ai_mode/ /app/google-ai-solver/
