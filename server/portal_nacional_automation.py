@@ -31,8 +31,19 @@ DOWNLOAD_DIR = BASE_DIR / "downloads_nfse"
 SESSION_GENERATOR = BASE_DIR / "portal_nacional_session.py"
 DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
-SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "240"))
-SOLVER_FALLBACK_URL = os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL", "").strip()
+SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "420"))
+# O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
+# residencial do ThinkPad somente quando a tentativa primaria falha.
+DEFAULT_SOLVER_FALLBACK_URL = "http://127.0.0.1:8876/solve"
+
+
+def configured_solver_fallback_url(value: str | None) -> str:
+    return (value or "").strip() or DEFAULT_SOLVER_FALLBACK_URL
+
+
+SOLVER_FALLBACK_URL = configured_solver_fallback_url(
+    os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL")
+)
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -1058,7 +1069,13 @@ def require_solver_api(solver_url: str) -> str:
                 health = response.json()
                 fatal = health.get("fatal_circuit") or {}
                 if fatal.get("open"):
-                    raise RuntimeError(f"circuito aberto: {fatal.get('reason') or 'solver'}")
+                    # No Modal o circuito e local ao container. Rejeitar todo o
+                    # endpoint aqui impede que a requisicao alcance outra
+                    # instancia saudavel do pool. O POST decide e faz fallback.
+                    print(
+                        "[Solver] Health degradado em um container; "
+                        f"tentando o pool: {fatal.get('reason') or 'solver'}"
+                    )
                 if candidate != solver_url:
                     print(f"[Solver] Usando fallback saudavel: {candidate}")
                 return candidate
@@ -1315,6 +1332,43 @@ def item_required_tipos(item: dict, fallback: list[str]) -> list[str]:
     return list(fallback)
 
 
+def reconcile_existing_downloads(index: dict, download_dir: Path, tipos: list[str]) -> int:
+    """Reaproveita arquivos validos salvos antes de timeout, stop ou retry."""
+    reconciled = 0
+    for item in (index.get("items") or {}).values():
+        note_id = str(item.get("id") or "").strip()
+        if not note_id:
+            continue
+        files_by_tipo = dict(item.get("files_by_tipo") or {})
+        files = list(item.get("files") or [])
+        changed = False
+        for tipo in tipos:
+            if files_by_tipo.get(tipo) and Path(str(files_by_tipo[tipo])).is_file():
+                continue
+            target_dir = download_dir_for_tipo(download_dir, tipo)
+            suffix = default_extension_for_tipo(tipo)
+            matches = sorted(
+                target_dir.glob(f"{note_id}*{suffix}"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            ) if target_dir.exists() else []
+            valid = next((path for path in matches if path.is_file() and path.stat().st_size > 100), None)
+            if valid is None:
+                continue
+            files_by_tipo[tipo] = str(valid)
+            if str(valid) not in files:
+                files.append(str(valid))
+            changed = True
+        if changed:
+            item["files_by_tipo"] = files_by_tipo
+            item["files"] = files
+            reconciled += 1
+        required = item_required_tipos(item, tipos)
+        if all(files_by_tipo.get(tipo) and Path(str(files_by_tipo[tipo])).is_file() for tipo in required):
+            item["status"] = "baixado"
+    return reconciled
+
+
 def download_item_requests(session: requests.Session, item: dict, solver_url: str, download_dir: Path, tipo_download: str = "xml") -> dict:
     tipos = item_required_tipos(item, normalize_download_tipos(tipo_download))
     files_by_tipo = dict(item.get("files_by_tipo") or {})
@@ -1400,6 +1454,16 @@ def run_requests_downloads(
     tipos_download = normalize_download_tipos(tipo_download)
     index["tipo_download"] = tipo_download
     index["download_tipos"] = tipos_download
+    reconciled = reconcile_existing_downloads(index, download_dir, tipos_download)
+    if reconciled:
+        save_index(
+            index_path,
+            index,
+            "reconciliando_downloads",
+            "existing_downloads_reconciled",
+            items=reconciled,
+            tipos=tipos_download,
+        )
     session_data = json.loads(session_path.read_text(encoding="utf-8"))
     update_certificate_in_index(index, session_data)
     items = list(index.get("items", {}).values())

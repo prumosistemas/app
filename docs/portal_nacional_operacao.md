@@ -3,26 +3,26 @@
 ## Arquitetura ativa
 
 - A API Prumo executa `server/portal_nacional_automation.py` e persiste cada run em `/opt/prumo/data`.
-- O único resolvedor é o Google Modo IA versionado em `solver/google_ai_mode` e publicado no Modal.
-- A API chama `POST /solve` diretamente no endpoint Modal, com timeout de 240 segundos e circuit breaker. Não existe fallback para outro modelo.
-- A rota padrão é direta. A proxy do ThinkPad funciona no próprio servidor, mas o acesso pelo Modal expira no Cloudflare Access sem service token; não a ative antes de corrigir essa autenticação.
+- O único resolvedor é o Google Modo IA versionado em `solver/google_ai_mode`; Florence e Cohere não participam do fluxo.
+- A API chama primeiro o endpoint Modal, com até quatro containers. Se ele falhar, chama o mesmo resolvedor em `127.0.0.1:8876`, com quatro navegadores e IP residencial do ThinkPad.
+- A rota Modal permanece direta. O fallback não depende da proxy Cloudflare: ele executa dentro do container da API e sai pela rede normal do servidor.
 
 ## Variáveis
 
 ```text
 PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve
-PORTAL_NACIONAL_SOLVER_FALLBACK_URL=
-PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240
+PORTAL_NACIONAL_SOLVER_FALLBACK_URL=http://127.0.0.1:8876/solve
+PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
-Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. Cookies e artefatos do Google ficam no Volume privado montado em `/google-ai`; somente o código entra na imagem e no repositório.
+Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o estado anônimo fica no Volume privado. No ThinkPad, fica em `/opt/prumo/data/_api_data/google_ai_solver_state`, coberto pelo volume persistente; somente o código entra no Git e na imagem.
 
 ## Procedimento seguro de teste
 
 1. Confirme `/health`: `provider=google_ai_mode`, `route=direct` e circuitos fechados.
 2. Confirme que o certificado abre antes de criar a run.
 3. Inicie com `max_items=1`, `concorrencia=1` e pelo menos 6 tentativas.
-4. Aguarde a run terminar; não reinicie durante um solve ativo de até 240 segundos.
+4. Aguarde a run terminar; não reinicie durante um solve ativo de até 420 segundos.
 5. Valide `item_downloaded`, os arquivos XML/PDF e o status final.
 6. Só depois aumente o lote.
 
@@ -35,6 +35,16 @@ Senhas de PFX são criptografadas com `ISS_INTERNAL_SECRET`. Se esse segredo mud
 Uma run histórica pode servir para diagnóstico, mas nunca imprima a senha ou o PFX. Valide apenas resultado, tamanho e hashes reduzidos.
 
 ## Evidência de 2026-07-13
+
+Teste SIM7 na run `20260713-230754-recebidas-20260601-20260630-cert-202607131415-ambos`:
+
+- 22 XML e 16 PDFs físicos preservados;
+- quatro containers/navegadores Modal validados em paralelo;
+- ao degradar o Modal, quatro navegadores do ThinkPad receberam o fallback;
+- após configurar o Chromium residencial, o Modo IA respondeu 12/12 chamadas visuais e concluiu quatro PDFs novos sem abrir circuito;
+- solver `2026-07-13-google-ai-mode-v17-unified-parallel-safe` nos dois caminhos.
+
+Teste anterior do Alan:
 
 Teste ampliado do Alan na run `20260707-150940-emitidas-20260601-20260630-cert-202607061735-ambos`:
 

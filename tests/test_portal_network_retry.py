@@ -76,6 +76,12 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
     assert calls == ["https://primary.example/solve", "https://fallback.example/solve"]
 
 
+def test_blank_fallback_configuration_uses_residential_solver() -> None:
+    assert automation.configured_solver_fallback_url("") == (
+        "http://127.0.0.1:8876/solve"
+    )
+
+
 def test_solver_async_urls_preserve_access_token() -> None:
     solver = "https://solver.example/internal/solve?token=segredo"
     assert automation.solver_api_health_url(solver) == (

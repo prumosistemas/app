@@ -39,8 +39,24 @@ SESSION_RECOVERY_LOCK = STATE_DIR / ".session_recovery.lock"
 SESSION_RECOVERY_STATE = STATE_DIR / "session_recovery_state.json"
 RECOVERY_BROWSER_WAIT_SECONDS = tuple(
     float(value)
-    for value in os.environ.get("GOOGLE_AI_RECOVERY_WAIT_SECONDS", "12,30,60").split(",")
+    for value in os.environ.get("GOOGLE_AI_RECOVERY_WAIT_SECONDS", "10").split(",")
     if value.strip()
+)
+RECOVERY_POLICY = os.environ.get(
+    "GOOGLE_AI_RECOVERY_POLICY",
+    "headless_then_visible",
+).strip().lower()
+HTTP_RECOVERY_TIMEOUT_SECONDS = max(
+    3.0,
+    float(os.environ.get("GOOGLE_AI_HTTP_RECOVERY_TIMEOUT_SECONDS", "8")),
+)
+HTTP_RECOVERY_IMAGE_STEPS = max(
+    1,
+    min(3, int(os.environ.get("GOOGLE_AI_HTTP_RECOVERY_IMAGE_STEPS", "1"))),
+)
+HTTP_RECOVERY_TEXT_STEPS = max(
+    1,
+    min(3, int(os.environ.get("GOOGLE_AI_HTTP_RECOVERY_TEXT_STEPS", "2"))),
 )
 SEARCH_URL = "https://www.google.com/search"
 TEXT_ASYNC_URL = "https://www.google.com/async/folwr"
@@ -67,6 +83,13 @@ ACCOUNT_COOKIE_PREFIXES = (
     "__Secure-1PSID",
     "__Secure-3PSID",
 )
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 # Esses cookies carregam a habilitação anônima do Modo IA. O Google pode
 # devolver versões genéricas durante uma resposta; elas não devem substituir
@@ -338,7 +361,7 @@ def _validate_mode_session(
         session,
         user_agent,
         _recovery_search_params(image_required),
-        min(timeout, 35.0),
+        min(timeout, HTTP_RECOVERY_TIMEOUT_SECONDS),
         allow_cookie_reset=False,
     )
     if not _has_required_mode_tokens(html_text, image_required):
@@ -356,22 +379,27 @@ def try_http_only_recovery(
     started = time.monotonic()
     session = CountingSession()
     warmups = (
-        {"q": "Google", "hl": "pt-BR", "gl": "br", "pws": "0"},
         _recovery_search_params(image_required),
         {
             **_recovery_search_params(image_required),
             "safe": "off",
             "filter": "0",
         },
+        {"q": "Google", "hl": "pt-BR", "gl": "br", "pws": "0"},
+    )
+    maximum_steps = (
+        HTTP_RECOVERY_IMAGE_STEPS
+        if image_required
+        else HTTP_RECOVERY_TEXT_STEPS
     )
     last_error: Exception | None = None
-    for index, params in enumerate(warmups, start=1):
+    for index, params in enumerate(warmups[:maximum_steps], start=1):
         try:
             html_text, _ = fetch_initial_html(
                 session,
                 user_agent,
                 params,
-                min(timeout, 30.0),
+                min(timeout, HTTP_RECOVERY_TIMEOUT_SECONDS),
                 allow_cookie_reset=False,
             )
             if _has_required_mode_tokens(html_text, image_required):
@@ -492,6 +520,7 @@ def recover_session_with_chrome(
         profile = Path(tempfile.mkdtemp(prefix="google_ai_chrome_recovery_"))
         process: subprocess.Popen[Any] | None = None
         removed = False
+        succeeded = False
         try:
             port = _available_loopback_port()
             url = f"{SEARCH_URL}?{urlencode(_recovery_search_params(image_required))}"
@@ -508,6 +537,8 @@ def recover_session_with_chrome(
                 "--window-size=1365,900",
                 f"--user-agent={user_agent}",
             ]
+            if _env_flag("GOOGLE_AI_VISIBLE_CHROME_OFFSCREEN", True):
+                command.append("--window-position=-32000,-32000")
             proxy = urlsplit(os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or "")
             if proxy.hostname and proxy.port:
                 command.append(f"--proxy-server={proxy.scheme or 'http'}://{proxy.hostname}:{proxy.port}")
@@ -575,13 +606,18 @@ def recover_session_with_chrome(
             save_anonymous_session(session, user_agent)
             _write_recovery_state("chrome_cdp", "success", time.monotonic() - started, profile_removed=None)
             _recovery_log("sessão renovada pelo Chrome/CDP")
+            succeeded = True
             return session
         finally:
             if process is not None:
                 _stop_firefox_profile(process, profile)
             shutil.rmtree(profile, ignore_errors=True)
             removed = not profile.exists()
-            if process is not None and process.returncode not in (None, 0, -15):
+            if (
+                not succeeded
+                and process is not None
+                and process.returncode not in (None, 0, -15)
+            ):
                 _write_recovery_state("chrome_cdp", "failed", time.monotonic() - started, profile_removed=removed)
 
 
@@ -590,19 +626,11 @@ def recover_session_with_browser(
     image_required: bool,
     timeout: float,
 ) -> CountingSession:
-    try:
-        chrome_attempts = max(1, min(3, int(os.environ.get("GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS", "1"))))
-    except ValueError:
-        chrome_attempts = 1
-    chrome_error: BaseException | None = None
-    for attempt in range(1, chrome_attempts + 1):
-        try:
-            return recover_session_with_chrome(user_agent, image_required, timeout)
-        except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as exc:
-            chrome_error = exc
-            _recovery_log(f"Chrome não renovou a sessão ({attempt}/{chrome_attempts}): {exc}")
-            if attempt < chrome_attempts:
-                time.sleep(float(attempt * 2))
+    policy = RECOVERY_POLICY or "headless"
+    if policy in {"none", "off", "disabled", "http_only", "http-only", "requests"}:
+        raise GoogleAIModeError(
+            "Recuperação por navegador do Modo IA desativada; usando somente sessão HTTP."
+        )
 
     firefox_enabled = os.environ.get("GOOGLE_AI_FIREFOX_FALLBACK", "1").strip().lower() not in {
         "0",
@@ -610,17 +638,57 @@ def recover_session_with_browser(
         "no",
         "off",
     }
-    if not firefox_enabled:
-        raise GoogleAIModeError(
-            f"Chrome não renovou a sessão após {chrome_attempts} tentativa(s): {chrome_error}"
-        ) from chrome_error
+    visible_chrome_enabled = (
+        policy in {"visible", "chrome", "chrome_then_headless", "headless_then_visible"}
+        or _env_flag("GOOGLE_AI_VISIBLE_CHROME_RECOVERY", False)
+    )
+    headless_first = policy not in {"visible", "chrome", "chrome_then_headless"}
+
+    firefox_error: BaseException | None = None
+    if firefox_enabled and headless_first:
+        try:
+            return recover_session_with_headless_firefox(user_agent, image_required, timeout)
+        except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as exc:
+            firefox_error = exc
+            _recovery_log(f"Firefox headless não renovou a sessão: {exc}")
 
     try:
-        return recover_session_with_headless_firefox(user_agent, image_required, timeout)
-    except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as firefox_error:
+        chrome_attempts = max(1, min(3, int(os.environ.get("GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS", "1"))))
+    except ValueError:
+        chrome_attempts = 1
+    chrome_error: BaseException | None = None
+
+    if visible_chrome_enabled:
+        for attempt in range(1, chrome_attempts + 1):
+            try:
+                return recover_session_with_chrome(user_agent, image_required, timeout)
+            except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as exc:
+                chrome_error = exc
+                _recovery_log(f"Chrome não renovou a sessão ({attempt}/{chrome_attempts}): {exc}")
+                if attempt < chrome_attempts:
+                    time.sleep(float(attempt * 2))
+    else:
+        _recovery_log(
+            "Chrome visível desativado para recuperar sessão do Modo IA "
+            "(use GOOGLE_AI_RECOVERY_POLICY=headless_then_visible para permitir)."
+        )
+
+    if firefox_enabled and not headless_first:
+        try:
+            return recover_session_with_headless_firefox(user_agent, image_required, timeout)
+        except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as exc:
+            firefox_error = exc
+            _recovery_log(f"Firefox headless não renovou a sessão: {exc}")
+
+    if not firefox_enabled and not visible_chrome_enabled:
         raise GoogleAIModeError(
-            f"Chrome e Firefox não renovaram a sessão. Chrome: {chrome_error}; Firefox: {firefox_error}"
-        ) from firefox_error
+            "Recuperação por navegador do Modo IA indisponível: Firefox headless e Chrome visível desativados."
+        )
+
+    raise GoogleAIModeError(
+        f"Nenhuma recuperação do Modo IA formou sessão válida. "
+        f"Firefox headless: {firefox_error}; Chrome visível: {chrome_error}"
+    )
 
 
 def _write_firefox_recovery_preferences(profile: Path) -> None:
@@ -757,6 +825,48 @@ def _wait_for_firefox_cookies(profile: Path, maximum_seconds: float) -> None:
     )
 
 
+def _process_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not process:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if not ctypes.windll.kernel32.GetExitCodeProcess(
+                    process,
+                    ctypes.byref(exit_code),
+                ):
+                    return False
+                return exit_code.value == 259
+            finally:
+                ctypes.windll.kernel32.CloseHandle(process)
+        except (AttributeError, OSError):
+            return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _recovery_lock_owner_pid() -> int | None:
+    try:
+        match = re.search(
+            r"\bpid=(\d+)\b",
+            SESSION_RECOVERY_LOCK.read_text(encoding="ascii", errors="ignore"),
+        )
+        return int(match.group(1)) if match else None
+    except (OSError, ValueError):
+        return None
+
+
 @contextmanager
 def _session_recovery_lock(timeout: float = 45.0):
     deadline = time.monotonic() + timeout
@@ -773,6 +883,13 @@ def _session_recovery_lock(timeout: float = 45.0):
             )
         except FileExistsError:
             try:
+                owner_pid = _recovery_lock_owner_pid()
+                if owner_pid is not None and not _process_is_alive(owner_pid):
+                    SESSION_RECOVERY_LOCK.unlink()
+                    _recovery_log(
+                        f"lock de recuperação órfão removido (pid {owner_pid})"
+                    )
+                    continue
                 age = time.time() - SESSION_RECOVERY_LOCK.stat().st_mtime
                 if age > 120:
                     SESSION_RECOVERY_LOCK.unlink()

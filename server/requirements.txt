@@ -12,3 +12,6 @@ websocket-client
 gunicorn
 cryptography
 modal
+pillow
+numpy
+opencv-python-headless

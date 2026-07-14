@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.44 - filas resilientes, logs incrementais e Modo IA v11**
+Versao: **1.0.45 - Portal resiliente, quatro solvers e fallback residencial**
 
 ## Estado atual
 
@@ -9,7 +9,7 @@ Versao: **1.0.44 - filas resilientes, logs incrementais e Modo IA v11**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA direto no Modal; proxy do ThinkPad preservado, mas bloqueado para o Modal até existir autenticação de máquina.
+- Portal Nacional: Google Modo IA no Modal como rota primaria e o mesmo resolvedor no ThinkPad como fallback residencial automatico; sem Florence/Cohere.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -72,8 +72,8 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -t ryang20/prumo-api:1.0.44 server
-docker push ryang20/prumo-api:1.0.44
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.45 .
+docker push ryang20/prumo-api:1.0.45
 ```
 
 Servidor:

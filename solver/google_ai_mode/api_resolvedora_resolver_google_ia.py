@@ -38,7 +38,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-13-google-ai-mode-v11-bundled-source"
+SOLVER_API_VERSION = "2026-07-13-google-ai-mode-v17-unified-parallel-safe"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -88,6 +88,8 @@ legacy.LEGACY_PROVIDER_MODEL = PROVIDER_MODEL  # campo legado usado apenas em ar
 
 # Perfil rapido, limitado a esta API.
 legacy.BROWSER_EXTRA_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
     "--window-size=1180,900",
     "--window-position=30,30",
     "--disable-notifications",
@@ -289,6 +291,39 @@ def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
             image.close()
 
 
+def _build_motion_overlay(folder: Path, frames: list[Path]) -> Path | None:
+    """Sobrepoe quadros temporais no mesmo tamanho do canvas de clique.
+
+    Diferente da montagem 2x2, a sobreposicao preserva a escala de coordenadas:
+    o Modo IA enxerga rastros/mudancas, mas o ponto 0..1000 continua apontando
+    para a area clicavel original.
+    """
+    usable = [path for path in frames if path.is_file() and not legacy.png_seems_blank(path)]
+    if len(usable) < 2:
+        return None
+    opened = []
+    try:
+        for path in usable[:4]:
+            opened.append(legacy.Image.open(path).convert("RGB"))
+        width, height = opened[-1].size
+        opened = [
+            image if image.size == (width, height) else image.resize((width, height))
+            for image in opened
+        ]
+        trail = opened[0]
+        for index, image in enumerate(opened[1:-1], start=2):
+            trail = legacy.Image.blend(trail, image, 1.0 / index)
+        # Mantem o ultimo quadro predominante para o clique final, com rastros
+        # suficientes dos anteriores para o Modo IA perceber movimento/temporal.
+        overlay = legacy.Image.blend(opened[-1], trail, 0.36)
+        overlay_path = folder / "desafio-temporal-sobreposto.jpg"
+        overlay.save(overlay_path, format="JPEG", quality=88, optimize=False)
+        return overlay_path
+    finally:
+        for image in opened:
+            image.close()
+
+
 def _capture_non_9_canvas_sequence(
     port: int,
     folder: Path,
@@ -358,6 +393,21 @@ new Promise(async (resolve) => {{
         await new Promise((done) => setTimeout(done, {max(40, interval_ms)}));
       }}
     }}
+    // Congele o loop visual depois de observar a sequencia. O Modo IA pode
+    // levar alguns segundos; sem isso o alvo muda de lugar antes do clique.
+    if (!window.__prumoOriginalRequestAnimationFrame) {{
+      window.__prumoOriginalRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+    }}
+    window.__prumoAnimationFrozen = true;
+    window.requestAnimationFrame = () => 0;
+    await new Promise((done) => setTimeout(done, 60));
+    frames[frames.length - 1] = src.toDataURL('image/jpeg', 0.88);
+    window.setTimeout(() => {{
+      if (window.__prumoAnimationFrozen && window.__prumoOriginalRequestAnimationFrame) {{
+        window.requestAnimationFrame = window.__prumoOriginalRequestAnimationFrame;
+        window.__prumoAnimationFrozen = false;
+      }}
+    }}, 60000);
   }} catch (error) {{
     return resolve({{error: String(error)}});
   }}
@@ -429,6 +479,45 @@ new Promise(async (resolve) => {{
             encoding="utf-8",
         )
     return paths
+
+
+def _restore_non_9_animation(port: int) -> None:
+    page = legacy.challenge_page(port)
+    if not page:
+        return
+    try:
+        client = legacy.CdpClient(page["webSocketDebuggerUrl"])
+        try:
+            client.eval(
+                """
+(() => {
+  if (window.__prumoOriginalRequestAnimationFrame) {
+    window.requestAnimationFrame = window.__prumoOriginalRequestAnimationFrame;
+  }
+  window.__prumoAnimationFrozen = false;
+  return true;
+})()
+"""
+            )
+        finally:
+            client.close()
+    except Exception:
+        pass
+
+
+_legacy_click_non_9_choice = legacy.click_non_9_choice
+
+
+def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
+    try:
+        return _legacy_click_non_9_choice(port, escolha)
+    finally:
+        # Deixe o handler do clique ler o quadro congelado antes de retomar o loop.
+        time.sleep(0.25)
+        _restore_non_9_animation(port)
+
+
+legacy.click_non_9_choice = _click_non_9_choice_frozen
 
 
 def _capture_live_canvas_for_click(port: int, output_path: Path) -> dict[str, Any] | None:
@@ -546,8 +635,36 @@ def _relocate_choice_on_live_canvas(
             "confidence": best[0] if best else None,
         }
     confidence, (left, top), match_width, match_height, scale = best
-    click_choice["x_normalizado"] = (left + match_width / 2.0) / current.shape[1] * 1000.0
-    click_choice["y_normalizado"] = (top + match_height / 2.0) / current.shape[0] * 1000.0
+    original_x = float(click_choice.get("x_normalizado") or 0.0)
+    original_y = float(click_choice.get("y_normalizado") or 0.0)
+    relocated_x = (left + match_width / 2.0) / current.shape[1] * 1000.0
+    relocated_y = (top + match_height / 2.0) / current.shape[0] * 1000.0
+    shift = ((relocated_x - original_x) ** 2 + (relocated_y - original_y) ** 2) ** 0.5
+    temporal_frames = 0
+    try:
+        canvas_info = json.loads((challenge_dir / "canvas-info.json").read_text(encoding="utf-8"))
+        temporal_frames = int(canvas_info.get("temporal_frames") or 0)
+    except Exception:
+        pass
+    box_span = max(
+        1.0,
+        float(selected.x2) - float(selected.x1),
+        float(selected.y2) - float(selected.y1),
+    )
+    max_shift = max(35.0, min(90.0, box_span * 0.45)) if temporal_frames >= 3 else max(80.0, min(180.0, box_span * 0.90))
+    if shift > max_shift:
+        return {
+            "safe": True,
+            "reason": "relocation_too_far_keep_original",
+            "confidence": confidence,
+            "scale": scale,
+            "shift": shift,
+            "max_shift": max_shift,
+            "x_normalizado": original_x,
+            "y_normalizado": original_y,
+        }
+    click_choice["x_normalizado"] = relocated_x
+    click_choice["y_normalizado"] = relocated_y
     click_choice["x_percent_na_imagem"] = click_choice["x_normalizado"] / 10.0
     click_choice["y_percent_na_imagem"] = click_choice["y_normalizado"] / 10.0
     return {
@@ -555,6 +672,8 @@ def _relocate_choice_on_live_canvas(
         "reason": "target_relocated_on_current_frame",
         "confidence": confidence,
         "scale": scale,
+        "shift": shift,
+        "max_shift": max_shift,
         "x_normalizado": click_choice["x_normalizado"],
         "y_normalizado": click_choice["y_normalizado"],
     }
@@ -978,7 +1097,7 @@ def _query_image(image_path: Path, prompt: str) -> Any:
     return result
 
 
-def _nine_tile_prompt(captcha_question: str) -> str:
+def _legacy_nine_tile_prompt(captcha_question: str) -> str:
     return f"""
 Analise SOMENTE os pixels da imagem anexada. Nao pesquise na web, nao consulte paginas,
 nao use fontes externas e nao forneca links ou citacoes.
@@ -1020,6 +1139,96 @@ Formato obrigatorio, mantendo exatamente as chaves tile_1 ate tile_9:
 Em resposta_direta, coloque somente os numeros selecionados em ordem crescente,
 separados por virgula. Se nenhum corresponder, use string vazia.
 """.strip()
+
+
+def _unified_visual_prompt(
+    captcha_question: str,
+    image_width: int | None = None,
+    image_height: int | None = None,
+    frame_count: int = 1,
+    reference_present: bool = False,
+) -> str:
+    size_note = (
+        f"Dimensoes da area clicavel: {image_width} x {image_height} pixels."
+        if image_width and image_height
+        else "Use a imagem inteira como area visual do desafio."
+    )
+    reference_note = (
+        "A parte superior pode conter uma referencia visual nao clicavel."
+        if reference_present
+        else "Nao presuma referencia externa; use somente a imagem."
+    )
+    sequence_note = ""
+    if frame_count > 1:
+        sequence_note = f"""
+A imagem e uma sobreposicao temporal de {frame_count} quadros da MESMA cena. O ultimo
+quadro e predominante e os anteriores aparecem como rastros. Use os rastros para entender
+movimento, mas mantenha as coordenadas na escala 0..1000 da imagem anexada. Rastros
+transparentes do mesmo animal nao sao candidatos separados. Para "animal diferente",
+priorize especie, morfologia, orientacao ou pose; so priorize movimento quando a pergunta
+mencionar movimento, trajetoria, mudanca ou destino.
+"""
+    tiles = ",\n".join(
+        f'  "tile_{number}": {{"descricao": "curta", "selecionar": false, '
+        '"confianca": 0.0, "motivo": "curto"}}'
+        for number in range(1, 10)
+    )
+    return f"""
+Analise SOMENTE os pixels da imagem anexada. Nao pesquise na web, nao consulte paginas,
+nao use fontes externas e nao forneca links ou citacoes.
+
+Pergunta original: "{captcha_question}"
+{size_note}
+{reference_note}
+{sequence_note}
+
+Use UM UNICO contrato para qualquer desafio visual. Nao classifique por formato.
+Escolha "selecionar_regioes" para marcar uma ou mais regioes, ou "clicar_ponto" para
+um unico objeto/destino. Quando houver nove regioes, numere 1 2 3 / 4 5 6 / 7 8 9.
+
+Regras:
+- responda literalmente e examine todas as alternativas;
+- objetos parciais contam somente quando claramente identificaveis;
+- nao marque sombra, reflexo, marca-dagua, rastro transparente ou associacao vaga;
+- em trajetoria clique no destino final, nao no objeto em movimento;
+- para animal diferente compare especie, orientacao e pose do grupo majoritario;
+- nao invente objetos, nao use arrays/listas JSON nem colchetes;
+- retorne somente JSON valido, sem Markdown ou texto adicional.
+
+Formato obrigatorio, mantendo TODAS as chaves:
+{{
+  "acao": "selecionar_regioes ou clicar_ponto",
+  "descricao_geral": "curta",
+{tiles},
+  "resposta_direta": "2,5",
+  "objetos": {{
+    "objeto_1": {{
+      "nome": "nome curto",
+      "caixa": {{"x1": 80, "y1": 100, "x2": 310, "y2": 500}},
+      "corresponde_pergunta": true,
+      "confianca": 0.95,
+      "motivo": "curto"
+    }}
+  }},
+  "escolha": {{
+    "objeto": "objeto_1",
+    "x": 195,
+    "y": 300,
+    "descricao_do_alvo": "nome curto",
+    "argumento": "curto",
+    "confianca": 0.95
+  }},
+  "observacoes": "curta"
+}}
+
+Para "selecionar_regioes", preencha tile_1..tile_9 e resposta_direta, use objetos={{}}
+e escolha vazia com x=0,y=0. Para "clicar_ponto", deixe os tiles como false e
+resposta_direta vazia, depois preencha objetos e escolha.
+""".strip()
+
+
+def _nine_tile_prompt(captcha_question: str) -> str:
+    return _unified_visual_prompt(captcha_question)
 
 
 def solve_with_google_ai(
@@ -1115,7 +1324,7 @@ def solve_with_google_ai(
         return None
 
 
-def _non_nine_prompt(
+def _legacy_non_nine_prompt(
     captcha_question: str,
     image_width: int,
     image_height: int,
@@ -1125,13 +1334,12 @@ def _non_nine_prompt(
     sequence_note = ""
     if frame_count > 1:
         sequence_note = f"""
-A imagem anexada e uma sequencia temporal de {frame_count} quadros da MESMA cena,
-em ordem: superior esquerdo, superior direito, inferior esquerdo, inferior direito.
-Compare a mudanca de posicao entre os quadros para descobrir direcao e velocidade.
-Depois de decidir o destino, localize e marque esse alvo no QUARTO quadro
-(inferior direito). As caixas e coordenadas devem usar a montagem anexada inteira
-na escala 0..1000; o programa convertera o ponto para um quadro individual.
-Nao escolha pelo alinhamento de um unico quadro: projete a trajetoria observada na sequencia.
+A imagem anexada e uma sobreposicao temporal de {frame_count} quadros da MESMA cena:
+o ultimo quadro fica predominante e os quadros anteriores aparecem como rastros suaves.
+Use os rastros para perceber movimento, mudanca de opacidade, aparencia ou trajetoria.
+Depois de decidir o alvo, marque a posicao atual/final dele no proprio canvas anexado.
+As caixas e coordenadas devem usar esta imagem sobreposta inteira na escala 0..1000.
+Nao escolha por um unico instante isolado quando os rastros indicarem o diferente/movel.
 """
     reference_note = (
         "A parte superior contem uma referencia visual nao clicavel; compare-a com as opcoes inferiores."
@@ -1163,6 +1371,12 @@ Objetivo:
 10. Quando a pergunta pedir o animal diferente, compare TODOS antes de escolher:
     especie, orientacao/espelhamento e pose. Para direcao, localize focinho/rosto e tronco:
     focinho a esquerda do tronco = olhando para a esquerda; focinho a direita = olhando para a direita.
+    Se a imagem for uma sobreposicao temporal, trate rastros transparentes como
+    copias temporais do mesmo animal, nao como uma especie diferente. Para
+    "animal diferente", escolha primeiro a excecao de especie/morfologia/pose
+    em relacao ao grupo majoritario. So priorize movimento/opacidade quando a
+    pergunta mencionar movimento, trajetoria, mudou, deslocou ou destino, ou
+    quando nao existir diferenca clara de especie/morfologia.
     Registre essa comparacao no motivo de cada objeto, conte o padrao majoritario e escolha apenas a excecao.
     Revise explicitamente o candidato e a alternativa mais parecida antes de responder.
 
@@ -1197,6 +1411,22 @@ Formato obrigatorio:
   "observacoes": "curta"
 }}
 """.strip()
+
+
+def _non_nine_prompt(
+    captcha_question: str,
+    image_width: int,
+    image_height: int,
+    frame_count: int = 1,
+    reference_present: bool = False,
+) -> str:
+    return _unified_visual_prompt(
+        captcha_question,
+        image_width=image_width,
+        image_height=image_height,
+        frame_count=frame_count,
+        reference_present=reference_present,
+    )
 
 
 def _top_reference_has_visual_content(full_path: Path, top_cut: int) -> bool:
@@ -1496,6 +1726,88 @@ def _override_choice_from_motion(
     }
 
 
+def _override_different_choice_from_motion(
+    parsed: dict[str, Any],
+    challenge_dir: Path,
+    captcha_question: str,
+) -> dict[str, Any] | None:
+    prompt = (captcha_question or "").casefold()
+    if "diferente" not in prompt:
+        return None
+    motion_terms = ("mov", "mud", "desloc", "trajet", "caminh", "direcao", "direção", "destino", "vai")
+    if not any(term in prompt for term in motion_terms):
+        return None
+    centers = _motion_centers(challenge_dir)
+    if len(centers) < 3:
+        return None
+    first_x, first_y = centers[0]
+    last_x, last_y = centers[-1]
+    displacement = ((last_x - first_x) ** 2 + (last_y - first_y) ** 2) ** 0.5
+    if displacement < 18.0:
+        return None
+    objects = parsed.get("objetos")
+    if not isinstance(objects, dict):
+        return None
+    candidates: list[dict[str, Any]] = []
+    for key, raw in objects.items():
+        if not isinstance(raw, dict) or not isinstance(raw.get("caixa"), dict):
+            continue
+        box = raw["caixa"]
+        try:
+            center_x = (float(box["x1"]) + float(box["x2"])) / 2.0
+            center_y = (float(box["y1"]) + float(box["y2"])) / 2.0
+        except (KeyError, TypeError, ValueError):
+            continue
+        distance = ((center_x - last_x) ** 2 + (center_y - last_y) ** 2) ** 0.5
+        candidates.append(
+            {
+                "key": str(key),
+                "name": str(raw.get("nome") or key),
+                "x": center_x,
+                "y": center_y,
+                "distance": distance,
+            }
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item["distance"])
+    best = candidates[0]
+    margin = candidates[1]["distance"] - best["distance"] if len(candidates) > 1 else 999.0
+    if best["distance"] > 190.0 or margin < 18.0:
+        return {
+            "applied": False,
+            "reason": "alvo_movel_ambiguo",
+            "centers": centers,
+            "candidates": candidates,
+            "margin": margin,
+            "displacement": displacement,
+        }
+    choice = parsed.get("escolha")
+    if not isinstance(choice, dict):
+        choice = {}
+        parsed["escolha"] = choice
+    previous = choice.get("objeto")
+    choice.update(
+        {
+            "objeto": best["key"],
+            "x": best["x"],
+            "y": best["y"],
+            "descricao_do_alvo": best["name"],
+            "argumento": "objeto diferente identificado por movimento/translucidez na sequencia temporal",
+            "confianca": max(0.78, min(0.99, 0.98 - best["distance"] / 1000.0)),
+        }
+    )
+    return {
+        "applied": True,
+        "previous_choice": previous,
+        "selected": best["key"],
+        "centers": centers,
+        "candidates": candidates,
+        "margin": margin,
+        "displacement": displacement,
+    }
+
+
 def analyze_non_9_with_google_ai(
     challenge_dir: Path,
     captcha_question: str,
@@ -1514,15 +1826,32 @@ def analyze_non_9_with_google_ai(
     sequence_path = challenge_dir / "sequencia-temporal.jpg"
     if not sequence_path.is_file():
         sequence_path = challenge_dir / "sequencia-temporal.png"
-    tracked_centers = _motion_centers(challenge_dir) if sequence_path.is_file() else []
+    overlay_path = challenge_dir / "desafio-temporal-sobreposto.jpg"
+    if not overlay_path.is_file():
+        overlay_path = _build_motion_overlay(
+            challenge_dir,
+            sorted(challenge_dir.glob("quadro-[0-9][0-9].jpg")),
+        ) or overlay_path
+    has_temporal_artifacts = sequence_path.is_file() or overlay_path.is_file()
+    tracked_centers = _motion_centers(challenge_dir) if has_temporal_artifacts else []
     displacement = 0.0
     if len(tracked_centers) >= 3:
         displacement = (
             (tracked_centers[-1][0] - tracked_centers[0][0]) ** 2
             + (tracked_centers[-1][1] - tracked_centers[0][1]) ** 2
         ) ** 0.5
-    moving_sequence = sequence_path.is_file() and displacement >= 4.5
-    query_path = sequence_path if moving_sequence else full_path
+    temporal_frames = 0
+    visual_score = 0.0
+    try:
+        canvas_info = json.loads((challenge_dir / "canvas-info.json").read_text(encoding="utf-8"))
+        temporal_frames = int(canvas_info.get("temporal_frames") or 0)
+        visual_score = float(canvas_info.get("visual_score") or 0.0)
+    except Exception:
+        pass
+    moving_sequence = has_temporal_artifacts and overlay_path.is_file() and (
+        displacement >= 4.5 or (temporal_frames >= 3 and visual_score >= 12.0)
+    )
+    query_path = overlay_path if moving_sequence else full_path
     if not legacy.provider_request_allowed():
         state = legacy.provider_circuit_state()
         legacy.set_solver_error(
@@ -1546,8 +1875,8 @@ def analyze_non_9_with_google_ai(
         reference_present = _top_reference_has_visual_content(full_path, top_cut)
         if not moving_sequence:
             query_path = full_path if reference_present else image_path
-        frame_count = len(list(challenge_dir.glob("quadro-[0-9][0-9].jpg"))) if query_path == sequence_path else 1
-        if frame_count == 0 and query_path == sequence_path:
+        frame_count = len(list(challenge_dir.glob("quadro-[0-9][0-9].jpg"))) if moving_sequence else 1
+        if frame_count == 0 and moving_sequence:
             frame_count = len(list(challenge_dir.glob("quadro-[0-9][0-9].png")))
         with legacy.Image.open(query_path) as query_image:
             query_width, query_height = query_image.size
@@ -1558,23 +1887,23 @@ def analyze_non_9_with_google_ai(
                 width,
                 height,
                 frame_count=frame_count,
-                reference_present=reference_present,
+                reference_present=(reference_present and query_path == full_path),
             ),
         )
         raw_answer = result.answer
         parsed = _parse_json_answer(raw_answer)
         parsed_original = parsed
-        if frame_count > 1:
-            parsed = _sequence_coordinates_to_frame(
-                parsed,
-                full_width,
-                full_height,
-                query_width,
-                query_height,
-            )
         if query_path == full_path:
             parsed = _full_coordinates_to_selectable(parsed, full_height, top_cut)
-        motion_override = _override_choice_from_motion(parsed, challenge_dir) if frame_count > 1 else None
+        motion_override = None
+        if frame_count > 1:
+            motion_override = _override_different_choice_from_motion(
+                parsed,
+                challenge_dir,
+                captcha_question,
+            )
+            if not motion_override or not motion_override.get("applied"):
+                motion_override = _override_choice_from_motion(parsed, challenge_dir)
         detections, by_key = _parse_non9_objects(parsed)
 
         choice = parsed.get("escolha")
@@ -1762,6 +2091,7 @@ def _save_and_analyze_non_9_fast(
             for path in frame_paths
         ]
         _build_motion_sequence(folder, full_frame_paths)
+        _build_motion_overlay(folder, frame_paths)
     capture_seconds = time.perf_counter() - capture_started
     (folder / "timing.json").write_text(
         json.dumps(
@@ -1773,6 +2103,7 @@ def _save_and_analyze_non_9_fast(
                     (folder / name).is_file()
                     for name in ("sequencia-temporal.jpg", "sequencia-temporal.png")
                 ),
+                "overlay_created": (folder / "desafio-temporal-sobreposto.jpg").is_file(),
             },
             ensure_ascii=False,
             indent=2,
@@ -1787,7 +2118,10 @@ def _save_and_analyze_non_9_fast(
         return None
     _save_browser_dom_debug(port, folder, "capturado")
     print(f"[Debug] Desafio nao-9 limpo salvo em {capture_seconds:.2f}s: {folder}")
-    return analyze_non_9_with_google_ai(folder, prompt_text, port=port)
+    result = analyze_non_9_with_google_ai(folder, prompt_text, port=port)
+    if not result:
+        _restore_non_9_animation(port)
+    return result
 
 
 def _challenge_wait_state(port: int) -> dict[str, Any] | None:
@@ -1979,7 +2313,7 @@ def main() -> None:
     print("API resolvedora alternativa: Google Modo IA")
     print(f"Nucleo reutilizado: {LEGACY_SOLVER_PATH.name}")
     print(f"Cliente multimodal: {GOOGLE_AI_CLIENT_PATH}")
-    print("Politica: nao pular prompts; resolver 9 tiles e desafios nao-9.")
+    print("Politica: uma unica analise visual; sem separar desafios por formato no provedor.")
     print("Provedor visual ativo: somente Google Modo IA.")
     print("As chamadas visuais sao serializadas para proteger a sessao anonima.")
     print("=" * 60)

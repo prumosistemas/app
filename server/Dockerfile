@@ -2,17 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY server/requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -m playwright install --with-deps chromium
 
-COPY . .
+COPY server/ .
+COPY solver/google_ai_mode/ /app/google-ai-solver/
 
-RUN mkdir -p /app/output
+RUN chmod +x /app/start.sh \
+    && mkdir -p /app/output
 
 ENV PYTHONUNBUFFERED=1
 ENV ISS_OUTPUT_ROOT=/app/output
 
-EXPOSE 8000
+EXPOSE 8000 8876
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/start.sh"]

@@ -163,8 +163,8 @@ Configuracao da API Python:
 
 ```env
 PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve
-PORTAL_NACIONAL_SOLVER_FALLBACK_URL=
-PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240
+PORTAL_NACIONAL_SOLVER_FALLBACK_URL=http://127.0.0.1:8876/solve
+PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
 O solver e stateless. Ele nao recebe cookies do usuario, nao grava arquivos finais e nao deve misturar dados de usuarios. Ele so recebe `sitekey/request_id`, resolve o hCaptcha e devolve token. Os XML/PDF ficam no servidor, dentro da arvore do colaborador.
@@ -410,7 +410,7 @@ Teste confirmado em 2026-07-06:
 - Upload local pela API retornou `200`, apareceu em `/api/portal-nacional/state` e a exclusao retornou `200`.
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
-- Em 2026-07-13 o Modo IA v11 passou a enviar a area clicavel limpa, validar e reposicionar alvos animados com OpenCV, separar código/estado e manter Google Modo IA como unico resolvedor.
+- Em 2026-07-13 o Modo IA v17 passou a unificar a analise visual, tratar quadros temporais, validar e reposicionar alvos animados com OpenCV. O Modal e primario; `127.0.0.1:8876` no ThinkPad e o fallback residencial automatico.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
@@ -449,8 +449,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -t ryang20/prumo-api:1.0.44 server
-docker push ryang20/prumo-api:1.0.44
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.45 .
+docker push ryang20/prumo-api:1.0.45
 ```
 
 Atualizar servidor:
@@ -461,7 +461,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.44 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.45 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

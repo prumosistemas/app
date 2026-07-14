@@ -167,8 +167,8 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- O solver v11 usa exclusivamente Google Modo IA por rota direta, reposiciona alvos animados com OpenCV e separa código versionado de estado anônimo; a proxy do ThinkPad exige autenticação de máquina antes de ser contingência utilizável pelo Modal.
-- desafios hCaptcha ainda dependem do Modo IA; por isso o timeout do solver deve ficar configurado por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=240` e os retries reaproveitam arquivos ja baixados.
+- O solver v17 usa exclusivamente Google Modo IA, unifica a análise visual, trata quadros temporais e reposiciona alvos animados com OpenCV. Modal é a rota primária; o mesmo solver no ThinkPad é o fallback residencial.
+- Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
 
