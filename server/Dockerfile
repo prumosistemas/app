@@ -5,8 +5,9 @@ WORKDIR /app
 COPY server/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt \
-    && python -m playwright install --with-deps chromium \
-    && apt-get update \
+    && python -m playwright install --with-deps chromium
+
+RUN apt-get update \
     && apt-get install -y --no-install-recommends xauth \
     && rm -rf /var/lib/apt/lists/*
 
