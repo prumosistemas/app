@@ -6,6 +6,9 @@ workers_dev = true
 
 routes = [
   { pattern = "app.prumosistemas.com.br/", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/login*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/admin*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/master*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/portal-nacional*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/iss-fortaleza*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/api/*", zone_name = "prumosistemas.com.br" },

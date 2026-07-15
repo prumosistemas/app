@@ -1,4 +1,8 @@
 import indexHtml from "../index.html";
+import loginHtml from "../login.html";
+import adminHtml from "../admin.html";
+import masterHtml from "../master.html";
+import masterCompanyHtml from "../master-company.html";
 import issFortalezaHtml from "../iss-fortaleza.html";
 import portalNacionalHtml from "../portal-nacional.html";
 
@@ -77,6 +81,22 @@ export default {
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/" || url.pathname === "")) {
         return htmlResponse(indexHtml);
+      }
+
+      if (["GET", "HEAD"].includes(request.method) && ["/login", "/login/", "/login.html"].includes(url.pathname)) {
+        return htmlResponse(loginHtml);
+      }
+
+      if (["GET", "HEAD"].includes(request.method) && ["/admin", "/admin/", "/admin.html"].includes(url.pathname)) {
+        return htmlResponse(adminHtml);
+      }
+
+      if (["GET", "HEAD"].includes(request.method) && ["/master", "/master/", "/master.html"].includes(url.pathname)) {
+        return htmlResponse(masterHtml);
+      }
+
+      if (["GET", "HEAD"].includes(request.method) && ["/master-company", "/master-company/", "/master-company.html"].includes(url.pathname)) {
+        return htmlResponse(masterCompanyHtml);
       }
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
