@@ -3,7 +3,10 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -89,6 +92,42 @@ class AdminSummaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(main, "OUTPUT_ROOT", temporary), patch.dict("os.environ", {}, clear=True):
                 self.assertEqual(main._portal_solver_runtime_status(), {})
+
+    def test_modal_billing_uses_workspace_api(self):
+        billing = SimpleNamespace(
+            report=lambda **_kwargs: [
+                SimpleNamespace(
+                    object_id="ap-test",
+                    description="prumo-portal-nacional-google-solver",
+                    environment_name="main",
+                    interval_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+                    cost=Decimal("1.25"),
+                )
+            ]
+        )
+        workspace = SimpleNamespace(billing=billing)
+        with patch("modal.Client.from_credentials", return_value=object()), patch(
+            "modal.Workspace.from_context", return_value=workspace
+        ) as from_context:
+            snapshot = main._modal_billing_account_snapshot(
+                role="primary",
+                label="Principal",
+                workspace="workspace-test",
+                endpoint="https://workspace-test--app.modal.run/solve",
+                token_id="token-id",
+                token_secret="token-secret",
+                monthly_credit=Decimal("30"),
+                target_app="prumo-portal-nacional-google-solver",
+                month_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+                now_dt=datetime(2026, 7, 14, tzinfo=timezone.utc),
+                active_host="workspace-test--app.modal.run",
+            )
+
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(snapshot["source"], "modal.Workspace.billing.report")
+        self.assertEqual(snapshot["month_to_date_cost_usd"], 1.25)
+        self.assertEqual(snapshot["credits_remaining_usd"], 28.75)
+        from_context.assert_called_once()
 
 
 if __name__ == "__main__":

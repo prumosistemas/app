@@ -656,29 +656,28 @@ def _modal_billing_account_snapshot(
 
     try:
         import modal
-        from modal import billing as modal_billing
 
         client = modal.Client.from_credentials(token_id, token_secret)
-        rows = modal_billing.workspace_billing_report(
+        workspace_client = modal.Workspace.from_context(client=client)
+        rows = workspace_client.billing.report(
             start=month_start,
             end=now_dt,
             resolution="d",
-            client=client,
         )
         normalized_rows = []
         total_cost = Decimal("0")
         target_cost = Decimal("0")
         for row in rows:
-            cost = Decimal(str(row.get("cost", "0")))
-            description = str(row.get("description") or "")
+            cost = Decimal(str(getattr(row, "cost", "0")))
+            description = str(getattr(row, "description", None) or "")
             total_cost += cost
             if not target_app or description == target_app:
                 target_cost += cost
-            interval = row.get("interval_start")
+            interval = getattr(row, "interval_start", None)
             normalized_rows.append({
-                "object_id": row.get("object_id"),
+                "object_id": getattr(row, "object_id", None),
                 "description": description,
-                "environment": row.get("environment_name") or row.get("environment"),
+                "environment": getattr(row, "environment_name", None),
                 "interval_start": interval.isoformat() if hasattr(interval, "isoformat") else str(interval or ""),
                 "cost_usd": float(cost),
             })
@@ -687,7 +686,7 @@ def _modal_billing_account_snapshot(
             **account,
             "ok": True,
             "status": "in_use" if account["in_use"] else "standby",
-            "source": "modal.billing.workspace_billing_report",
+            "source": "modal.Workspace.billing.report",
             "month_to_date_cost_usd": float(total_cost),
             "target_app_cost_usd": float(target_cost),
             "credits_remaining_usd": float(remaining),
@@ -739,7 +738,7 @@ def _modal_billing_snapshot() -> Dict[str, Any]:
     accounts = [primary, fallback]
     return {
         "ok": any(account.get("ok") for account in accounts),
-        "source": "modal.billing.workspace_billing_report",
+        "source": "modal.Workspace.billing.report",
         "period_start": month_start.isoformat(),
         "period_end": now_dt.isoformat(),
         "active_endpoint_host": active_host or None,
