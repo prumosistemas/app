@@ -590,6 +590,8 @@
       } catch (err) {}
       sessionStorage.removeItem("csrf");
       localStorage.removeItem("csrf");
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
       window.location.href = "/login";
     }
 
@@ -630,6 +632,8 @@
     loadMe().catch(() => {
       sessionStorage.removeItem("csrf");
       localStorage.removeItem("csrf");
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
       window.location.replace("/login");
     });
   </script>

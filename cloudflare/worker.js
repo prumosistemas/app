@@ -2382,7 +2382,10 @@ function getSessionTokenFromRequest(request) {
   const cookies = parseCookies(cookieHeader);
   const authHeader = request.headers.get("Authorization") || "";
   const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
-  return cookies[SESSION_COOKIE] || (bearerMatch ? bearerMatch[1].trim() : "");
+  // A aba possui o token mais recente. Um cookie antigo de outro host
+  // (app.prumosistemas.com.br versus workers.dev) nao pode vencer o Bearer e
+  // criar um loop login -> /api/me 401 -> login no Firefox.
+  return (bearerMatch ? bearerMatch[1].trim() : "") || cookies[SESSION_COOKIE] || "";
 }
 
 async function issueCsrfForSession(env, sessionHash) {

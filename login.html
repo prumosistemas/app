@@ -413,13 +413,18 @@
   <script>
     const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
     function resolveWorkerUrl(){
-      return PROD_WORKER_URL;
+      const host = window.location.hostname.toLowerCase();
+      return host === "app.prumosistemas.com.br" || host.endsWith(".prumo-sistema.workers.dev")
+        ? window.location.origin
+        : PROD_WORKER_URL;
     }
     const WORKER_URL = resolveWorkerUrl();
 
     const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || "";
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+    if (sessionToken) sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
+    localStorage.removeItem(SESSION_TOKEN_KEY);
     const REQUEST_TIMEOUT_MS = 45000;
     const NETWORK_ERROR_MESSAGE = "Falha de rede ao conectar no Worker. Recarregue a página e tente novamente.";
 
@@ -454,7 +459,6 @@
       if (!value) return;
       sessionToken = value;
       sessionStorage.setItem(SESSION_TOKEN_KEY, value);
-      localStorage.setItem(SESSION_TOKEN_KEY, value);
     }
 
     async function api(path, options = {}) {
