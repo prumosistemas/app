@@ -68,5 +68,6 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - O PFX da run e o arquivo indicado no OneDrive têm o mesmo SHA-256; a senha abre o PFX e o certificado está válido até 2026-11-17.
 - A causa do 403 era o endpoint de certificado com host incorreto (`www.nfse.gov.br`). O Firefox manual comprovou o host dedicado `certificado.nfse.gov.br`.
 - Depois da correção, o ThinkPad gerou sessão 200 com `ASP.NET_SessionId`, `Emissor` e `ARRAffinity`, reindexou 169 notas em 12 páginas e retomou com quatro tarefas simultâneas.
-- A primeira amostra pós-correção concluiu 10 notas novas sem travar, elevando o total de 35 para 45; a run permaneceu ativa para completar todo o lote.
+- A primeira amostra pós-correção concluiu 10 notas novas sem travar. A run depois finalizou 169/169; a validação física confirmou 169 PDFs e 169 XMLs referenciados pelo índice, sem ausente ou inválido.
 - Falhas reais do endpoint (404 persistente, 429 e 5xx) abrem cooldown sem queimar todas as tentativas. Uma falha visual de um captcha afeta somente aquela nota e não desvia as outras threads do Modal para o ThinkPad. Logs e artefatos de depuração têm retenção de sete dias.
+- O deploy final usa o solver `2026-07-14-google-ai-mode-v18-unified-visual-fast-fallback` nas contas `ryangurgell20` e `fabriciofarofa5`; o deploy legado da conta `jorhinhogames` foi parado em 2026-07-15.

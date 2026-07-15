@@ -6,7 +6,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.47.
 
 - Producao unica.
 - Sem homologacao no codigo.
-- HTMLs no Netlify com URLs limpas.
+- HTMLs criticos no Worker com URLs limpas; Netlify como publicacao complementar.
 - Worker de producao `morning-credit-8a59`.
 - D1 de producao `db`.
 - API Python no servidor local Linux.
@@ -46,8 +46,9 @@ Netlify:
 
 Modal:
 
-- Perfil CLI: `jorhinhogames`
-- App ISS: `prumo-browserless`
+- Perfil ISS: `ryanzin` (`ryangurgell20`); app `prumo-browserless`.
+- Perfil Portal principal: `ryanzin` (`ryangurgell20`).
+- Perfil Portal fallback: `fabriciofarofa5`.
 - Arquivo ISS: `deploy/modal_browserless.py`
 - App Portal Nacional: `prumo-portal-nacional-google-solver`
 - Arquivo Portal Nacional: `deploy/modal_portal_nacional_google_solver.py`
@@ -81,15 +82,20 @@ Se o servidor desligar:
 
 O painel master mostra creditos Modal na secao `Logs`, nao em `Pagamentos`.
 
-O Worker expoe `/api/master/modal-billing` para o master e encaminha para a API Python. A API Python consulta a API `modal.billing.workspace_billing_report`.
+O Worker expoe `/api/master/modal-billing` para o master e encaminha para a API Python. A API Python consulta `modal.Workspace.billing.report()` nas duas contas do solver Portal.
 
 Variaveis necessarias no servidor:
 
 ```env
-MODAL_TOKEN_ID=...
-MODAL_TOKEN_SECRET=...
-MODAL_MONTHLY_CREDIT_USD=30.00
-MODAL_BILLING_APP_NAME=prumo-browserless
+MODAL_PRIMARY_TOKEN_ID=...
+MODAL_PRIMARY_TOKEN_SECRET=...
+MODAL_PRIMARY_WORKSPACE=ryangurgell20
+MODAL_PRIMARY_MONTHLY_CREDIT_USD=30.00
+MODAL_FALLBACK_TOKEN_ID=...
+MODAL_FALLBACK_TOKEN_SECRET=...
+MODAL_FALLBACK_WORKSPACE=fabriciofarofa5
+MODAL_FALLBACK_MONTHLY_CREDIT_USD=30.00
+MODAL_BILLING_APP_NAME=prumo-portal-nacional-google-solver
 ```
 
 O saldo exibido e calculado assim:
@@ -98,7 +104,7 @@ O saldo exibido e calculado assim:
 credito_restante = MODAL_MONTHLY_CREDIT_USD - custo_modal_no_mes
 ```
 
-Em 2026-07-05, o custo retornado pelo Modal para julho foi aproximadamente `1.79333653` USD; com credito mensal de `30.00`, o saldo estimado ficou `28.21`.
+Em 2026-07-15, a conta principal retornou aproximadamente `1.95442728` USD no mes e a fallback `0.00` USD. O saldo e uma estimativa calculada sobre o credito configurado.
 
 ## Pagamentos
 
@@ -167,7 +173,7 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- O solver v17 usa exclusivamente Google Modo IA, unifica a análise visual, trata quadros temporais e reposiciona alvos animados com OpenCV. Modal é a rota primária; o mesmo solver no ThinkPad é o fallback residencial.
+- O solver v18 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro, a segunda conta recebe o failover e o mesmo solver no ThinkPad e o ultimo fallback residencial.
 - Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
@@ -188,8 +194,15 @@ Invoke-RestMethod https://ryangurgell20--prumo-portal-nacional-google-solver-sol
 Deploy do solver:
 
 ```powershell
-modal profile use jorhinhogames
+modal profile activate ryanzin
+$env:PORTAL_MODAL_MIN_CONTAINERS='1'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
 modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate fabriciofarofa5
+$env:PORTAL_MODAL_MIN_CONTAINERS='0'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
+modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate ryanzin
 ```
 
 ## Fallback local de navegador

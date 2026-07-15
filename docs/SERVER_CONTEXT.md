@@ -1,12 +1,12 @@
 # Contexto do Servidor Prumo
 
 Versao: 1.0.47
-Data: 2026-07-14
+Data: 2026-07-15
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
 
-A Prumo roda em quatro partes:
+A Prumo roda em cinco partes:
 
 1. HTMLs críticos servidos diretamente pelo Cloudflare Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicação complementar ligada ao GitHub.
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
@@ -60,7 +60,7 @@ Configuracao atual de producao:
 BASE_BROWSER_SLOTS=0
 MAX_BROWSERS=30
 MAX_BROWSER_LIMIT=96
-BROWSER_CDP_POOL=modal-turbo|30|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+BROWSER_CDP_POOL=modal-turbo|30|wss://ryangurgell20--prumo-browserless-browserless-server.modal.run?token=...
 ```
 
 Isso significa:
@@ -95,7 +95,7 @@ O esperado:
 
 ## Modal
 
-Conta/perfil usado no CLI: `jorhinhogames`.
+Conta/perfil do Browserless ISS no CLI: `ryanzin` (`ryangurgell20`).
 
 App Modal:
 
@@ -109,7 +109,7 @@ Deploy do Modal:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile use jorhinhogames
+modal profile activate ryanzin
 modal deploy deploy\modal_browserless.py
 ```
 
@@ -119,17 +119,24 @@ Relatorio de custo vivo:
 modal billing report --for "this month" --json
 ```
 
-Em 2026-07-05 o relatorio retornou custo mensal aproximado de `1.79333653` USD para `prumo-browserless`. Com `MODAL_MONTHLY_CREDIT_USD=30.00`, o painel master calcula credito restante aproximado de `28.21` USD.
-
-Para o painel master consultar o Modal pela API Python, o container `prumo-api` precisa receber:
+O painel master usa `modal.Workspace.billing.report()` e consulta separadamente
+as duas contas do solver Portal. O container `prumo-api` precisa receber:
 
 ```env
-MODAL_TOKEN_ID=...
-MODAL_TOKEN_SECRET=...
-MODAL_MONTHLY_CREDIT_USD=30.00
-MODAL_BILLING_APP_NAME=prumo-browserless
+MODAL_PRIMARY_TOKEN_ID=...
+MODAL_PRIMARY_TOKEN_SECRET=...
+MODAL_PRIMARY_WORKSPACE=ryangurgell20
+MODAL_PRIMARY_MONTHLY_CREDIT_USD=30.00
+MODAL_FALLBACK_TOKEN_ID=...
+MODAL_FALLBACK_TOKEN_SECRET=...
+MODAL_FALLBACK_WORKSPACE=fabriciofarofa5
+MODAL_FALLBACK_MONTHLY_CREDIT_USD=30.00
+MODAL_BILLING_APP_NAME=prumo-portal-nacional-google-solver
 ```
 
+Em 2026-07-15 a consulta retornou aproximadamente `1.95442728` USD na conta
+principal e `0.00` USD na conta fallback. O saldo mostrado e uma estimativa
+sobre o credito mensal configurado, nao uma quota oficial exposta pelo Modal.
 Nunca versionar esses tokens.
 
 ## Modal do Portal Nacional
@@ -145,12 +152,19 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Volume privado: `prumo-portal-google-ai-state`.
 - Rota padrao: direta, sem proxy. O proxy local responde no ThinkPad, mas o probe a partir do Modal expira no Cloudflare Access; só definir `PRUMO_MODAL_PROXY_HOSTNAME` após configurar e validar autenticação de máquina.
 
-Deploy manual:
+Deploy manual das duas contas:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile use jorhinhogames
+modal profile activate ryanzin
+$env:PORTAL_MODAL_MIN_CONTAINERS='1'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
 modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate fabriciofarofa5
+$env:PORTAL_MODAL_MIN_CONTAINERS='0'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
+modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate ryanzin
 ```
 
 Validar:
@@ -168,6 +182,11 @@ PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
 A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e somente fallback Modal e escala a zero quando ociosa. O master consulta o billing das duas contas e mostra o ultimo endpoint que concluiu uma resolucao.
+
+Em 2026-07-15 foram parados o app Florence remanescente em `ryangurgell20` e o
+terceiro deploy legado deste solver em `jorhinhogames`. Como esse workspace
+antigo estava desabilitado, o Browserless ISS foi republicado em `ryangurgell20`,
+o servidor passou a usar o endpoint novo e o handshake WebSocket foi validado.
 
 O solver e stateless. Ele nao recebe cookies do usuario, nao grava arquivos finais e nao deve misturar dados de usuarios. Ele so recebe `sitekey/request_id`, resolve o hCaptcha e devolve token. Os XML/PDF ficam no servidor, dentro da arvore do colaborador.
 
@@ -203,7 +222,7 @@ Alterar `.env` para fallback misto:
 BASE_BROWSER_SLOTS=5
 MAX_BROWSERS=35
 BROWSER_CDP_URL=ws://browserless:3000?token=...
-BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|30|wss://jorhinhogames--prumo-browserless-browserless-server.modal.run?token=...
+BROWSER_CDP_POOL=browserless-local|5|ws://browserless:3000?token=...;;modal-turbo|30|wss://ryangurgell20--prumo-browserless-browserless-server.modal.run?token=...
 ```
 
 Ou, se Modal estiver totalmente fora:
@@ -427,7 +446,7 @@ Teste confirmado em 2026-07-06:
 - Upload local pela API retornou `200`, apareceu em `/api/portal-nacional/state` e a exclusao retornou `200`.
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
-- Em 2026-07-13 o Modo IA v17 passou a unificar a analise visual, tratar quadros temporais, validar e reposicionar alvos animados com OpenCV. O Modal e primario; `127.0.0.1:8876` no ThinkPad e o fallback residencial automatico.
+- Em 2026-07-14 o Modo IA v18 unificou o contrato visual e o fallback rapido. As contas `ryangurgell20` e `fabriciofarofa5` sao as duas rotas Modal; `127.0.0.1:8876` no ThinkPad e o ultimo fallback residencial.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
@@ -458,11 +477,11 @@ Deploy Modal:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile use jorhinhogames
+modal profile activate ryanzin
 modal deploy deploy\modal_browserless.py
 ```
 
-Build e push da API:
+Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
@@ -470,17 +489,19 @@ docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
 docker push ryang20/prumo-api:1.0.47
 ```
 
+O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
+
 Atualizar servidor:
 
 ```bash
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.47 e pool Modal 30
-docker compose pull prumo-api
-docker compose up -d --remove-orphans
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.47
+docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```
 

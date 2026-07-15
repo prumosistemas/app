@@ -4,7 +4,7 @@ Versao: **1.0.47 - login mTLS corrigido, quatro solvers e retry adaptativo**
 
 ## Estado atual
 
-- Frontend estatico no Netlify: `https://app.prumosistemas.com.br`.
+- HTMLs criticos servidos pelo Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicacao complementar ligada ao GitHub.
 - Worker Cloudflare de producao: `morning-credit-8a59`.
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
@@ -30,20 +30,28 @@ Versao: **1.0.47 - login mTLS corrigido, quatro solvers e retry adaptativo**
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
-| `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot vivo da arquitetura e producao |
+| `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot historico da arquitetura em 2026-07-10 |
 | `docs/C4.md` | C4 canônico e decisões arquiteturais atuais |
-| `docs/RELATORIO_AUDITORIA_2026-07-10.md` | Evidencias, achados e pendencias |
+| `docs/RELATORIO_AUDITORIA_2026-07-10.md` | Relatorio historico da auditoria de 2026-07-10 |
 
 ## Solver do Portal Nacional
 
 O unico resolvedor ativo e o Google Modo IA do projeto organizado. Ele usa
 saida direta do Modal por padrao e guarda apenas o estado anonimo em Volume
-privado. O código validado está versionado em `solver/google_ai_mode/`. Para publicar:
+privado. O código validado está versionado em `solver/google_ai_mode/`. O deploy
+normal usa a conta principal e a conta de fallback:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile use jorhinhogames
+modal profile activate ryanzin
+$env:PORTAL_MODAL_MIN_CONTAINERS='1'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
 modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate fabriciofarofa5
+$env:PORTAL_MODAL_MIN_CONTAINERS='0'
+$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
+modal deploy deploy\modal_portal_nacional_google_solver.py
+modal profile activate ryanzin
 ```
 
 ## Deploy rapido
@@ -65,7 +73,7 @@ Modal:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile use jorhinhogames
+modal profile activate ryanzin
 modal deploy deploy\modal_browserless.py
 ```
 
@@ -73,8 +81,12 @@ API:
 
 ```powershell
 docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
+# Opcional, somente quando a autenticacao do registry estiver valida:
 docker push ryang20/prumo-api:1.0.47
 ```
+
+O caminho validado em 2026-07-15 foi construir a imagem diretamente no
+ThinkPad depois do `git pull`.
 
 Servidor:
 
@@ -82,10 +94,10 @@ Servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-docker compose pull prumo-api
-docker compose up -d --remove-orphans
+docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```
 

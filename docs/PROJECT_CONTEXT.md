@@ -28,6 +28,10 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
+- Imagem do servidor: `ryang20/prumo-api:1.0.47`, ID `sha256:0612f93a2e9a...`; em 2026-07-15 os hashes de `main.py` e do solver dentro do container eram identicos aos da fonte em `/home/server/prumo-src`.
+- Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
+- Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
+- Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.
 - Testes locais: 69 aprovados para o deploy 1.0.47.
 
 ## Regras operacionais
