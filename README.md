@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.45 - Portal resiliente, quatro solvers e fallback residencial**
+Versao: **1.0.47 - login mTLS corrigido, quatro solvers e retry adaptativo**
 
 ## Estado atual
 
@@ -72,8 +72,8 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.45 .
-docker push ryang20/prumo-api:1.0.45
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
+docker push ryang20/prumo-api:1.0.47
 ```
 
 Servidor:

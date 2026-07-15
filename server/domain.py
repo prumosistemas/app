@@ -1631,10 +1631,20 @@ def hydrate_tasks_with_current_accounts(ctx: WorkerContext, tasks: List[Dict[str
     for item in tasks:
         account_id = item.get("account_id", "")
         account = get_account_or_404(ctx, account_id)
+        usuario = str(account.get("usuario", "") or "").strip()
+        senha = str(account.get("senha", "") or "")
+        if not usuario or not senha:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"A conta ISS '{account.get('alias', account_id)}' esta sem credenciais validas. "
+                    "Atualize usuario e senha antes de iniciar a run."
+                ),
+            )
         enriched = dict(item)
         enriched["account_alias"] = account.get("alias", "")
-        enriched["usuario"] = account.get("usuario", "")
-        enriched["senha"] = account.get("senha", "")
+        enriched["usuario"] = usuario
+        enriched["senha"] = senha
         enriched["usar_codigo_dominio"] = bool(enriched.get("usar_codigo_dominio", True))
         enriched["reabrir_escrituracao_fechada"] = bool(enriched.get("reabrir_escrituracao_fechada", True))
         hydrated.append(enriched)

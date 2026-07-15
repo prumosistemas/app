@@ -69,6 +69,10 @@ PROVIDER_FAILURE_COUNT = 0
 PROVIDER_FAILURE_TOTAL = 0
 PROVIDER_CIRCUIT_OPEN = False
 PROVIDER_LAST_ERROR = None
+PROVIDER_CIRCUIT_OPENED_AT = 0.0
+PROVIDER_CIRCUIT_COOLDOWN_SECONDS = max(
+    60, int(os.environ.get("GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS", "1800"))
+)
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_ABORT_FILE = API_DIR / "legacy_provider-circuit-open.json"
 SOLVER_FAILURE_LIMIT = 10
@@ -76,6 +80,10 @@ SOLVER_FAILURE_COUNT = 0
 SOLVER_FAILURE_TOTAL = 0
 SOLVER_CIRCUIT_OPEN = False
 SOLVER_LAST_ERROR = None
+SOLVER_CIRCUIT_OPENED_AT = 0.0
+SOLVER_CIRCUIT_COOLDOWN_SECONDS = max(
+    60, int(os.environ.get("GOOGLE_AI_SOLVER_CIRCUIT_COOLDOWN_SECONDS", "600"))
+)
 SOLVER_LOCK = threading.Lock()
 SOLVER_ABORT_FILE = API_DIR / "solver-circuit-open.json"
 MAX_SOLVE_SECONDS = 180
@@ -219,14 +227,35 @@ def request_legacy_provider(payload: dict, timeout: int) -> requests.Response:
 
 
 def provider_circuit_state() -> dict:
+    global PROVIDER_FAILURE_COUNT, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR, PROVIDER_CIRCUIT_OPENED_AT
+    reset = False
     with PROVIDER_LOCK:
-        return {
+        if (
+            PROVIDER_CIRCUIT_OPEN
+            and PROVIDER_CIRCUIT_OPENED_AT
+            and time.monotonic() - PROVIDER_CIRCUIT_OPENED_AT >= PROVIDER_CIRCUIT_COOLDOWN_SECONDS
+        ):
+            PROVIDER_FAILURE_COUNT = 0
+            PROVIDER_CIRCUIT_OPEN = False
+            PROVIDER_LAST_ERROR = None
+            PROVIDER_CIRCUIT_OPENED_AT = 0.0
+            reset = True
+        retry_after = max(
+            0,
+            int(PROVIDER_CIRCUIT_COOLDOWN_SECONDS - (time.monotonic() - PROVIDER_CIRCUIT_OPENED_AT)),
+        ) if PROVIDER_CIRCUIT_OPEN and PROVIDER_CIRCUIT_OPENED_AT else 0
+        state = {
             "open": PROVIDER_CIRCUIT_OPEN,
             "consecutive_failures": PROVIDER_FAILURE_COUNT,
             "total_failures": PROVIDER_FAILURE_TOTAL,
             "failure_limit": PROVIDER_FAILURE_LIMIT,
             "last_error": PROVIDER_LAST_ERROR,
+            "retry_after_seconds": retry_after,
         }
+    if reset:
+        PROVIDER_ABORT_FILE.unlink(missing_ok=True)
+        print("[Circuit] Provedor reaberto automaticamente apos cooldown.")
+    return state
 
 
 def provider_request_allowed() -> bool:
@@ -244,7 +273,7 @@ def record_provider_success() -> None:
 
 
 def record_provider_failure(detail: str) -> dict:
-    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR
+    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR, PROVIDER_CIRCUIT_OPENED_AT
     opened_now = False
     with PROVIDER_LOCK:
         PROVIDER_FAILURE_TOTAL += 1
@@ -252,6 +281,7 @@ def record_provider_failure(detail: str) -> dict:
         PROVIDER_LAST_ERROR = str(detail)[:1000]
         if not PROVIDER_CIRCUIT_OPEN and PROVIDER_FAILURE_COUNT >= PROVIDER_FAILURE_LIMIT:
             PROVIDER_CIRCUIT_OPEN = True
+            PROVIDER_CIRCUIT_OPENED_AT = time.monotonic()
             opened_now = True
         state = {
             "open": PROVIDER_CIRCUIT_OPEN,
@@ -274,12 +304,13 @@ def record_provider_failure(detail: str) -> dict:
 
 
 def reset_provider_circuit() -> None:
-    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR
+    global PROVIDER_FAILURE_COUNT, PROVIDER_FAILURE_TOTAL, PROVIDER_CIRCUIT_OPEN, PROVIDER_LAST_ERROR, PROVIDER_CIRCUIT_OPENED_AT
     with PROVIDER_LOCK:
         PROVIDER_FAILURE_COUNT = 0
         PROVIDER_FAILURE_TOTAL = 0
         PROVIDER_CIRCUIT_OPEN = False
         PROVIDER_LAST_ERROR = None
+        PROVIDER_CIRCUIT_OPENED_AT = 0.0
     try:
         PROVIDER_ABORT_FILE.unlink(missing_ok=True)
     except Exception:
@@ -287,14 +318,35 @@ def reset_provider_circuit() -> None:
 
 
 def solver_circuit_state() -> dict:
+    global SOLVER_FAILURE_COUNT, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR, SOLVER_CIRCUIT_OPENED_AT
+    reset = False
     with SOLVER_LOCK:
-        return {
+        if (
+            SOLVER_CIRCUIT_OPEN
+            and SOLVER_CIRCUIT_OPENED_AT
+            and time.monotonic() - SOLVER_CIRCUIT_OPENED_AT >= SOLVER_CIRCUIT_COOLDOWN_SECONDS
+        ):
+            SOLVER_FAILURE_COUNT = 0
+            SOLVER_CIRCUIT_OPEN = False
+            SOLVER_LAST_ERROR = None
+            SOLVER_CIRCUIT_OPENED_AT = 0.0
+            reset = True
+        retry_after = max(
+            0,
+            int(SOLVER_CIRCUIT_COOLDOWN_SECONDS - (time.monotonic() - SOLVER_CIRCUIT_OPENED_AT)),
+        ) if SOLVER_CIRCUIT_OPEN and SOLVER_CIRCUIT_OPENED_AT else 0
+        state = {
             "open": SOLVER_CIRCUIT_OPEN,
             "consecutive_failures": SOLVER_FAILURE_COUNT,
             "total_failures": SOLVER_FAILURE_TOTAL,
             "failure_limit": SOLVER_FAILURE_LIMIT,
             "last_error": SOLVER_LAST_ERROR,
+            "retry_after_seconds": retry_after,
         }
+    if reset:
+        SOLVER_ABORT_FILE.unlink(missing_ok=True)
+        print("[Circuit] Solver reaberto automaticamente apos cooldown.")
+    return state
 
 
 def record_solver_success() -> None:
@@ -307,7 +359,7 @@ def record_solver_success() -> None:
 
 
 def record_solver_failure(detail: str) -> dict:
-    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR
+    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR, SOLVER_CIRCUIT_OPENED_AT
     opened_now = False
     with SOLVER_LOCK:
         SOLVER_FAILURE_TOTAL += 1
@@ -315,6 +367,7 @@ def record_solver_failure(detail: str) -> dict:
         SOLVER_LAST_ERROR = str(detail)[:1000]
         if not SOLVER_CIRCUIT_OPEN and SOLVER_FAILURE_COUNT >= SOLVER_FAILURE_LIMIT:
             SOLVER_CIRCUIT_OPEN = True
+            SOLVER_CIRCUIT_OPENED_AT = time.monotonic()
             opened_now = True
         state = {
             "open": SOLVER_CIRCUIT_OPEN,
@@ -337,12 +390,13 @@ def record_solver_failure(detail: str) -> dict:
 
 
 def reset_solver_circuit() -> None:
-    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR
+    global SOLVER_FAILURE_COUNT, SOLVER_FAILURE_TOTAL, SOLVER_CIRCUIT_OPEN, SOLVER_LAST_ERROR, SOLVER_CIRCUIT_OPENED_AT
     with SOLVER_LOCK:
         SOLVER_FAILURE_COUNT = 0
         SOLVER_FAILURE_TOTAL = 0
         SOLVER_CIRCUIT_OPEN = False
         SOLVER_LAST_ERROR = None
+        SOLVER_CIRCUIT_OPENED_AT = 0.0
     try:
         SOLVER_ABORT_FILE.unlink(missing_ok=True)
     except Exception:

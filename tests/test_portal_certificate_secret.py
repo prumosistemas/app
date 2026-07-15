@@ -10,6 +10,13 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 import portal_nacional  # noqa: E402
+import portal_nacional_session  # noqa: E402
+
+
+def test_certificate_login_uses_dedicated_mtls_host() -> None:
+    assert portal_nacional_session.DEFAULT_URL == (
+        "https://certificado.nfse.gov.br/EmissorNacional/Certificado"
+    )
 
 
 def test_rejects_password_that_cannot_be_decrypted(monkeypatch, tmp_path) -> None:

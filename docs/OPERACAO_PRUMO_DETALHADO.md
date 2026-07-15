@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.45.
+Este documento e a fonte de contexto operacional da versao 1.0.47.
 
 ## Estado desejado
 
@@ -182,7 +182,7 @@ Em producao, prefira cadastrar o PFX pela aba `Certificados` em `/portal-naciona
 Health do solver:
 
 ```powershell
-Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health
+Invoke-RestMethod https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/health
 ```
 
 Deploy do solver:

@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.45
-Data: 2026-07-13
+Versao: 1.0.47
+Data: 2026-07-14
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.45",
+  "version": "1.0.47",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -137,8 +137,8 @@ Nunca versionar esses tokens.
 O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 
 - Nome: `prumo-portal-nacional-google-solver`
-- URL: `https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve`
-- Health: `https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health`
+- URL: `https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve`
+- Health: `https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/health`
 - Arquivo local: `deploy/modal_portal_nacional_google_solver.py`
 - Fonte versionada: `solver/google_ai_mode/`.
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
@@ -156,13 +156,13 @@ modal deploy deploy\modal_portal_nacional_google_solver.py
 Validar:
 
 ```powershell
-Invoke-RestMethod https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/health
+Invoke-RestMethod https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/health
 ```
 
 Configuracao da API Python:
 
 ```env
-PORTAL_NACIONAL_SOLVER_URL=https://jorhinhogames--prumo-portal-nacional-google-solver-solve-30b985.modal.run/solve
+PORTAL_NACIONAL_SOLVER_URL=https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve
 PORTAL_NACIONAL_SOLVER_FALLBACK_URL=http://127.0.0.1:8876/solve
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
@@ -449,8 +449,8 @@ Build e push da API:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.45 .
-docker push ryang20/prumo-api:1.0.45
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
+docker push ryang20/prumo-api:1.0.47
 ```
 
 Atualizar servidor:
@@ -461,7 +461,7 @@ cd /home/server/prumo-src
 git pull --ff-only
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.45 e pool Modal 30
+# editar .env para PRUMO_API_IMAGE=ryang20/prumo-api:1.0.47 e pool Modal 30
 docker compose pull prumo-api
 docker compose up -d --remove-orphans
 curl -fsS http://127.0.0.1:8000/

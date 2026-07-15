@@ -1,6 +1,21 @@
 #!/bin/sh
 set -eu
 
+start_artifact_retention() {
+  artifact_dir="$1"
+  retention_days="${PORTAL_DEBUG_RETENTION_DAYS:-7}"
+  (
+    while true; do
+      find "$artifact_dir" -type f -mtime "+$retention_days" -delete 2>/dev/null || true
+      find "$artifact_dir" -depth -type d -empty -delete 2>/dev/null || true
+      find /app/output/empresas -path '*/portal_nacional/runs/*/logs/*' \
+        -type f -mtime "+$retention_days" -delete 2>/dev/null || true
+      sleep 3600
+    done
+  ) &
+  echo "[startup] retencao de artefatos/logs ativa por ${retention_days} dias"
+}
+
 start_local_portal_solver() {
   if [ "${PORTAL_NACIONAL_LOCAL_SOLVER_ENABLED:-1}" != "1" ]; then
     echo "[startup] resolvedor residencial do Portal desativado"
@@ -20,6 +35,7 @@ start_local_portal_solver() {
   fi
 
   mkdir -p "$state_dir" "$artifact_dir"
+  start_artifact_retention "$artifact_dir"
   wrapper="/tmp/prumo-google-chrome"
   cat > "$wrapper" <<EOF
 #!/bin/sh

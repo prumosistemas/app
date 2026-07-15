@@ -1423,11 +1423,14 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
 function resolveWorkerUrl(){
-  return PROD_WORKER_URL;
+  const host = window.location.hostname.toLowerCase();
+  return host === "app.prumosistemas.com.br" || host.endsWith(".prumo-sistema.workers.dev")
+    ? window.location.origin
+    : PROD_WORKER_URL;
 }
 const API_BASE = resolveWorkerUrl();
 const AUTH_BASE = API_BASE;
@@ -1447,6 +1450,11 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     logsTailTimer=null, logsTailInFlight=false, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
 const SESSION_TOKEN_KEY = "session_token";
 let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+if(SESSION_TOKEN) sessionStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
+localStorage.removeItem(SESSION_TOKEN_KEY);
+const LEGACY_CSRF_TOKEN = localStorage.getItem("csrf") || "";
+if(LEGACY_CSRF_TOKEN && !sessionStorage.getItem("csrf")) sessionStorage.setItem("csrf", LEGACY_CSRF_TOKEN);
+localStorage.removeItem("csrf");
 const REQUEST_TIMEOUT_MS = 60000;
 const ACTIVE_POLL_MS = 4500;
 const IDLE_POLL_MS = 12000;
@@ -1807,12 +1815,10 @@ async function apiFetch(path, options={}){
     if(payload?.csrf){
       CSRF_TOKEN = payload.csrf;
       sessionStorage.setItem("csrf", CSRF_TOKEN);
-      localStorage.setItem("csrf", CSRF_TOKEN);
     }
     if(payload?.session_token){
       SESSION_TOKEN = payload.session_token;
       sessionStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
-      localStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
     }
 
     if(res.status === 401 || res.status === 403){
@@ -1978,7 +1984,6 @@ async function loadMe(){
     CSRF_TOKEN = mePayload?.csrf || CSRF_TOKEN || "";
     if(CSRF_TOKEN){
       sessionStorage.setItem("csrf", CSRF_TOKEN);
-      localStorage.setItem("csrf", CSRF_TOKEN);
     }
     if(!mePayload?.authenticated){
       throw new Error('Sessão expirada ou sem permissão. Faça login novamente.');

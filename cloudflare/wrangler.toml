@@ -1,12 +1,15 @@
 name = "morning-credit-8a59"
 main = "worker.js"
-compatibility_date = "2026-06-05"
+compatibility_date = "2026-07-13"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 routes = [
   { pattern = "app.prumosistemas.com.br/", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/portal-nacional*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/iss-fortaleza*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/api/*", zone_name = "prumosistemas.com.br" },
+  { pattern = "app.prumosistemas.com.br/py/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/server/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/deploy/*", zone_name = "prumosistemas.com.br" },
   { pattern = "app.prumosistemas.com.br/cloudflare/*", zone_name = "prumosistemas.com.br" },

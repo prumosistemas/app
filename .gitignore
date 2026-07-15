@@ -21,3 +21,6 @@ latest.json
 
 # Local Netlify folder
 .netlify
+# Credenciais operacionais locais (nunca versionar)
+/AccountID.txt
+/token.txt

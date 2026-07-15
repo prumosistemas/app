@@ -385,12 +385,21 @@
   <script>
     const PROD_WORKER_URL = "https://morning-credit-8a59.prumo-sistema.workers.dev";
     function resolveWorkerUrl(){
-      return PROD_WORKER_URL;
+      const host = window.location.hostname.toLowerCase();
+      return host === "app.prumosistemas.com.br" || host.endsWith(".prumo-sistema.workers.dev")
+        ? window.location.origin
+        : PROD_WORKER_URL;
     }
     const API = resolveWorkerUrl();
     const SESSION_TOKEN_KEY = "session_token";
     let csrf = sessionStorage.getItem("csrf") || localStorage.getItem("csrf") || "";
     let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
+    // Migra sessoes antigas para memoria da aba e remove persistencia exposta
+    // a JavaScript entre reinicios do navegador.
+    if (csrf) sessionStorage.setItem("csrf", csrf);
+    if (sessionToken) sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
+    localStorage.removeItem("csrf");
+    localStorage.removeItem(SESSION_TOKEN_KEY);
     let mePayload = null;
 
     const $ = id => document.getElementById(id);
@@ -408,14 +417,12 @@
       if (!value) return;
       csrf = value;
       sessionStorage.setItem("csrf", value);
-      localStorage.setItem("csrf", value);
     }
 
     function saveSessionToken(value) {
       if (!value) return;
       sessionToken = value;
       sessionStorage.setItem(SESSION_TOKEN_KEY, value);
-      localStorage.setItem(SESSION_TOKEN_KEY, value);
     }
 
     async function api(path, options = {}) {

@@ -12,6 +12,7 @@ import json
 import socket
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -59,9 +60,18 @@ PROXY_LISTENER = os.environ.get(
 PROXY_ENABLED = os.environ.get("PRUMO_MODAL_PROXY_ENABLED", "0").strip() == "1"
 GOOGLE_STATE_SEED = Path("/google-ai-seed")
 GOOGLE_STATE_ACTIVE = Path("/tmp/google-ai-state")
+GOOGLE_ARTIFACT_ROOT = Path("/solver-artifacts")
+ARTIFACT_RETENTION_DAYS = max(
+    1, int(os.environ.get("PORTAL_DEBUG_RETENTION_DAYS", "7"))
+)
+MIN_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_MIN_CONTAINERS", "1")))
+BUFFER_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_BUFFER_CONTAINERS", "1")))
 
 google_state = modal.Volume.from_name(
-    "prumo-portal-google-ai-state", create_if_missing=False
+    "prumo-portal-google-ai-state", create_if_missing=True
+)
+debug_artifacts = modal.Volume.from_name(
+    "prumo-portal-debug-artifacts-v2", create_if_missing=True, version=2
 )
 proxy_access_secrets = (
     [modal.Secret.from_name("prumo-modal-proxy-access")]
@@ -169,6 +179,48 @@ def _prepare_instance_state() -> None:
         target = GOOGLE_STATE_ACTIVE / name
         if source.is_file() and not target.exists():
             shutil.copy2(source, target)
+
+
+def _prune_debug_artifacts() -> int:
+    """Mantem evidencias por sete dias sem tocar nos downloads das notas."""
+    cutoff = time.time() - ARTIFACT_RETENTION_DAYS * 86400
+    removed = 0
+    if not GOOGLE_ARTIFACT_ROOT.exists():
+        return removed
+    for root, dirs, files in os.walk(GOOGLE_ARTIFACT_ROOT, topdown=False):
+        root_path = Path(root)
+        for name in files:
+            path = root_path / name
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            except FileNotFoundError:
+                pass
+        for name in dirs:
+            try:
+                (root_path / name).rmdir()
+            except OSError:
+                pass
+    return removed
+
+
+def _start_artifact_retention_loop() -> None:
+    def worker() -> None:
+        while True:
+            try:
+                removed = _prune_debug_artifacts()
+                if removed:
+                    print(
+                        f"[retention] {removed} artefatos com mais de "
+                        f"{ARTIFACT_RETENTION_DAYS} dias removidos.",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(f"[retention] falha: {type(exc).__name__}", flush=True)
+            time.sleep(3600)
+
+    threading.Thread(target=worker, name="artifact-retention", daemon=True).start()
 
 
 def _prewarm_google_ai_session() -> None:
@@ -284,9 +336,12 @@ def proxy_probe() -> str:
 
 @app.function(
     secrets=proxy_access_secrets,
-    volumes={"/google-ai-seed": google_state},
-    min_containers=1,
-    buffer_containers=3,
+    volumes={
+        "/google-ai-seed": google_state,
+        str(GOOGLE_ARTIFACT_ROOT): debug_artifacts,
+    },
+    min_containers=MIN_CONTAINERS,
+    buffer_containers=BUFFER_CONTAINERS,
     max_containers=4,
     startup_timeout=240,
     timeout=86400,
@@ -296,7 +351,7 @@ def proxy_probe() -> str:
     env={
         "GOOGLE_AI_PROJECT": "/app/google-ai-client",
         "GOOGLE_AI_STATE_DIR": "/tmp/google-ai-state",
-        "GOOGLE_AI_ARTIFACT_ROOT": "/tmp/solver-artifacts",
+        "GOOGLE_AI_ARTIFACT_ROOT": str(GOOGLE_ARTIFACT_ROOT),
         "GOOGLE_CHROME_BIN": "/usr/local/bin/google-chrome-prumo",
         "MODO_IA_DETECTOR_PROJECT": "/app/detector",
         "HOST": "0.0.0.0",
@@ -324,6 +379,7 @@ def proxy_probe() -> str:
 def solver_server() -> None:
     _start_proxy_tunnel()
     _prepare_instance_state()
+    _start_artifact_retention_loop()
     _prewarm_google_ai_session()
     # O projeto organizado mantem o listener da API em 127.0.0.1. O relay
     # expoe somente a porta esperada pelo web_server do Modal.
@@ -332,8 +388,7 @@ def solver_server() -> None:
         f"TCP-LISTEN:{PORT},fork,reuseaddr,bind=0.0.0.0",
         f"TCP:127.0.0.1:{INTERNAL_PORT}",
     ]
-    subprocess.Popen(
-        [
+    solver_command = [
             "xvfb-run",
             "-a",
             "-s",
@@ -354,6 +409,11 @@ def solver_server() -> None:
             "--max-solve-seconds",
             "150",
         ]
+    # Mantem o stdout no painel do Modal e uma copia persistente por container.
+    log_path = GOOGLE_ARTIFACT_ROOT / f"service-{socket.gethostname()}.log"
+    shell_command = " ".join(subprocess.list2cmdline([part]) for part in solver_command)
+    subprocess.Popen(
+        ["sh", "-c", f"{shell_command} 2>&1 | tee -a {subprocess.list2cmdline([str(log_path)])}"],
     )
     # Nao abra a porta publica antes da API interna estar pronta. Caso contrario,
     # containers frios aceitam a requisicao e devolvem 500 no relay do Modal.

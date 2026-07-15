@@ -7,6 +7,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -44,6 +45,8 @@ def configured_solver_fallback_url(value: str | None) -> str:
 SOLVER_FALLBACK_URL = configured_solver_fallback_url(
     os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL")
 )
+SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
+SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -607,17 +610,72 @@ def regenerate_session(
     else:
         raise RuntimeError("Sessao caiu, mas nao ha PFX, certificate_thumbprint nem --cert-index para renovar sem interacao.")
     save_index(index_path, index, "renovando_sessao", "session_expired_regenerating", command=" ".join(cmd))
+    configured_delays = os.environ.get(
+        "PORTAL_SESSION_RETRY_DELAYS_SECONDS", "0,60,180,600,1800,3600,7200"
+    )
+    delays = []
+    for value in configured_delays.split(","):
+        try:
+            delays.append(max(0, int(value.strip())))
+        except ValueError:
+            pass
+    if not delays:
+        delays = [0, 60, 180, 600, 1800, 3600, 7200]
+    max_attempts = max(1, int(os.environ.get("PORTAL_SESSION_MAX_ATTEMPTS", "12")))
     last_output = ""
-    for attempt in range(1, 4):
-        proc = subprocess.run(cmd, cwd=str(BASE_DIR), text=True, capture_output=True, timeout=120)
-        if proc.returncode == 0:
-            break
+    session_data = None
+    for attempt in range(1, max_attempts + 1):
+        delay = delays[min(attempt - 1, len(delays) - 1)]
+        if delay:
+            print(
+                f"[Sessao] Portal recusou o certificado; tentativa {attempt}/{max_attempts} "
+                f"em {delay}s.",
+                flush=True,
+            )
+            save_index(
+                index_path,
+                index,
+                "aguardando_portal",
+                "session_retry_backoff_wait",
+                attempt=attempt,
+                seconds=delay,
+            )
+            time.sleep(delay)
+        proc = subprocess.run(cmd, cwd=str(BASE_DIR), text=True, capture_output=True, timeout=180)
         last_output = (proc.stderr or proc.stdout).strip()
-        save_index(index_path, index, "renovando_sessao", "session_regenerate_attempt_failed", attempt=attempt, error=last_output[-1000:])
-        time.sleep(3 * attempt)
-    else:
-        raise RuntimeError(last_output)
-    session_data = json.loads(session_path.read_text(encoding="utf-8"))
+        try:
+            candidate = json.loads(session_path.read_text(encoding="utf-8"))
+        except Exception:
+            candidate = {}
+        cookie_names = {cookie.get("name") for cookie in candidate.get("cookies") or []}
+        valid = bool(
+            proc.returncode == 0
+            and candidate.get("target_looks_logged_in")
+            and "Emissor" in cookie_names
+        )
+        if valid:
+            session_data = candidate
+            print(f"[Sessao] Renovada na tentativa {attempt}.", flush=True)
+            break
+        save_index(
+            index_path,
+            index,
+            "aguardando_portal",
+            "session_regenerate_attempt_failed",
+            attempt=attempt,
+            status_code=candidate.get("status_code"),
+            target_looks_logged_in=bool(candidate.get("target_looks_logged_in")),
+        )
+        print(
+            f"[Sessao] Tentativa {attempt}/{max_attempts} recusada "
+            f"(HTTP {candidate.get('status_code') or 'sem resposta'}).",
+            flush=True,
+        )
+    if session_data is None:
+        raise RuntimeError(
+            "Portal Nacional nao aceitou o certificado apos "
+            f"{max_attempts} tentativas com backoff. Ultimo retorno: {last_output[-500:]}"
+        )
     update_certificate_in_index(index, session_data)
     save_index(index_path, index, "sessao_renovada", "session_regenerated", stdout=proc.stdout[-1000:])
     return session_data
@@ -1057,6 +1115,54 @@ def solver_url_candidates(primary: str) -> list[str]:
     return list(dict.fromkeys(url for url in (primary, SOLVER_FALLBACK_URL) if url))
 
 
+def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    detail = str(exc).lower()
+    if status in {401, 403, 404} or "workspace" in detail and "disabled" in detail:
+        return 3600
+    if status == 429 or "too many requests" in detail:
+        return 300
+    if status in {500, 502, 503, 504} or "circuit_open" in detail:
+        return 90
+    return 30
+
+
+def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
+    cooldown = solver_endpoint_cooldown_seconds(exc)
+    with SOLVER_ENDPOINT_COOLDOWN_LOCK:
+        SOLVER_ENDPOINT_COOLDOWNS[url] = max(
+            SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0), time.monotonic() + cooldown
+        )
+    return cooldown
+
+
+def clear_solver_endpoint_cooldown(url: str) -> None:
+    with SOLVER_ENDPOINT_COOLDOWN_LOCK:
+        SOLVER_ENDPOINT_COOLDOWNS.pop(url, None)
+
+
+def available_solver_url_candidates(primary: str) -> tuple[list[str], float | None]:
+    now = time.monotonic()
+    with SOLVER_ENDPOINT_COOLDOWN_LOCK:
+        candidates = solver_url_candidates(primary)
+        available = [url for url in candidates if SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) <= now]
+        waits = [SOLVER_ENDPOINT_COOLDOWNS[url] - now for url in candidates if SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) > now]
+    return available, min(waits) if waits else None
+
+
+def wait_for_solver_candidates(primary: str) -> list[str]:
+    deadline = time.monotonic() + SOLVER_REQUEST_TIMEOUT_SECONDS
+    while True:
+        candidates, wait_seconds = available_solver_url_candidates(primary)
+        if candidates:
+            return candidates
+        if time.monotonic() >= deadline:
+            raise RuntimeError("solver:endpoints_cooling_down_timeout")
+        delay = min(max(wait_seconds or 1.0, 1.0), 30.0, deadline - time.monotonic())
+        print(f"[Solver] Todos os endpoints em cooldown; nova verificacao em {delay:.0f}s")
+        time.sleep(delay)
+
+
 def require_solver_api(solver_url: str) -> str:
     last_error: Exception | None = None
     candidates = solver_url_candidates(solver_url)
@@ -1081,7 +1187,11 @@ def require_solver_api(solver_url: str) -> str:
                 return candidate
             except Exception as exc:
                 last_error = exc
-                print(f"[Solver] Health indisponivel ({attempt}/{attempts}) em {candidate}: {exc}")
+                cooldown = mark_solver_endpoint_unavailable(candidate, exc)
+                print(
+                    f"[Solver] Health indisponivel ({attempt}/{attempts}) em {candidate}: "
+                    f"{exc}; cooldown={cooldown}s"
+                )
                 if attempt < attempts:
                     time.sleep(min(3 * attempt, 12))
     raise RuntimeError(f"Nenhum solver ficou disponivel: {last_error}")
@@ -1140,12 +1250,18 @@ def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | 
 
 def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
     errors = []
-    for candidate in solver_url_candidates(solver_url):
+    for candidate in wait_for_solver_candidates(solver_url):
         try:
-            return solve_captcha_once(candidate, sitekey, request_id)
+            token = solve_captcha_once(candidate, sitekey, request_id)
+            clear_solver_endpoint_cooldown(candidate)
+            return token
         except Exception as exc:
+            cooldown = mark_solver_endpoint_unavailable(candidate, exc)
             errors.append(f"{candidate}: {exc}")
-            print(f"[Solver] Falha em {candidate}; tentando proximo endpoint: {exc}")
+            print(
+                f"[Solver] Falha em {candidate}; tentando proximo endpoint: "
+                f"{exc}; cooldown={cooldown}s"
+            )
     raise RuntimeError("solver:all_endpoints_failed: " + " | ".join(errors))
 
 

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
 
 
-DEFAULT_URL = "https://www.nfse.gov.br/EmissorNacional/Certificado"
+DEFAULT_URL = "https://certificado.nfse.gov.br/EmissorNacional/Certificado"
 DEFAULT_START_URL = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
 SESSION_FILE = Path(__file__).with_name("sessao_nfse.txt")
 
@@ -141,7 +141,7 @@ def run_pfx_login(pfx_file: str | Path, password: str, url: str, start_url: str,
         target = session.get(start_url, cert=client_cert, proxies=proxies, timeout=90, allow_redirects=True)
 
     target_text = target.text or ""
-    return {
+    result = {
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "start_url": start_url,
         "login_url": url,
@@ -159,6 +159,7 @@ def run_pfx_login(pfx_file: str | Path, password: str, url: str, start_url: str,
         },
         "cookies": _session_cookies(session),
     }
+    return result
 
 
 def choose_certificate(certificates):

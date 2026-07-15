@@ -75,15 +75,15 @@ export default {
         });
       }
 
-      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "")) {
+      if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/" || url.pathname === "")) {
         return htmlResponse(indexHtml);
       }
 
-      if (request.method === "GET" && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
+      if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
         return htmlResponse(portalNacionalHtml);
       }
 
-      if (request.method === "GET" && (url.pathname === "/iss-fortaleza" || url.pathname === "/iss-fortaleza/")) {
+      if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/iss-fortaleza" || url.pathname === "/iss-fortaleza/")) {
         return htmlResponse(issFortalezaHtml);
       }
 
@@ -98,8 +98,6 @@ export default {
       if (!env.db) {
         return jsonResponse(request, env, { ok: false, error: "Binding D1 'db' não configurado." }, 500);
       }
-
-      await ensureMigrated(env.db);
 
       if (hasRequestBody(request.method)) {
         const maxBytes = getMaxPostBytes(url.pathname);
@@ -259,9 +257,9 @@ async function handleSetup(request, env) {
     ? authHeader.slice("Bearer ".length)
     : "";
 
-  const token = bearer || url.searchParams.get("token") || "";
+  const token = bearer;
 
-  if (!env.SETUP_TOKEN || token !== env.SETUP_TOKEN) {
+  if (!env.SETUP_TOKEN || !(await timingSafeEqualString(token, env.SETUP_TOKEN))) {
     return jsonResponse(request, env, { ok: false, error: "Setup indisponível." }, 404);
   }
 
@@ -467,7 +465,9 @@ async function handleLoginPost(request, env, ctx) {
   const cfg = getConfig(env);
   const cookie = makeSessionCookie(env, session.rawToken, cfg.absoluteTtlSeconds);
 
-  const csrf = await issueCsrfForSession(env, session.sessionHash);
+  // createSession ja persiste o hash deste token. Evita uma segunda escrita D1
+  // no caminho critico do login.
+  const csrf = session.csrfToken;
 
   return jsonResponse(
     request,
@@ -1745,10 +1745,10 @@ async function handlePythonProxy(request, env) {
     }, 403);
   }
 
-  if (!env.PYTHON_API_URL) {
+  if (!env.PYTHON_API_URL || !env.ISS_INTERNAL_SECRET) {
     return jsonResponse(request, env, {
       ok: false,
-      error: "PYTHON_API_URL não configurado.",
+      error: "Proxy interno não configurado.",
     }, 500);
   }
 
@@ -1784,22 +1784,29 @@ async function handlePythonProxy(request, env) {
     headers,
   };
 
-  if (!["GET", "HEAD"].includes(request.method)) {
-    init.body = await request.arrayBuffer();
-  }
-
   let upstreamResponse;
 
   try {
+    if (!["GET", "HEAD"].includes(request.method)) {
+      const maxBytes = getMaxPostBytes(url.pathname);
+      const contentLength = getContentLength(request);
+      // Navegadores enviam Content-Length: nesse caso transmita sem copiar o
+      // upload inteiro para a memoria do Worker. Para corpos chunked, limite e
+      // monte no maximo o teto permitido antes de chamar a API.
+      init.body = contentLength === null
+        ? await readBoundedBody(request, maxBytes)
+        : request.body;
+    }
     upstreamResponse = await fetch(targetUrl, init);
   } catch (err) {
     console.error("PY PROXY ERROR:", err);
 
     return jsonResponse(request, env, {
       ok: false,
-      error: String(err?.message || err),
-      targetUrl,
-    }, 500);
+      error: err?.code === "BODY_TOO_LARGE"
+        ? "Requisição muito grande."
+        : "A API interna não respondeu.",
+    }, err?.code === "BODY_TOO_LARGE" ? 413 : 502);
   }
 
   const responseHeaders = apiHeaders(request, env, {});
@@ -3143,7 +3150,19 @@ function htmlResponse(html, status = 200) {
     status,
     headers: baseSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=60",
+      "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60",
+      "Content-Security-Policy": [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "connect-src 'self' https://morning-credit-8a59.prumo-sistema.workers.dev https://api.prumosistemas.com.br",
+        "img-src 'self' data: blob:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+      ].join("; "),
     }),
   });
 }
@@ -3191,6 +3210,8 @@ function baseSecurityHeaders(extra = {}) {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
   headers.set("X-Frame-Options", "DENY");
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
   if (!headers.has("Cache-Control")) {
     headers.set("Cache-Control", "no-store");
   }
@@ -3465,19 +3486,53 @@ function getMaxPostBytes(pathname) {
 }
 
 function isBodyTooLarge(request, maxBytes) {
-  const raw = request.headers.get("Content-Length");
+  const length = getContentLength(request);
 
-  if (!raw) {
+  if (length === null) {
     return false;
   }
 
-  const length = Number(raw);
+  return length > maxBytes;
+}
 
-  if (!Number.isFinite(length)) {
-    return true;
+function getContentLength(request) {
+  const raw = request.headers.get("Content-Length");
+  if (!raw) return null;
+  const length = Number(raw);
+  return Number.isFinite(length) && length >= 0 ? length : Number.POSITIVE_INFINITY;
+}
+
+async function readBoundedBody(request, maxBytes) {
+  if (!request.body) return new Uint8Array(0);
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        const error = new Error("BODY_TOO_LARGE");
+        error.code = "BODY_TOO_LARGE";
+        throw error;
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
   }
 
-  return length > maxBytes;
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 function getClientIp(request) {
