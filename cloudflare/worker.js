@@ -84,19 +84,19 @@ export default {
       }
 
       if (["GET", "HEAD"].includes(request.method) && ["/login", "/login/", "/login.html"].includes(url.pathname)) {
-        return htmlResponse(loginHtml);
+        return htmlResponse(loginHtml, 200, "no-store");
       }
 
       if (["GET", "HEAD"].includes(request.method) && ["/admin", "/admin/", "/admin.html"].includes(url.pathname)) {
-        return htmlResponse(adminHtml);
+        return htmlResponse(adminHtml, 200, "no-store");
       }
 
       if (["GET", "HEAD"].includes(request.method) && ["/master", "/master/", "/master.html"].includes(url.pathname)) {
-        return htmlResponse(masterHtml);
+        return htmlResponse(masterHtml, 200, "no-store");
       }
 
       if (["GET", "HEAD"].includes(request.method) && ["/master-company", "/master-company/", "/master-company.html"].includes(url.pathname)) {
-        return htmlResponse(masterCompanyHtml);
+        return htmlResponse(masterCompanyHtml, 200, "no-store");
       }
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
@@ -3168,12 +3168,16 @@ function jsonResponse(request, env, data, status = 200, setCookie = null) {
   });
 }
 
-function htmlResponse(html, status = 200) {
+function htmlResponse(
+  html,
+  status = 200,
+  cacheControl = "public, max-age=60, s-maxage=300, stale-while-revalidate=60",
+) {
   return new Response(html, {
     status,
     headers: baseSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60",
+      "Cache-Control": cacheControl,
       "Content-Security-Policy": [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
