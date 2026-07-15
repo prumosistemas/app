@@ -77,6 +77,7 @@ class DamDependencyTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["status"], "erro")
         self.assertEqual(results[0]["erro_code"], "DAM_BLOCKED_BY_ESCRITURACAO")
+        self.assertFalse(results[0]["retryable"])
         self.assertEqual(domain.RUNS[retry_key]["results"][0]["erro_code"], "DAM_BLOCKED_BY_ESCRITURACAO")
 
 

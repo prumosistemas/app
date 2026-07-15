@@ -37,11 +37,12 @@ DETECTOR_ROOT = Path(
 LEGACY_SOLVER = SOURCE_ROOT / "api_resolvedora_resolver.py"
 GOOGLE_SOLVER = SOURCE_ROOT / "api_resolvedora_resolver_google_ia.py"
 DETECTOR = DETECTOR_ROOT / "detector_visual.py"
+ARTIFACT_RETENTION = SOURCE_ROOT / "artifact_retention.py"
 GOOGLE_CLIENT = SOURCE_ROOT / "google_ia_requests.py"
 CHROME_WRAPPER = Path(__file__).with_name("chrome_modal_no_sandbox.sh")
 
 if modal.is_local():
-    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, DETECTOR, CHROME_WRAPPER):
+    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, DETECTOR, ARTIFACT_RETENTION, CHROME_WRAPPER):
         if not required.is_file():
             raise RuntimeError(f"Arquivo obrigatorio ausente: {required}")
 
@@ -106,6 +107,7 @@ image = (
     .add_local_file(GOOGLE_SOLVER, "/app/api_resolvedora_resolver_google_ia.py")
     .add_local_file(GOOGLE_CLIENT, "/app/google-ai-client/google_ia_requests.py")
     .add_local_file(DETECTOR, "/app/detector/detector_visual.py")
+    .add_local_file(ARTIFACT_RETENTION, "/app/artifact_retention.py")
 )
 
 app = modal.App("prumo-portal-nacional-google-solver", image=image)
@@ -182,27 +184,27 @@ def _prepare_instance_state() -> None:
 
 
 def _prune_debug_artifacts() -> int:
-    """Mantem evidencias por sete dias sem tocar nos downloads das notas."""
-    cutoff = time.time() - ARTIFACT_RETENTION_DAYS * 86400
-    removed = 0
-    if not GOOGLE_ARTIFACT_ROOT.exists():
-        return removed
-    for root, dirs, files in os.walk(GOOGLE_ARTIFACT_ROOT, topdown=False):
-        root_path = Path(root)
-        for name in files:
-            path = root_path / name
-            try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
-                    removed += 1
-            except FileNotFoundError:
-                pass
-        for name in dirs:
-            try:
-                (root_path / name).rmdir()
-            except OSError:
-                pass
-    return removed
+    """Mantem sete dias e compacta evidencias que nao estao mais em uso."""
+    completed = subprocess.run(
+        [
+            "python",
+            "/app/artifact_retention.py",
+            "--root",
+            str(GOOGLE_ARTIFACT_ROOT),
+            "--retention-days",
+            str(ARTIFACT_RETENTION_DAYS),
+            "--min-age-seconds",
+            os.environ.get("PORTAL_DEBUG_COMPACT_AFTER_SECONDS", "900"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("artifact_retention_failed")
+    data = json.loads((completed.stdout or "{}").splitlines()[-1])
+    return int(data.get("removed", 0)) + int(data.get("gzipped", 0)) + int(data.get("webp", 0))
 
 
 def _start_artifact_retention_loop() -> None:

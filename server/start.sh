@@ -6,14 +6,16 @@ start_artifact_retention() {
   retention_days="${PORTAL_DEBUG_RETENTION_DAYS:-7}"
   (
     while true; do
-      find "$artifact_dir" -type f -mtime "+$retention_days" -delete 2>/dev/null || true
-      find "$artifact_dir" -depth -type d -empty -delete 2>/dev/null || true
+      python /app/google-ai-solver/artifact_retention.py \
+        --root "$artifact_dir" \
+        --retention-days "$retention_days" \
+        --min-age-seconds "${PORTAL_DEBUG_COMPACT_AFTER_SECONDS:-900}" || true
       find /app/output/empresas -path '*/portal_nacional/runs/*/logs/*' \
         -type f -mtime "+$retention_days" -delete 2>/dev/null || true
       sleep 3600
     done
   ) &
-  echo "[startup] retencao de artefatos/logs ativa por ${retention_days} dias"
+  echo "[startup] retencao/compactacao de artefatos ativa por ${retention_days} dias"
 }
 
 start_local_portal_solver() {

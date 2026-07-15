@@ -8,6 +8,11 @@ services:
     env_file: .env
     volumes:
       - /opt/prumo/data:/app/output
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [prumo-net]
 
 networks:

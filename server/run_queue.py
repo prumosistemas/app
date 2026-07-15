@@ -704,16 +704,20 @@ async def run_cnpj_group_serial(
             dependency_result = escrituracao_result or _effective_escrituracao_result_for_item(ctx, run_key, item)
 
             if (has_escrituracao or has_root_escrituracao) and not _escrituracao_allows_dam(dependency_result):
+                dependency_retryable = bool(
+                    dependency_result and is_safe_retryable_result(dependency_result)
+                )
                 skipped = _dam_blocked_result(
                     item,
                     reason="DAM não executado porque a Escrituração deste CNPJ falhou ou ainda não foi concluída.",
+                    retryable=dependency_retryable,
                 )
 
                 write_run_log(
                     run_log_file,
                     (
                         f"[ITEM_ERROR] flow=dam cnpj={normalize_cnpj(item.get('cnpj', ''))} "
-                        f"code=DAM_BLOCKED_BY_ESCRITURACAO retryable=True "
+                        f"code=DAM_BLOCKED_BY_ESCRITURACAO retryable={dependency_retryable} "
                         f"msg=DAM não executado porque Escrituração falhou ou ainda não foi concluída."
                     ),
                 )

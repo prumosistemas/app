@@ -9,7 +9,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Área | Caminho |
 |---|---|
 | Frontend | `iss-fortaleza.html`, `portal-nacional.html` |
-| Worker de borda | `cloudflare/worker/` |
+| Worker de borda | `cloudflare/worker.js` |
 | API e filas | `server/main.py`, `server/run_queue.py` |
 | ISS Fortaleza | `server/flow_*.py` |
 | Portal Nacional | `server/portal_nacional.py`, `server/portal_nacional_automation.py` |
@@ -19,7 +19,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-13
 
-- API alvo: 1.0.47, com autenticação mTLS direta no ThinkPad, Modal primário e fallback residencial do solver.
+- API alvo: 1.0.47, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - ISS Laryssa: run real concluída na primeira tentativa, 242 prestadas e 4 tomadas.
 - ISS padrão: Modal direto. O proxy continua no ThinkPad, mas não deve ser ativado no Modal sem autenticação de máquina no Cloudflare Access.
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
@@ -33,12 +33,13 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Não exiba segredos, senhas, cookies, PFX ou blobs completos do banco.
 - Uma tentativa filha bem-sucedida não altera o resultado histórico da run raiz no ISS.
 - Teste Portal/ISS com lote mínimo antes de ampliar concorrência.
-- Frontend publicado pelo fluxo automático GitHub para Netlify; não faça deploy manual do Netlify.
+- GitHub e a fonte dos HTMLs. Login, master, admin, ISS, Portal e raiz são entregues diretamente pelo Worker; o fluxo automático GitHub para Netlify fica como publicação complementar quando a conta tiver créditos.
 - Mudanças no Worker Cloudflare são separadas do deploy estático e devem preservar rotas internas bloqueadas.
 
 ## Pendências externas
 
-- O deploy automático Netlify recebe os commits, mas pode ser ignorado por limite de créditos da conta. ISS e Portal atualizados já estão ao vivo pelas rotas do Worker Cloudflare.
+- O deploy automático Netlify pode ser ignorado por limite de créditos da conta. As telas críticas atualizadas continuam ao vivo pelas rotas do Worker Cloudflare, sem deploy manual obrigatório.
+- Debug visual fica por sete dias. Após 15 minutos, conteúdo textual é gzipado e PNG vira WebP lossless; o compose limita logs Docker a 3 x 10 MiB.
 - Preencher as credenciais do Gabriel para concluir o teste ISS dele.
 - No servidor, habilitar linger do usuário e reiniciar o monitor com privilégios administrativos para ele carregar o segredo atual.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.

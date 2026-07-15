@@ -8,8 +8,8 @@ Modo atual: producao unica, sem homologacao ativa
 
 A Prumo roda em quatro partes:
 
-1. HTMLs estaticos no Netlify, servidos em `https://app.prumosistemas.com.br`.
-2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando de login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
+1. HTMLs críticos servidos diretamente pelo Cloudflare Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicação complementar ligada ao GitHub.
+2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
 5. API Google Modo IA no Modal, app `prumo-portal-nacional-google-solver`, usada apenas para hCaptcha do Portal Nacional.
@@ -296,7 +296,15 @@ As URLs publicas usam redirects do `netlify.toml`, entao o usuario acessa sem `.
 
 Todos os HTMLs apontam para o Worker de producao `https://morning-credit-8a59.prumo-sistema.workers.dev`.
 
-Observacao de 2026-07-05: o Netlify bloqueou novos deploys por credito da conta. Para manter a Central atualizada e o Portal Nacional acessivel sem `.html`, o Worker `morning-credit-8a59` tambem atende as rotas Cloudflare `app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`, entregando `index.html` e `portal-nacional.html` diretamente. Quando o Netlify voltar a aceitar deploys, o `netlify.toml` continua sendo a fonte normal das rotas limpas.
+O Netlify pode bloquear novos deploys por crédito da conta. Para não misturar versões de login e API, o Worker `morning-credit-8a59` atende diretamente raiz, login, admin, master, ISS e Portal Nacional. Login/admin/master usam `Cache-Control: no-store`. Quando o Netlify voltar, o vínculo GitHub e o `netlify.toml` continuam válidos como publicação complementar.
+
+## Retencao e crescimento de disco
+
+- `/opt/prumo/data/_api_data/google_ai_solver_artifacts` guarda debug visual por 7 dias.
+- Após 15 minutos sem alteração, `.html`, `.json` e `.txt` viram gzip; PNG vira WebP lossless quando o resultado é menor.
+- XML/PDF, índices e certificados das empresas não são compactados nem removidos por essa rotina.
+- O compose limita o log `json-file` da API a 3 arquivos de 10 MiB.
+- A rotina fica em `solver/google_ai_mode/artifact_retention.py` e roda tanto no ThinkPad quanto no Modal.
 
 ## Master
 
