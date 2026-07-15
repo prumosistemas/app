@@ -66,4 +66,4 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - A causa do 403 era o endpoint de certificado com host incorreto (`www.nfse.gov.br`). O Firefox manual comprovou o host dedicado `certificado.nfse.gov.br`.
 - Depois da correção, o ThinkPad gerou sessão 200 com `ASP.NET_SessionId`, `Emissor` e `ARRAffinity`, reindexou 169 notas em 12 páginas e retomou com quatro tarefas simultâneas.
 - A primeira amostra pós-correção concluiu 10 notas novas sem travar, elevando o total de 35 para 45; a run permaneceu ativa para completar todo o lote.
-- A falha de um endpoint do solver agora abre cooldown por endpoint; 404 persistente, 429 e 5xx não queimam todas as tentativas imediatamente. Logs e artefatos de depuração têm retenção de sete dias.
+- Falhas reais do endpoint (404 persistente, 429 e 5xx) abrem cooldown sem queimar todas as tentativas. Uma falha visual de um captcha afeta somente aquela nota e não desvia as outras threads do Modal para o ThinkPad. Logs e artefatos de depuração têm retenção de sete dias.

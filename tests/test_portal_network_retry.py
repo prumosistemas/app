@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import requests
+import pytest
 
 
 SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
@@ -9,6 +10,13 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 import portal_nacional_automation as automation  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def clear_solver_endpoint_cooldowns():
+    automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    yield
+    automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
 
 
 class FakeResponse:
@@ -105,3 +113,16 @@ def test_solver_outage_backoff_grows_across_different_items() -> None:
         64,
         120,
     ]
+
+
+def test_visual_failure_does_not_cool_down_entire_modal_pool() -> None:
+    assert automation.solver_endpoint_cooldown_seconds(
+        RuntimeError("solver:grade_9_nao_estabilizou: desafio dificil")
+    ) == 0
+
+
+def test_endpoint_outages_still_open_cooldown() -> None:
+    response = requests.Response()
+    response.status_code = 503
+    error = requests.HTTPError("temporariamente indisponivel", response=response)
+    assert automation.solver_endpoint_cooldown_seconds(error) == 90

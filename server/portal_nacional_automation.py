@@ -1124,11 +1124,18 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         return 300
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
+    # O endpoint respondeu e apenas esta tentativa visual nao venceu o
+    # hCaptcha. Nao derrube o pool inteiro nem desvie as outras threads para o
+    # ThinkPad: somente a requisicao atual deve tentar o fallback residencial.
+    if detail.startswith("solver:"):
+        return 0
     return 30
 
 
 def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
     cooldown = solver_endpoint_cooldown_seconds(exc)
+    if cooldown <= 0:
+        return 0
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
         SOLVER_ENDPOINT_COOLDOWNS[url] = max(
             SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0), time.monotonic() + cooldown
