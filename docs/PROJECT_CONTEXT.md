@@ -17,15 +17,18 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
-## Estado validado em 2026-07-13
+## Estado validado em 2026-07-15
 
 - API alvo: 1.0.47, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
-- ISS Laryssa: run real concluída na primeira tentativa, 242 prestadas e 4 tomadas.
+- Portal Alan/SIM7: run real finalizada com quatro navegadores, 169/169 notas baixadas. A validação física abriu o índice e confirmou 169 PDFs válidos e 169 XMLs parseáveis, sem arquivo ausente ou inválido.
+- Solver Portal: Google Modo IA v18 unificado. A conta principal fica aquecida e a conta `fabriciofarofa5` escala a zero quando ociosa; cada conta pode escalar até quatro containers. Não há Florence, Cohere nem resolvedor separado para grade de nove imagens.
+- ISS Laryssa: a run real mais recente validada concluiu na primeira tentativa, com 242 prestadas e 4 tomadas.
+- ISS Gabriel: a run real mais recente validada concluiu 12/12 fluxos. A raiz histórica anterior continua mostrando 12 erros corretamente, mas retentativas de bloqueios definitivos deixaram de ser agendadas.
 - ISS padrão: Modal direto. O proxy continua no ThinkPad, mas não deve ser ativado no Modal sem autenticação de máquina no Cloudflare Access.
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
-- ISS Gabriel: bloqueado por cadastro sem usuário/senha; erro agora é classificado como `ACCOUNT_CREDENTIALS_MISSING`.
-- Portal Alan: `finalizado_parcial` com 18 baixados, 0 erros e 10 novos arquivos sobre a base inicial; Google Modo IA v11 foi o único resolvedor.
-- Testes locais: 59 aprovados para o deploy 1.0.47.
+- Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
+- Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
+- Testes locais: 69 aprovados para o deploy 1.0.47.
 
 ## Regras operacionais
 
@@ -40,6 +43,5 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 - O deploy automático Netlify pode ser ignorado por limite de créditos da conta. As telas críticas atualizadas continuam ao vivo pelas rotas do Worker Cloudflare, sem deploy manual obrigatório.
 - Debug visual fica por sete dias. Após 15 minutos, conteúdo textual é gzipado e PNG vira WebP lossless; o compose limita logs Docker a 3 x 10 MiB.
-- Preencher as credenciais do Gabriel para concluir o teste ISS dele.
-- No servidor, habilitar linger do usuário e reiniciar o monitor com privilégios administrativos para ele carregar o segredo atual.
+- O registro Docker externo não foi usado no último deploy: a imagem 1.0.47 foi construída e validada diretamente no ThinkPad. Manter a 1.0.46 como rollback local.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.

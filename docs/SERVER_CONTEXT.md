@@ -305,6 +305,13 @@ O Netlify pode bloquear novos deploys por crédito da conta. Para não misturar 
 - XML/PDF, índices e certificados das empresas não são compactados nem removidos por essa rotina.
 - O compose limita o log `json-file` da API a 3 arquivos de 10 MiB.
 - A rotina fica em `solver/google_ai_mode/artifact_retention.py` e roda tanto no ThinkPad quanto no Modal.
+- A primeira compactacao controlada foi executada em 2026-07-15. O processo roda em baixa concorrencia com a API ativa e preserva os artefatos dos sete dias definidos para depuracao.
+
+## Monitor do host
+
+- O servico `prumo-monitor.service` roda como root e le `/opt/prumo/config/monitor-agent.env`.
+- O arquivo de ambiente deve permanecer em modo `600` e usar o mesmo `ISS_INTERNAL_SECRET` do compose da API.
+- Depois de alterar o segredo, reinicie o servico; em 2026-07-15 o processo antigo foi reciclado e `/api/internal/runtime-metrics` voltou de 403 para 200.
 
 ## Master
 

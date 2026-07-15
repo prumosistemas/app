@@ -11,7 +11,7 @@ import os
 import shutil
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -122,10 +122,17 @@ from run_queue import (
 from portal_nacional import router as portal_nacional_router
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await startup_queue_workers()
+    yield
+
+
 app = FastAPI(
     title="ISS Automação API",
     version="1.0.47",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
+    lifespan=lifespan,
 )
 
 app.include_router(portal_nacional_router)
@@ -432,11 +439,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    await startup_queue_workers()
 
 
 @app.websocket("/ws")
