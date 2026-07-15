@@ -5,16 +5,19 @@
 - A API Prumo executa `server/portal_nacional_automation.py` e persiste cada run em `/opt/prumo/data`.
 - O único resolvedor é o Google Modo IA versionado em `solver/google_ai_mode`; Florence e Cohere não participam do fluxo.
 - A sessão mTLS, a indexação e os downloads saem diretamente pelo ThinkPad. O login correto é `https://certificado.nfse.gov.br/EmissorNacional/Certificado`; o host `www` nesse endpoint responde 403.
-- Somente a imagem do hCaptcha segue primeiro para o endpoint Modal, com até quatro containers. Se ele falhar, o mesmo resolvedor Google Modo IA roda em `127.0.0.1:8876`.
+- Somente a imagem do hCaptcha segue primeiro para o endpoint Modal, com até quatro containers. Se a conta principal atingir quota ou ficar indisponivel, outra conta Modal recebe a proxima tentativa; o mesmo resolvedor Google Modo IA em `127.0.0.1:8876` e apenas o ultimo recurso.
 - O Portal Nacional não usa proxy. Um binding mTLS no Cloudflare foi testado, retornou 520 no login do certificado e foi removido; o acesso direto do ThinkPad retornou 200 em cerca de 3,5 segundos.
+- O Modo IA usa um contrato visual único para qualquer formato. A captura temporal só é usada quando quatro quadros mostram movimento suficiente; caso contrário, segue um quadro único. Essa distinção de evidência preserva coordenadas e melhora acerto sem manter resolvedores separados.
 
 ## Variáveis
 
 ```text
 PORTAL_NACIONAL_SOLVER_URL=https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve
-PORTAL_NACIONAL_SOLVER_FALLBACK_URL=http://127.0.0.1:8876/solve
+PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacional-google-solver-sol-ffa9e3.modal.run/solve,http://127.0.0.1:8876/solve
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
+
+A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente: 429 troca de conta por 300 segundos; 5xx/circuito por 90 segundos; uma falha visual comum nao derruba a conta inteira.
 
 Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o estado anônimo fica no Volume privado. No ThinkPad, fica em `/opt/prumo/data/_api_data/google_ai_solver_state`, coberto pelo volume persistente; somente o código entra no Git e na imagem.
 

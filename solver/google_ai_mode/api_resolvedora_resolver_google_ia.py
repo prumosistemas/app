@@ -38,7 +38,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-13-google-ai-mode-v17-unified-parallel-safe"
+SOLVER_API_VERSION = "2026-07-14-google-ai-mode-v18-unified-visual-fast-fallback"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -80,8 +80,28 @@ legacy.CAPTCHA_DIR = Path(
     )
 )
 legacy.CHALLENGES_DIR = legacy.CAPTCHA_DIR / "desafios"
-legacy.CHALLENGES_9_DIR = legacy.CHALLENGES_DIR / "9-tiles"
-legacy.CHALLENGES_NON_9_DIR = legacy.CHALLENGES_DIR / "nao-9-tiles"
+CHALLENGES_UNIFIED_DIR = legacy.CHALLENGES_DIR / "unificados"
+# Captura e clique ainda respeitam o DOM que o hCaptcha apresentou, mas todo
+# artefato e toda decisao visual passam pelo mesmo contrato do Google Modo IA.
+legacy.CHALLENGES_9_DIR = CHALLENGES_UNIFIED_DIR
+legacy.CHALLENGES_NON_9_DIR = CHALLENGES_UNIFIED_DIR
+
+
+_legacy_set_solver_error = legacy.set_solver_error
+
+
+def _set_unified_solver_error(reason: str, error: str) -> None:
+    aliases = {
+        "grade_9_nao_estabilizou": "visual_challenge_not_ready",
+        "nao_achou_9_tiles": "visual_challenge_not_found",
+        "nao_consegui_resolver_9_tiles": "visual_analysis_failed",
+        "falha_clicar_9_tiles": "visual_click_failed",
+        "falha_submit_9_tiles": "visual_submit_failed",
+    }
+    _legacy_set_solver_error(aliases.get(reason, reason), error)
+
+
+legacy.set_solver_error = _set_unified_solver_error
 legacy.PROVIDER_ABORT_FILE = PROVIDER_DIR / "google-ai-circuit-open.json"
 legacy.SOLVER_ABORT_FILE = PROVIDER_DIR / "solver-circuit-open.json"
 legacy.LEGACY_PROVIDER_MODEL = PROVIDER_MODEL  # campo legado usado apenas em arquivos de diagnostico
@@ -154,7 +174,7 @@ def _wait_for_stable_google_ai(port: int, timeout: int = 8):
             if page:
                 print(
                     "[Google AI] Grade 9 movel; usando o ultimo snapshot completo "
-                    "em vez de classificar como nao-9.",
+                    "em vez de descartar a captura visual.",
                     flush=True,
                 )
                 return page, state
@@ -177,13 +197,14 @@ def _ensure_challenge_or_token(port: int, max_clicks: int = 8) -> bool:
 legacy.ensure_challenge_open = _ensure_challenge_or_token
 
 
-def _capture_non_9_canvas_clean(port: int, folder: Path, stem: str = "desafio") -> bool:
+def _capture_visual_canvas_clean(port: int, folder: Path, stem: str = "desafio") -> bool:
     """Captura apenas a area selecionavel, sem grade artificial nem particoes."""
     page = legacy.challenge_page(port)
     if not page:
         return False
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
+        client.ws.settimeout(6)
         try:
             # O overlay serve apenas para auditoria visual. Remova-o antes da proxima
             # captura para que caixas/nomes antigos nunca contaminem a imagem enviada a IA.
@@ -226,7 +247,7 @@ new Promise((resolve) => {
         finally:
             client.close()
     except Exception as exc:
-        print(f"[Debug] Falha ao extrair canvas nao-9 limpo: {exc}")
+        print(f"[Debug] Falha ao extrair canvas visual limpo: {exc}")
         return False
 
     if not data or not data.get("clip"):
@@ -241,7 +262,7 @@ new Promise((resolve) => {
     if not legacy.crop_png_top(full_path, clean_path, top_cut, float(clip["height"])):
         return False
     if legacy.png_seems_blank(clean_path):
-        print("[Debug] Captura limpa nao-9 veio branca.")
+        print("[Debug] Captura visual limpa veio branca.")
         return False
     try:
         with legacy.Image.open(clean_path) as image:
@@ -256,7 +277,7 @@ new Promise((resolve) => {
     return True
 
 
-legacy.capture_non_9_canvas_artifacts = _capture_non_9_canvas_clean
+legacy.capture_non_9_canvas_artifacts = _capture_visual_canvas_clean
 
 
 def _image_entropy(path: Path) -> float:
@@ -324,7 +345,7 @@ def _build_motion_overlay(folder: Path, frames: list[Path]) -> Path | None:
             image.close()
 
 
-def _capture_non_9_canvas_sequence(
+def _capture_visual_canvas_sequence(
     port: int,
     folder: Path,
     frame_count: int = 4,
@@ -336,6 +357,7 @@ def _capture_non_9_canvas_sequence(
         return []
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
+        client.ws.settimeout(6)
         try:
             data = client.eval(
                 f"""
@@ -481,7 +503,7 @@ new Promise(async (resolve) => {{
     return paths
 
 
-def _restore_non_9_animation(port: int) -> None:
+def _restore_visual_animation(port: int) -> None:
     page = legacy.challenge_page(port)
     if not page:
         return
@@ -514,7 +536,7 @@ def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
     finally:
         # Deixe o handler do clique ler o quadro congelado antes de retomar o loop.
         time.sleep(0.25)
-        _restore_non_9_animation(port)
+        _restore_visual_animation(port)
 
 
 legacy.click_non_9_choice = _click_non_9_choice_frozen
@@ -1097,50 +1119,6 @@ def _query_image(image_path: Path, prompt: str) -> Any:
     return result
 
 
-def _legacy_nine_tile_prompt(captcha_question: str) -> str:
-    return f"""
-Analise SOMENTE os pixels da imagem anexada. Nao pesquise na web, nao consulte paginas,
-nao use fontes externas e nao forneca links ou citacoes.
-
-Esta imagem e um desafio visual com uma grade 3 x 3. A pergunta original e:
-"{captcha_question}"
-
-Numere os quadrados assim, da esquerda para a direita e de cima para baixo:
-1 2 3
-4 5 6
-7 8 9
-
-Decida literalmente quais quadrados atendem a pergunta original.
-Regras:
-- examine cada quadrado separadamente;
-- objetos feitos por pessoas incluem construcoes, torres, postes, veiculos, placas,
-  ferramentas, maquinas e outros objetos artificiais;
-- natureza, animais, plantas, areia, agua, ceu e montanhas nao sao feitos por pessoas;
-- um objeto parcial so conta quando ainda e claramente identificavel;
-- nao marque por sombra, reflexo, texto de marca-dagua ou associacao vaga;
-- em duvida real, use selecionar=false;
-- nao use listas JSON nem colchetes, pois o produto pode remove-los;
-- retorne somente JSON valido, sem Markdown e sem texto adicional.
-
-Formato obrigatorio, mantendo exatamente as chaves tile_1 ate tile_9:
-{{
-  "tile_1": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_2": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_3": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_4": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_5": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_6": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_7": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_8": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "tile_9": {{"descricao": "curta", "selecionar": false, "confianca": 0.0, "motivo": "curto"}},
-  "resposta_direta": "2,5"
-}}
-
-Em resposta_direta, coloque somente os numeros selecionados em ordem crescente,
-separados por virgula. Se nenhum corresponder, use string vazia.
-""".strip()
-
-
 def _unified_visual_prompt(
     captcha_question: str,
     image_width: int | None = None,
@@ -1227,10 +1205,6 @@ resposta_direta vazia, depois preencha objetos e escolha.
 """.strip()
 
 
-def _nine_tile_prompt(captcha_question: str) -> str:
-    return _unified_visual_prompt(captcha_question)
-
-
 def solve_with_google_ai(
     image_path: Path,
     captcha_question: str,
@@ -1249,7 +1223,7 @@ def solve_with_google_ai(
 
     raw_answer = ""
     try:
-        result = _query_image(image_path, _nine_tile_prompt(captcha_question))
+        result = _query_image(image_path, _unified_visual_prompt(captcha_question))
         raw_answer = result.answer
         parsed = _parse_json_answer(raw_answer)
 
@@ -1273,7 +1247,8 @@ def solve_with_google_ai(
             (challenge_dir / "resposta-google-ia.json").write_text(
                 json.dumps(
                     {
-                        "tipo": "9_tiles",
+                        "tipo": "visual_unificado",
+                        "adaptador_interacao": "selecionar_regioes",
                         "pergunta": captcha_question,
                         "provedor": "google_ai_mode",
                         "modelo": PROVIDER_MODEL,
@@ -1302,13 +1277,14 @@ def solve_with_google_ai(
             "provider_circuit_open" if state["open"] else "google_ai_request_failed",
             str(exc),
         )
-        print(f"[Google AI] Erro ao analisar 9 tiles: {type(exc).__name__}: {exc}")
+        print(f"[Google AI] Erro na analise visual por regioes: {type(exc).__name__}: {exc}")
         if challenge_dir:
             challenge_dir.mkdir(parents=True, exist_ok=True)
             (challenge_dir / "resposta-google-ia.json").write_text(
                 json.dumps(
                     {
-                        "tipo": "9_tiles",
+                        "tipo": "visual_unificado",
+                        "adaptador_interacao": "selecionar_regioes",
                         "pergunta": captcha_question,
                         "provedor": "google_ai_mode",
                         "modelo": PROVIDER_MODEL,
@@ -1322,111 +1298,6 @@ def solve_with_google_ai(
                 encoding="utf-8",
             )
         return None
-
-
-def _legacy_non_nine_prompt(
-    captcha_question: str,
-    image_width: int,
-    image_height: int,
-    frame_count: int = 1,
-    reference_present: bool = False,
-) -> str:
-    sequence_note = ""
-    if frame_count > 1:
-        sequence_note = f"""
-A imagem anexada e uma sobreposicao temporal de {frame_count} quadros da MESMA cena:
-o ultimo quadro fica predominante e os quadros anteriores aparecem como rastros suaves.
-Use os rastros para perceber movimento, mudanca de opacidade, aparencia ou trajetoria.
-Depois de decidir o alvo, marque a posicao atual/final dele no proprio canvas anexado.
-As caixas e coordenadas devem usar esta imagem sobreposta inteira na escala 0..1000.
-Nao escolha por um unico instante isolado quando os rastros indicarem o diferente/movel.
-"""
-    reference_note = (
-        "A parte superior contem uma referencia visual nao clicavel; compare-a com as opcoes inferiores."
-        if reference_present
-        else "A imagem anexada ja contem somente a area clicavel. Nao invente referencia fora dela."
-    )
-    return f"""
-Analise SOMENTE os pixels da imagem anexada. Nao pesquise na web, nao consulte paginas,
-nao use fontes externas e nao forneca links ou citacoes.
-
-A imagem e a area limpa e clicavel de um desafio visual, sem grade artificial.
-Pergunta original: "{captcha_question}"
-{reference_note}
-Tamanho da area inferior clicavel: {image_width} x {image_height} pixels.
-{sequence_note}
-
-Objetivo:
-1. Identifique os objetos e destinos visiveis que ajudam a responder literalmente a pergunta.
-2. Para cada objeto, forneca uma caixa delimitadora na escala normalizada de 0 a 1000:
-   x=0 esquerda, x=1000 direita, y=0 topo, y=1000 base.
-3. Determine exatamente UM ponto de clique que responde a pergunta original.
-4. Em perguntas de trajetoria, como "onde a bola vai entrar", calcule a direcao pela
-   mudanca entre quadros e escolha o centro do destino correto; nao clique na bola.
-5. O ponto escolhido deve estar dentro da caixa do objeto/destino selecionado.
-6. Nao use grade, celula, linha ou coluna. Nao divida a imagem em quadrados.
-7. Nao invente objetos. Se houver ambiguidade, descreva-a e escolha o candidato visual mais forte.
-8. Nao use arrays/listas JSON nem colchetes. Use objetos nomeados objeto_1, objeto_2 etc.
-9. Retorne somente JSON valido, sem Markdown e sem texto adicional.
-10. Quando a pergunta pedir o animal diferente, compare TODOS antes de escolher:
-    especie, orientacao/espelhamento e pose. Para direcao, localize focinho/rosto e tronco:
-    focinho a esquerda do tronco = olhando para a esquerda; focinho a direita = olhando para a direita.
-    Se a imagem for uma sobreposicao temporal, trate rastros transparentes como
-    copias temporais do mesmo animal, nao como uma especie diferente. Para
-    "animal diferente", escolha primeiro a excecao de especie/morfologia/pose
-    em relacao ao grupo majoritario. So priorize movimento/opacidade quando a
-    pergunta mencionar movimento, trajetoria, mudou, deslocou ou destino, ou
-    quando nao existir diferenca clara de especie/morfologia.
-    Registre essa comparacao no motivo de cada objeto, conte o padrao majoritario e escolha apenas a excecao.
-    Revise explicitamente o candidato e a alternativa mais parecida antes de responder.
-
-Formato obrigatorio:
-{{
-  "descricao_geral": "curta",
-  "alvo_da_pergunta": "o que deve ser clicado",
-  "objetos": {{
-    "objeto_1": {{
-      "nome": "gol esquerdo",
-      "caixa": {{"x1": 80, "y1": 430, "x2": 310, "y2": 920}},
-      "corresponde_pergunta": false,
-      "confianca": 0.90,
-      "motivo": "curto"
-    }},
-    "objeto_2": {{
-      "nome": "gol direito",
-      "caixa": {{"x1": 690, "y1": 420, "x2": 940, "y2": 930}},
-      "corresponde_pergunta": true,
-      "confianca": 0.95,
-      "motivo": "a trajetoria termina neste gol"
-    }}
-  }},
-  "escolha": {{
-    "objeto": "objeto_2",
-    "x": 815,
-    "y": 675,
-    "descricao_do_alvo": "gol direito",
-    "argumento": "curto",
-    "confianca": 0.95
-  }},
-  "observacoes": "curta"
-}}
-""".strip()
-
-
-def _non_nine_prompt(
-    captcha_question: str,
-    image_width: int,
-    image_height: int,
-    frame_count: int = 1,
-    reference_present: bool = False,
-) -> str:
-    return _unified_visual_prompt(
-        captcha_question,
-        image_width=image_width,
-        image_height=image_height,
-        frame_count=frame_count,
-        reference_present=reference_present,
-    )
 
 
 def _top_reference_has_visual_content(full_path: Path, top_cut: int) -> bool:
@@ -1808,7 +1679,7 @@ def _override_different_choice_from_motion(
     }
 
 
-def analyze_non_9_with_google_ai(
+def analyze_visual_with_google_ai(
     challenge_dir: Path,
     captcha_question: str,
     port: int | None = None,
@@ -1882,7 +1753,7 @@ def analyze_non_9_with_google_ai(
             query_width, query_height = query_image.size
         result = _query_image(
             query_path,
-            _non_nine_prompt(
+            _unified_visual_prompt(
                 captcha_question,
                 width,
                 height,
@@ -1978,7 +1849,8 @@ def analyze_non_9_with_google_ai(
         (challenge_dir / "resposta-google-ia.json").write_text(
             json.dumps(
                 {
-                    "tipo": "nao_9_tiles_objetos_xy",
+                    "tipo": "visual_unificado",
+                    "adaptador_interacao": "clicar_ponto",
                     "pergunta": captcha_question,
                     "provedor": "google_ai_mode",
                     "modelo": PROVIDER_MODEL,
@@ -2020,7 +1892,7 @@ def analyze_non_9_with_google_ai(
         if port is not None:
             _remove_browser_debug_overlay(port)
         print(
-            f"[Google AI] Nao-9 objetos={len(detections)} escolha={click_choice} "
+            f"[Google AI] Analise visual objetos={len(detections)} escolha={click_choice} "
             f"http={result.http_requests} consultas={result.ai_queries} fontes={len(result.sources)}"
         )
         return click_choice
@@ -2033,7 +1905,8 @@ def analyze_non_9_with_google_ai(
         (challenge_dir / "resposta-google-ia.json").write_text(
             json.dumps(
                 {
-                    "tipo": "nao_9_tiles_objetos_xy",
+                    "tipo": "visual_unificado",
+                    "adaptador_interacao": "clicar_ponto",
                     "pergunta": captcha_question,
                     "provedor": "google_ai_mode",
                     "modelo": PROVIDER_MODEL,
@@ -2046,11 +1919,11 @@ def analyze_non_9_with_google_ai(
             ),
             encoding="utf-8",
         )
-        print(f"[Google AI] Erro no nao-9 por objetos/XY: {type(exc).__name__}: {exc}")
+        print(f"[Google AI] Erro na analise visual por ponto: {type(exc).__name__}: {exc}")
         return None
 
 
-def _save_and_analyze_non_9_fast(
+def _save_and_analyze_visual_fast(
     port: int,
     state: dict,
     request_id: str,
@@ -2079,12 +1952,14 @@ def _save_and_analyze_non_9_fast(
     captured = False
     frame_paths: list[Path] = []
     capture_started = time.perf_counter()
-    for _ in range(2):
-        frame_paths = _capture_non_9_canvas_sequence(port, folder)
-        if frame_paths:
-            captured = True
-            break
-        time.sleep(0.10)
+    frame_paths = _capture_visual_canvas_sequence(port, folder)
+    if frame_paths:
+        captured = True
+    elif _capture_visual_canvas_clean(port, folder):
+        # Se a coleta temporal perdeu a conexao CDP, nao repita outro timeout.
+        # Um quadro unico ainda permite ao contrato visual resolver o desafio.
+        frame_paths = [folder / "desafio.png"]
+        captured = True
     if captured:
         full_frame_paths = [
             path.with_name(path.stem + "-completo.jpg")
@@ -2117,10 +1992,10 @@ def _save_and_analyze_non_9_fast(
         )
         return None
     _save_browser_dom_debug(port, folder, "capturado")
-    print(f"[Debug] Desafio nao-9 limpo salvo em {capture_seconds:.2f}s: {folder}")
-    result = analyze_non_9_with_google_ai(folder, prompt_text, port=port)
+    print(f"[Debug] Captura visual salva em {capture_seconds:.2f}s: {folder}")
+    result = analyze_visual_with_google_ai(folder, prompt_text, port=port)
     if not result:
-        _restore_non_9_animation(port)
+        _restore_visual_animation(port)
     return result
 
 
@@ -2249,8 +2124,8 @@ def _wait_token_or_next_stage_google_ai(
 
 
 legacy.solve_with_legacy_provider = solve_with_google_ai
-legacy.analyze_non_9_with_legacy_provider = analyze_non_9_with_google_ai
-legacy.save_and_analyze_non_9_challenge = _save_and_analyze_non_9_fast
+legacy.analyze_non_9_with_legacy_provider = analyze_visual_with_google_ai
+legacy.save_and_analyze_non_9_challenge = _save_and_analyze_visual_fast
 legacy.click_hcaptcha_submit = _click_submit_when_ready_google_ai
 legacy.wait_token_or_retry_after_submit = _wait_token_or_next_stage_google_ai
 

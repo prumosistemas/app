@@ -13,8 +13,9 @@ import portal_nacional_automation as automation  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def clear_solver_endpoint_cooldowns():
+def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
 
@@ -88,6 +89,49 @@ def test_blank_fallback_configuration_uses_residential_solver() -> None:
     assert automation.configured_solver_fallback_url("") == (
         "http://127.0.0.1:8876/solve"
     )
+
+
+def test_multiple_modal_fallbacks_keep_local_solver_last() -> None:
+    assert automation.configured_solver_fallback_urls(
+        "https://modal-2.example/solve; https://modal-3.example/solve"
+    ) == [
+        "https://modal-2.example/solve",
+        "https://modal-3.example/solve",
+        "http://127.0.0.1:8876/solve",
+    ]
+
+
+def test_solver_candidates_are_ordered_and_unique(monkeypatch) -> None:
+    monkeypatch.setattr(
+        automation,
+        "SOLVER_FALLBACK_URLS",
+        ["https://modal-2.example/solve", "http://127.0.0.1:8876/solve"],
+    )
+    monkeypatch.setattr(
+        automation,
+        "SOLVER_FALLBACK_URL",
+        "https://modal-2.example/solve",
+    )
+    assert automation.solver_url_candidates("https://modal-1.example/solve") == [
+        "https://modal-1.example/solve",
+        "https://modal-2.example/solve",
+        "http://127.0.0.1:8876/solve",
+    ]
+
+
+def test_solver_telemetry_contains_no_url_query_or_exception_text(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "solver-status.json"
+    monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", target)
+    automation.record_solver_endpoint_event(
+        "https://modal.example/solve?token=nao-pode-vazar",
+        "failure",
+        "empresa-nota-123",
+        RuntimeError("segredo no erro"),
+    )
+    payload = target.read_text(encoding="utf-8")
+    assert "modal.example" in payload
+    assert "nao-pode-vazar" not in payload
+    assert "segredo no erro" not in payload
 
 
 def test_solver_async_urls_preserve_access_token() -> None:

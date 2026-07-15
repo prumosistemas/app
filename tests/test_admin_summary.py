@@ -69,6 +69,22 @@ class AdminSummaryTests(unittest.TestCase):
         self.assertLessEqual(len(reduced), 11)
         self.assertIn(99, [item["host"]["cpu_percent"] for item in reduced])
 
+    def test_portal_modal_endpoints_skip_local_residential_fallback(self):
+        env = {
+            "PORTAL_NACIONAL_SOLVER_URL": "https://principal.example/solve",
+            "PORTAL_NACIONAL_SOLVER_FALLBACK_URLS": (
+                "https://secundario.example/solve,http://127.0.0.1:8876/solve"
+            ),
+        }
+        with patch.dict("os.environ", env, clear=False):
+            self.assertEqual(
+                main._portal_modal_endpoints(),
+                (
+                    "https://principal.example/solve",
+                    "https://secundario.example/solve",
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

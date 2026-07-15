@@ -42,11 +42,70 @@ def configured_solver_fallback_url(value: str | None) -> str:
     return (value or "").strip() or DEFAULT_SOLVER_FALLBACK_URL
 
 
-SOLVER_FALLBACK_URL = configured_solver_fallback_url(
-    os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL")
+def configured_solver_fallback_urls(
+    value: str | None,
+    legacy_value: str | None = None,
+) -> list[str]:
+    """Retorna failovers ordenados sem duplicatas.
+
+    ``PORTAL_NACIONAL_SOLVER_FALLBACK_URLS`` aceita virgula, ponto e virgula
+    ou quebra de linha. A variavel singular continua valida para upgrades sem
+    interrupcao. O resolvedor residencial permanece como ultimo recurso.
+    """
+    raw = (value or "").strip()
+    if raw:
+        candidates = re.split(r"[,;\r\n]+", raw)
+    else:
+        candidates = [configured_solver_fallback_url(legacy_value)]
+    urls = [candidate.strip() for candidate in candidates if candidate.strip()]
+    if DEFAULT_SOLVER_FALLBACK_URL not in urls:
+        urls.append(DEFAULT_SOLVER_FALLBACK_URL)
+    return list(dict.fromkeys(urls))
+
+
+SOLVER_FALLBACK_URLS = configured_solver_fallback_urls(
+    os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URLS"),
+    os.environ.get("PORTAL_NACIONAL_SOLVER_FALLBACK_URL"),
 )
+# Alias preservado para integracoes e testes antigos que alteram um unico URL.
+SOLVER_FALLBACK_URL = SOLVER_FALLBACK_URLS[0]
 SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
 SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
+SOLVER_STATUS_LOCK = threading.Lock()
+SOLVER_STATUS_FILE = Path(
+    os.environ.get(
+        "PORTAL_NACIONAL_SOLVER_STATUS_FILE",
+        str(BASE_DIR / "portal_solver_status.json"),
+    )
+)
+
+
+def record_solver_endpoint_event(
+    url: str,
+    event: str,
+    request_id: str,
+    exc: Exception | None = None,
+) -> None:
+    """Persiste telemetria minima para o master, sem payload do captcha."""
+    parsed = urlparse(url)
+    payload = {
+        "endpoint_host": (parsed.hostname or "").lower(),
+        "event": event,
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "request_id": str(request_id)[-80:],
+    }
+    if exc is not None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        payload["error_kind"] = f"http_{status}" if status else type(exc).__name__
+    try:
+        with SOLVER_STATUS_LOCK:
+            SOLVER_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            temporary = SOLVER_STATUS_FILE.with_suffix(".tmp")
+            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(SOLVER_STATUS_FILE)
+    except OSError:
+        pass
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -1112,7 +1171,13 @@ def solver_api_job_url(solver_url: str, job_id: str) -> str:
 
 
 def solver_url_candidates(primary: str) -> list[str]:
-    return list(dict.fromkeys(url for url in (primary, SOLVER_FALLBACK_URL) if url))
+    return list(
+        dict.fromkeys(
+            url
+            for url in (primary, SOLVER_FALLBACK_URL, *SOLVER_FALLBACK_URLS)
+            if url
+        )
+    )
 
 
 def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
@@ -1261,8 +1326,10 @@ def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> st
         try:
             token = solve_captcha_once(candidate, sitekey, request_id)
             clear_solver_endpoint_cooldown(candidate)
+            record_solver_endpoint_event(candidate, "success", request_id)
             return token
         except Exception as exc:
+            record_solver_endpoint_event(candidate, "failure", request_id, exc)
             cooldown = mark_solver_endpoint_unavailable(candidate, exc)
             errors.append(f"{candidate}: {exc}")
             print(

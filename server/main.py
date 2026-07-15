@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from fastapi import (
     Depends,
@@ -570,24 +571,103 @@ def _env_decimal(name: str, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
-def _modal_billing_snapshot() -> Dict[str, Any]:
-    monthly_credit = _env_decimal("MODAL_MONTHLY_CREDIT_USD", "30.00")
-    target_app = str(os.getenv("MODAL_BILLING_APP_NAME", "prumo-browserless") or "").strip()
-    now_dt = datetime.now(timezone.utc)
-    month_start = datetime(now_dt.year, now_dt.month, 1, tzinfo=timezone.utc)
+def _modal_endpoint_host(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return (urlparse(raw).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _portal_modal_endpoints() -> tuple[str, str]:
+    primary = str(os.getenv("PORTAL_NACIONAL_SOLVER_URL", "") or "").strip()
+    raw_fallbacks = str(
+        os.getenv("PORTAL_NACIONAL_SOLVER_FALLBACK_URLS")
+        or os.getenv("PORTAL_NACIONAL_SOLVER_FALLBACK_URL")
+        or ""
+    )
+    fallback = ""
+    for candidate in raw_fallbacks.replace(";", ",").replace("\n", ",").split(","):
+        candidate = candidate.strip()
+        host = _modal_endpoint_host(candidate)
+        if candidate and host not in {"127.0.0.1", "localhost"}:
+            fallback = candidate
+            break
+    return primary, fallback
+
+
+def _portal_solver_runtime_status() -> Dict[str, Any]:
+    path = Path(
+        os.getenv(
+            "PORTAL_NACIONAL_SOLVER_STATUS_FILE",
+            str(OUTPUT_ROOT / "_api_data" / "portal_solver_status.json"),
+        )
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return {}
+        # O arquivo ja contem somente origem/host, mas mantenha uma allowlist
+        # antes de devolver dados ao painel master.
+        return {
+            key: payload.get(key)
+            for key in (
+                "endpoint_host",
+                "event",
+                "at",
+                "request_id",
+                "error_kind",
+            )
+            if payload.get(key) is not None
+        }
+    except Exception:
+        return {}
+
+
+def _modal_billing_account_snapshot(
+    *,
+    role: str,
+    label: str,
+    workspace: str,
+    endpoint: str,
+    token_id: str,
+    token_secret: str,
+    monthly_credit: Decimal,
+    target_app: str,
+    month_start: datetime,
+    now_dt: datetime,
+    active_host: str,
+) -> Dict[str, Any]:
+    account: Dict[str, Any] = {
+        "role": role,
+        "label": label,
+        "workspace": workspace,
+        "endpoint_host": _modal_endpoint_host(endpoint),
+        "target_app": target_app,
+        "monthly_credit_usd": float(monthly_credit),
+        "credit_is_estimate": True,
+        "in_use": bool(active_host and active_host == _modal_endpoint_host(endpoint)),
+        "rows": [],
+    }
+    if not token_id or not token_secret:
+        return {**account, "ok": False, "status": "credentials_missing", "error": "Credenciais de billing nao configuradas."}
 
     try:
+        import modal
         from modal import billing as modal_billing
 
+        client = modal.Client.from_credentials(token_id, token_secret)
         rows = modal_billing.workspace_billing_report(
             start=month_start,
             end=now_dt,
             resolution="d",
+            client=client,
         )
         normalized_rows = []
         total_cost = Decimal("0")
         target_cost = Decimal("0")
-
         for row in rows:
             cost = Decimal(str(row.get("cost", "0")))
             description = str(row.get("description") or "")
@@ -602,45 +682,78 @@ def _modal_billing_snapshot() -> Dict[str, Any]:
                 "interval_start": interval.isoformat() if hasattr(interval, "isoformat") else str(interval or ""),
                 "cost_usd": float(cost),
             })
-
-        remaining = monthly_credit - total_cost
-        if remaining < Decimal("0"):
-            remaining = Decimal("0")
-
+        remaining = max(Decimal("0"), monthly_credit - total_cost)
         return {
+            **account,
             "ok": True,
+            "status": "in_use" if account["in_use"] else "standby",
             "source": "modal.billing.workspace_billing_report",
-            "workspace": os.getenv("MODAL_WORKSPACE", ""),
-            "target_app": target_app,
-            "period_start": month_start.isoformat(),
-            "period_end": now_dt.isoformat(),
-            "monthly_credit_usd": float(monthly_credit),
             "month_to_date_cost_usd": float(total_cost),
             "target_app_cost_usd": float(target_cost),
             "credits_remaining_usd": float(remaining),
             "rows": normalized_rows,
         }
     except Exception as exc:
-        manual_remaining = os.getenv("MODAL_CREDITS_REMAINING_USD", "").strip()
-        if manual_remaining:
-            remaining = _env_decimal("MODAL_CREDITS_REMAINING_USD", "0")
-            return {
-                "ok": True,
-                "source": "manual_env_fallback",
-                "error": f"{type(exc).__name__}: {exc}",
-                "monthly_credit_usd": float(monthly_credit),
-                "month_to_date_cost_usd": None,
-                "target_app_cost_usd": None,
-                "credits_remaining_usd": float(remaining),
-                "rows": [],
-            }
         return {
+            **account,
             "ok": False,
-            "source": "modal.billing.workspace_billing_report",
-            "error": f"{type(exc).__name__}: {exc}",
-            "monthly_credit_usd": float(monthly_credit),
-            "rows": [],
+            "status": "billing_unavailable",
+            "error": f"{type(exc).__name__}: {exc}"[:500],
         }
+
+
+def _modal_billing_snapshot() -> Dict[str, Any]:
+    monthly_credit = _env_decimal("MODAL_MONTHLY_CREDIT_USD", "30.00")
+    target_app = str(os.getenv("MODAL_BILLING_APP_NAME", "prumo-portal-nacional-google-solver") or "").strip()
+    now_dt = datetime.now(timezone.utc)
+    month_start = datetime(now_dt.year, now_dt.month, 1, tzinfo=timezone.utc)
+    primary_endpoint, fallback_endpoint = _portal_modal_endpoints()
+    runtime = _portal_solver_runtime_status()
+    active_host = str(runtime.get("endpoint_host") or "").lower()
+    primary = _modal_billing_account_snapshot(
+        role="primary",
+        label="Principal",
+        workspace=str(os.getenv("MODAL_PRIMARY_WORKSPACE") or os.getenv("MODAL_WORKSPACE") or ""),
+        endpoint=primary_endpoint,
+        token_id=str(os.getenv("MODAL_PRIMARY_TOKEN_ID") or os.getenv("MODAL_TOKEN_ID") or ""),
+        token_secret=str(os.getenv("MODAL_PRIMARY_TOKEN_SECRET") or os.getenv("MODAL_TOKEN_SECRET") or ""),
+        monthly_credit=_env_decimal("MODAL_PRIMARY_MONTHLY_CREDIT_USD", str(monthly_credit)),
+        target_app=target_app,
+        month_start=month_start,
+        now_dt=now_dt,
+        active_host=active_host,
+    )
+    fallback = _modal_billing_account_snapshot(
+        role="fallback",
+        label="Fallback",
+        workspace=str(os.getenv("MODAL_FALLBACK_WORKSPACE") or ""),
+        endpoint=fallback_endpoint,
+        token_id=str(os.getenv("MODAL_FALLBACK_TOKEN_ID") or ""),
+        token_secret=str(os.getenv("MODAL_FALLBACK_TOKEN_SECRET") or ""),
+        monthly_credit=_env_decimal("MODAL_FALLBACK_MONTHLY_CREDIT_USD", str(monthly_credit)),
+        target_app=target_app,
+        month_start=month_start,
+        now_dt=now_dt,
+        active_host=active_host,
+    )
+    accounts = [primary, fallback]
+    return {
+        "ok": any(account.get("ok") for account in accounts),
+        "source": "modal.billing.workspace_billing_report",
+        "period_start": month_start.isoformat(),
+        "period_end": now_dt.isoformat(),
+        "active_endpoint_host": active_host or None,
+        "runtime": runtime,
+        "accounts": accounts,
+        # Campos antigos preservados para clientes ainda em cache.
+        "workspace": primary.get("workspace"),
+        "target_app": target_app,
+        "monthly_credit_usd": primary.get("monthly_credit_usd"),
+        "month_to_date_cost_usd": primary.get("month_to_date_cost_usd"),
+        "target_app_cost_usd": primary.get("target_app_cost_usd"),
+        "credits_remaining_usd": primary.get("credits_remaining_usd"),
+        "rows": primary.get("rows", []),
+    }
 
 
 def _require_internal_secret(x_internal_secret: str) -> None:

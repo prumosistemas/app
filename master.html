@@ -48,6 +48,7 @@
     button.danger { background:var(--red); }
     .button-link { min-height:30px; border-radius:7px; padding:5px 10px; display:inline-flex; align-items:center; background:var(--accent); color:#fff; font-size:12px; font-weight:600; text-decoration:none; }
     button:disabled { opacity:.55; cursor:not-allowed; }
+    button:focus-visible,.button-link:focus-visible,.nav-btn:focus-visible,details summary:focus-visible { outline:3px solid rgba(79,70,229,.28); outline-offset:2px; }
     .form-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
     .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:7px; }
     table { width:100%; min-width:700px; border-collapse:collapse; }
@@ -58,6 +59,7 @@
     .actions button { height:30px; font-size:12px; }
     .pill { display:inline-flex; border-radius:999px; border:1px solid var(--border); padding:2px 8px; font-size:11px; font-weight:700; }
     .pill.ok { color:var(--green); background:#ecfdf3; }
+    .pill.info { color:var(--accent); background:var(--accent-lt); }
     .pill.bad { color:var(--red); background:#fef2f2; }
     .small { color:var(--text3); font-size:12px; }
     .notice { padding:10px 12px; border-radius:7px; border:1px solid; white-space:pre-line; }
@@ -72,13 +74,17 @@
     .metric { padding:12px; border:1px solid var(--border); border-radius:7px; background:var(--panel); }
     .metric span { color:var(--text3); font-size:11px; font-weight:700; text-transform:uppercase; }
     .metric b { display:block; margin-top:5px; font-size:20px; }
+    .modal-accounts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+    .modal-account { padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--panel2); }
+    .modal-account-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+    .modal-account .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .chart-wrap { height:390px; padding:12px; }
     .metrics-toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
     .metrics-toolbar select { width:auto; min-width:160px; }
     .infra-events { display:grid; gap:7px; max-height:280px; overflow:auto; }
     .infra-event { padding:8px 10px; border-left:3px solid var(--red); background:#fff7f7; color:#7f1d1d; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
     .hidden { display:none !important; }
-    @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row,.metric-grid { grid-template-columns:1fr; } main { padding:16px; } }
+    @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row,.metric-grid,.modal-accounts,.modal-account .metric-grid { grid-template-columns:1fr; } main { padding:16px; } }
   </style>
 </head>
 <body>
@@ -167,7 +173,7 @@
             </select>
           </label>
         </div>
-        <div class="card"><div class="card-head"><h3>Créditos Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox"><span class="small">Carregando créditos...</span></div></div>
+        <div class="card"><div class="card-head"><h3>Contas Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox" aria-live="polite"><span class="small">Carregando contas...</span></div></div>
         <div id="metricCards" class="metric-grid"></div>
         <div class="grid two">
           <div class="card"><div class="card-head"><h3>CPU e memória</h3></div><div class="chart-wrap"><canvas id="resourcesChart"></canvas></div></div>
@@ -290,17 +296,27 @@ async function loadModalBilling(){
       box.innerHTML=`<div class="notice warn">Não foi possível consultar o Modal agora.<br><span class="small">${esc(data.error||"Sem detalhe.")}</span></div>`;
       return;
     }
+    const accounts=(data.accounts||[]).filter(Boolean);
     const rows=data.rows || [];
     const start=Date.parse(data.period_start||"");
     const end=Date.parse(data.period_end||"");
+    const accountCards=accounts.map(account=>{
+      const state=account.in_use?"EM USO":account.ok?"PRONTA":"INDISPONÍVEL";
+      const stateClass=account.in_use?"ok":account.ok?"info":"bad";
+      return `<article class="modal-account">
+        <div class="modal-account-head"><b>${esc(account.label||account.role||"Conta Modal")}</b><span class="pill ${stateClass}">${esc(state)}</span></div>
+        <div class="metric-grid">
+          <div class="metric"><span>Workspace</span><b>${esc(account.workspace||"-")}</b></div>
+          <div class="metric"><span>Crédito estimado</span><b>${account.credits_remaining_usd==null?"-":esc(usd(account.credits_remaining_usd))}</b></div>
+          <div class="metric"><span>Gasto no mês</span><b>${account.month_to_date_cost_usd==null?"-":esc(usd(account.month_to_date_cost_usd))}</b></div>
+          <div class="metric"><span>Solver no mês</span><b>${account.target_app_cost_usd==null?"-":esc(usd(account.target_app_cost_usd))}</b></div>
+        </div>
+        <div class="small">Endpoint: ${esc(account.endpoint_host||"não configurado")} · papel: ${account.role==="primary"?"principal (volta após reset)":"fallback"}${account.error?` · ${esc(account.error)}`:""}</div>
+      </article>`;
+    }).join("");
     box.innerHTML=`
-      <div class="metric-grid">
-        <div class="metric"><span>Crédito restante</span><b>${esc(usd(data.credits_remaining_usd))}</b></div>
-        <div class="metric"><span>Gasto no mês</span><b>${esc(usd(data.month_to_date_cost_usd))}</b></div>
-        <div class="metric"><span>Crédito mensal</span><b>${esc(usd(data.monthly_credit_usd))}</b></div>
-        <div class="metric"><span>App Modal</span><b>${esc(data.target_app||"-")}</b></div>
-      </div>
-      <div class="small">Fonte: ${esc(data.source||"-")} · período: ${esc(Number.isFinite(start)?ts(start/1000):"-")} até ${esc(Number.isFinite(end)?ts(end/1000):"-")}</div>
+      ${accountCards?`<div class="modal-accounts">${accountCards}</div>`:`<div class="notice info">Nenhuma conta Modal configurada.</div>`}
+      <div class="small">Em uso: ${esc(data.active_endpoint_host||"aguardando primeira resolução")} · crédito é uma estimativa configurada, não o limite operacional do Modal.<br>Fonte: ${esc(data.source||"-")} · período: ${esc(Number.isFinite(start)?ts(start/1000):"-")} até ${esc(Number.isFinite(end)?ts(end/1000):"-")}</div>
       ${rows.length?`<details><summary class="small">Linhas do relatório (${rows.length})</summary><div class="detail-stack">${rows.slice(-20).map(row=>`<div class="notice info"><b>${esc(row.description||"-")}</b><br><span class="small">${esc(row.interval_start||"-")} · ${esc(usd(row.cost_usd))}</span></div>`).join("")}</div></details>`:""}
     `;
   }catch(err){
