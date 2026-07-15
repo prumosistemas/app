@@ -85,6 +85,11 @@ class AdminSummaryTests(unittest.TestCase):
                 ),
             )
 
+    def test_solver_runtime_status_accepts_string_output_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(main, "OUTPUT_ROOT", temporary), patch.dict("os.environ", {}, clear=True):
+                self.assertEqual(main._portal_solver_runtime_status(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

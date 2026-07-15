@@ -602,7 +602,7 @@ def _portal_solver_runtime_status() -> Dict[str, Any]:
     path = Path(
         os.getenv(
             "PORTAL_NACIONAL_SOLVER_STATUS_FILE",
-            str(OUTPUT_ROOT / "_api_data" / "portal_solver_status.json"),
+            str(Path(OUTPUT_ROOT) / "_api_data" / "portal_solver_status.json"),
         )
     )
     try:
