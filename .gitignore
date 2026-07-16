@@ -24,4 +24,8 @@ latest.json
 # Credenciais operacionais locais (nunca versionar)
 /AccountID.txt
 /token.txt
+/operator-secrets*.json
+/*.dpapi.json
+/ops/.secrets/
+/ops/browser-profiles/
 server/portal_solver_status.json

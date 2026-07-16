@@ -4,9 +4,6 @@
   "version": "1.0.0",
   "scripts": {
     "check": "node --check worker.js",
-    "deploy": "wrangler deploy"
-  },
-  "devDependencies": {
-    "wrangler": "4.110.0"
+    "deploy": "cd .. && python -m ops.prumo_ops cloudflare deploy --apply"
   }
 }

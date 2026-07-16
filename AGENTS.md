@@ -6,9 +6,18 @@ This repository contains the Prumo/ISS Fortaleza application, its local source t
 
 Before operational work, read the relevant project docs instead of guessing from directory names:
 
+- `docs/AI_OPERATOR_CONTEXT.md` (canonical safe commands and credential indirection)
 - `README.md`
 - `docs/SERVER_CONTEXT.md`
 - `docs/OPERACAO_PRUMO_DETALHADO.md`
+
+## Credential-safe operation
+
+- Never open, print, quote, or copy credential files, certificate material, `.env`, `.modal.toml`, Netlify auth cache, or the DPAPI vault.
+- Use `python -m ops.prumo_ops ...` for Cloudflare, Netlify, Modal, server, and authenticated smoke tests.
+- Commands and prompts must reference secret names or login aliases only. Never put a literal secret in a command.
+- Cloudflare operations use the REST API and do not depend on Wrangler. Modal tokens are injected only into the child process environment.
+- `docs/AI_OPERATOR_CONTEXT.md` supersedes older operational command snippets when they disagree.
 
 ## Local versus production
 

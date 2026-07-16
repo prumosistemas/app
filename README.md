@@ -29,6 +29,7 @@ Versao: **1.0.48 - Portal seguro, fallback economico e recovery do hCaptcha**
 | `solver/google_ai_mode/` | Código versionado do único resolvedor do Portal |
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
+| `docs/AI_OPERATOR_CONTEXT.md` | Entrada canonica para IA operar sem ver credenciais |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
 | `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot historico da arquitetura em 2026-07-10 |
 | `docs/C4.md` | C4 canônico e decisões arquiteturais atuais |
@@ -43,21 +44,19 @@ normal usa a conta principal e a conta de fallback:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile activate ryanzin
-$env:PORTAL_MODAL_MIN_CONTAINERS='1'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate fabriciofarofa5
-$env:PORTAL_MODAL_MIN_CONTAINERS='0'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate ryanzin
+python -m ops.prumo_ops modal deploy --account primary --target portal
+python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
 
-## Deploy rapido
+## Operacao segura e deploy rapido
+
+Todos os provedores usam o cofre DPAPI local e aliases. Leia
+`docs/AI_OPERATOR_CONTEXT.md`. Nenhum comando precisa conter credencial literal.
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
+python -m ops.prumo_ops secrets migrate-local
+python -m ops.prumo_ops status
 python -m py_compile server\main.py server\db.py server\domain.py server\run_queue.py
 git status
 ```
@@ -65,16 +64,16 @@ git status
 Worker:
 
 ```powershell
-cd cloudflare
-wrangler deploy
+python -m ops.prumo_ops cloudflare deploy
+python -m ops.prumo_ops cloudflare deploy --apply
 ```
 
 Modal:
 
 ```powershell
-cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile activate ryanzin
-modal deploy deploy\modal_browserless.py
+python -m ops.prumo_ops modal deploy --account primary --target iss
+python -m ops.prumo_ops modal deploy --account primary --target portal
+python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
 
 API:
@@ -90,15 +89,9 @@ ThinkPad depois do `git pull`.
 
 Servidor:
 
-```bash
-ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
-cd /home/server/prumo-src
-git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.48 .
-cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
-cd /opt/prumo/app/deploy
-docker compose up -d --force-recreate --remove-orphans
-curl -fsS http://127.0.0.1:8000/
+```powershell
+python -m ops.prumo_ops server deploy
+python -m ops.prumo_ops server deploy --apply
 ```
 
 ## Documentacao
