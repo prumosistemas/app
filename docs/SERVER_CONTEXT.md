@@ -139,6 +139,11 @@ principal e `0.00` USD na conta fallback. O saldo mostrado e uma estimativa
 sobre o credito mensal configurado, nao uma quota oficial exposta pelo Modal.
 Nunca versionar esses tokens.
 
+Em 2026-07-16, depois das runs do Alan e do deploy v19, a consulta viva retornou
+`6.38496197` USD na conta principal, dos quais `4.45954434` USD pertenciam ao
+app Portal, e `2.37357090` USD na conta fallback. Saldos mensais estimados:
+`23.61503803` USD e `27.62642910` USD, respectivamente.
+
 ## Modal do Portal Nacional
 
 O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
@@ -447,6 +452,7 @@ Teste confirmado em 2026-07-06:
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
 - Em 2026-07-16 o Modo IA v19 manteve o contrato visual unificado e adicionou recovery do widget com backoff. `ryangurgell20` e a rota normal; `fabriciofarofa5` fica reservada a quota/indisponibilidade; `127.0.0.1:8876` recebe falha visual especifica sem duplicar custo na conta Modal reserva.
+- A prova pós-deploy no ThinkPad usou o sitekey real observado nos artefatos: a v18 não abriu o widget e terminou com causa genérica; a v19 recarregou o widget, capturou quatro etapas visuais em cerca de 1,4 s cada e devolveu token. O health terminou em `0/4` navegadores ativos.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
 Status:
