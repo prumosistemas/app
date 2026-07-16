@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.48 - Portal seguro, fallback economico e recovery do hCaptcha**
+Versao: **1.0.49 - notas retroativas preservadas no Portal Nacional**
 
 ## Estado atual
 
@@ -79,9 +79,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.48 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.49 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.48
+docker push ryang20/prumo-api:1.0.49
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

@@ -73,3 +73,11 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - O deploy final usa o solver `2026-07-16-google-ai-mode-v19-open-recovery-safe-fallback` nas contas `ryangurgell20` e `fabriciofarofa5`; o deploy legado da conta `jorhinhogames` permanece parado.
 - Em 2026-07-16, as quatro runs mais recentes do Alan/SIM7 terminaram 84/84, 35/35, 50/50 e 74/74. Todos os 486 arquivos referenciados pelo índice foram validados fisicamente. A v19 passou a distinguir widget que não abriu de grade instável e remove query strings/tokens transitórios dos erros persistidos.
 - No teste isolado pós-deploy, o mesmo sitekey que não abriu na v18 foi resolvido pela v19 no ThinkPad: quatro etapas visuais capturadas e token devolvido, sem navegador órfão e sem consumir a conta Modal fallback.
+
+## Notas retroativas - correção de 2026-07-16
+
+- O filtro nativo `datainicio/datafim` foi removido da indexação. Ele reduzia a própria resposta do Portal antes de a Prumo construir o índice e podia excluir notas retroativas.
+- Na mesma sessão de produção, a página sem período informou 75 recebidas e 85 emitidas; com junho aplicado, informou 74 e 50. Isso confirmou que a diferença vinha do filtro do Portal, não do download nem de uma limpeza posterior.
+- A paginação integral sem período capturou 75/75 IDs únicos em 5 páginas de recebidas e 85/85 em 6 páginas de emitidas, sem queda de sessão.
+- As datas inicial/final continuam no formulário e no identificador da run apenas como referência operacional. A automação remove parâmetros legados da URL e pagina todas as notas que o Portal apresenta.
+- O índice registra `portal_date_filter_applied=false` e `include_retroactive_notes=true`, permitindo auditar a política usada em cada execução nova ou retry reindexado.

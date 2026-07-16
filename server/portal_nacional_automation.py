@@ -446,18 +446,6 @@ def normalize_date_for_portal(value: str | None) -> str | None:
     raise ValueError(f"Data invalida: {value}. Use DD/MM/AAAA ou AAAA-MM-DD.")
 
 
-def normalize_date_for_input_date(value: str | None) -> str | None:
-    value = (value or "").strip()
-    if not value:
-        return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            pass
-    raise ValueError(f"Data invalida: {value}. Use DD/MM/AAAA ou AAAA-MM-DD.")
-
-
 def update_url_query(url: str, updates: dict) -> str:
     parsed = urlparse(url)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
@@ -511,110 +499,18 @@ def navigate_and_wait(client: CdpClient, url: str, seconds: float = 3.0) -> None
 
 
 def apply_date_filters(client: CdpClient, data_inicial: str | None, data_final: str | None) -> dict:
-    data_inicial_portal = normalize_date_for_portal(data_inicial)
-    data_final_portal = normalize_date_for_portal(data_final)
-    if not data_inicial_portal and not data_final_portal:
-        return {"applied": False}
+    """Nao filtra o Portal por data.
 
-    data_inicial_iso = normalize_date_for_input_date(data_inicial)
-    data_final_iso = normalize_date_for_input_date(data_final)
-    script = f"""
-(() => {{
-  const wanted = {{
-    inicio: {{ portal: {json.dumps(data_inicial_portal)}, iso: {json.dumps(data_inicial_iso)} }},
-    fim: {{ portal: {json.dumps(data_final_portal)}, iso: {json.dumps(data_final_iso)} }}
-  }};
-  const visible = (el) => {{
-    if (!el) return false;
-    const st = getComputedStyle(el);
-    const r = el.getBoundingClientRect();
-    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-  }};
-  const textOf = (el) => (el?.innerText || el?.textContent || el?.value || '').trim();
-  const labelText = (input) => {{
-    const id = input.id;
-    const labels = [];
-    if (id) {{
-      const direct = document.querySelector(`label[for="${{CSS.escape(id)}}"]`);
-      if (direct) labels.push(textOf(direct));
-    }}
-    let p = input.parentElement;
-    for (let i = 0; p && i < 3; i++, p = p.parentElement) {{
-      labels.push(textOf(p));
-    }}
-    return labels.join(' ');
-  }};
-  const inputs = [...document.querySelectorAll('input')]
-    .filter((input) => {{
-      const type = (input.type || '').toLowerCase();
-      return visible(input) && !['hidden', 'button', 'submit', 'checkbox', 'radio'].includes(type);
-    }});
-  const haystack = (input) => [
-    input.id, input.name, input.placeholder, input.getAttribute('aria-label'),
-    input.getAttribute('data-original-title'), input.getAttribute('title'), labelText(input)
-  ].join(' ').toLowerCase();
-  const score = (input, kind) => {{
-    const h = haystack(input);
-    let s = 0;
-    if (/data|emiss|compet|period|per[ií]odo|dt/.test(h)) s += 2;
-    if (kind === 'inicio' && /inicial|inicio|início|de\\b|dtini|datai|datainicial/.test(h)) s += 8;
-    if (kind === 'fim' && /final|fim|ate|até|dtfim|dataf|datafinal/.test(h)) s += 8;
-    if ((input.type || '').toLowerCase() === 'date') s += 3;
-    return s;
-  }};
-  const chosen = new Set();
-  const choose = (kind) => {{
-    const ranked = inputs
-      .filter((input) => !chosen.has(input))
-      .map((input, order) => ({{ input, order, score: score(input, kind) }}))
-      .sort((a, b) => b.score - a.score || a.order - b.order);
-    const best = ranked.find((item) => item.score > 0) || null;
-    if (!best) return null;
-    chosen.add(best.input);
-    return best.input;
-  }};
-  const setValue = (input, value) => {{
-    if (!input || !value?.portal) return null;
-    const valueToUse = (input.type || '').toLowerCase() === 'date' ? value.iso : value.portal;
-    input.focus();
-    input.value = valueToUse || value.portal;
-    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    input.blur();
-    return {{
-      id: input.id || null,
-      name: input.name || null,
-      type: input.type || null,
-      value: input.value,
-      label: labelText(input).slice(0, 180)
-    }};
-  }};
-  const inicioInput = choose('inicio');
-  const fimInput = choose('fim') || (inputs.length >= 2 ? inputs.find((input) => input !== inicioInput) : null);
-  const inicio = setValue(inicioInput, wanted.inicio);
-  const fim = setValue(fimInput, wanted.fim);
-  const buttons = [...document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, a[role="button"]')]
-    .filter(visible);
-  const button = buttons.find((el) => /pesquisar|filtrar|buscar|consultar|aplicar/i.test(textOf(el) + ' ' + (el.id || '') + ' ' + (el.name || '')));
-  if (button) {{
-    button.click();
-  }} else {{
-    const form = (inicioInput || fimInput)?.form || document.querySelector('form');
-    if (form?.requestSubmit) form.requestSubmit();
-    else if (form) form.submit();
-  }}
-  return {{
-    applied: Boolean(inicio || fim),
-    inicio,
-    fim,
-    clicked: button ? textOf(button).slice(0, 80) || button.id || button.name || 'botao' : null,
-    visibleInputs: inputs.length
-  }};
-}})()
-"""
-    result = client.eval(script)
-    time.sleep(4)
-    return result if isinstance(result, dict) else {"applied": False, "raw": result}
+    O filtro nativo usa a data conhecida pelo Portal e exclui notas emitidas
+    retroativamente. As datas da run sao apenas referencia operacional; a
+    indexacao precisa preservar tudo que o Portal apresenta.
+    """
+    return {
+        "applied": False,
+        "reason": "disabled_to_include_retroactive_notes",
+        "data_inicial_referencia": normalize_date_for_portal(data_inicial),
+        "data_final_referencia": normalize_date_for_portal(data_final),
+    }
 
 
 def apply_cookies_to_client(client: CdpClient, session_data: dict) -> None:
@@ -954,12 +850,18 @@ def nfse_navigation_headers(referer: str | None = None) -> dict:
 
 
 def requests_page_url(base_url: str, page: int, data_inicial: str | None = None, data_final: str | None = None) -> str:
-    updates = {}
-    if data_inicial or data_final:
-        updates["executar"] = "1"
-        updates["datainicio"] = normalize_date_for_portal(data_inicial) if data_inicial else ""
-        updates["datafim"] = normalize_date_for_portal(data_final) if data_final else ""
-    updates["pg"] = page if page > 1 else None
+    """Monta pagina sem o filtro nativo que exclui notas retroativas.
+
+    Os parametros de data permanecem na assinatura para compatibilidade com
+    runs/retries antigos, mas nunca sao enviados ao Portal. Chaves antigas
+    tambem sao removidas caso a URL base tenha vindo de um indice legado.
+    """
+    updates = {
+        "executar": None,
+        "datainicio": None,
+        "datafim": None,
+        "pg": page if page > 1 else None,
+    }
     return update_url_query(base_url, updates)
 
 
@@ -1051,7 +953,16 @@ def run_requests_index(
             raise RuntimeError(f"Sessao nao entrou no portal por requests; URL atual: {response.url}")
         return response
 
-    save_index(index_path, index, "indexando_requests", "requests_scan_started", data_inicial=data_inicial, data_final=data_final)
+    save_index(
+        index_path,
+        index,
+        "indexando_requests",
+        "requests_scan_started",
+        data_inicial_referencia=data_inicial,
+        data_final_referencia=data_final,
+        portal_date_filter_applied=False,
+        include_retroactive_notes=True,
+    )
     first_response = get_page(1)
     first = page_snapshot_html(first_response.text, first_response.url)
     portal_total = first.get("totalRegistros")
@@ -2219,6 +2130,8 @@ def main() -> int:
         "data_final": data_final,
         "modo": args.modo,
         "tipo_download": args.tipo_download,
+        "portal_date_filter_applied": False,
+        "include_retroactive_notes": True,
     }
     index["tipo_download"] = args.tipo_download
     index["download_tipos"] = normalize_download_tipos(args.tipo_download)
@@ -2371,17 +2284,13 @@ def main() -> int:
         ensure_logged_in(client, index, index_path, session_path, target_url, args.cert_index, pfx_file, pfx_password_file)
         if data_inicial or data_final:
             filter_result = apply_date_filters(client, data_inicial, data_final)
-            filtered_url = client.eval("location.href")
-            if isinstance(filtered_url, str) and filtered_url.startswith("http"):
-                target_url = filtered_url
-                index["target_url"] = target_url
             save_index(
                 index_path,
                 index,
                 "indexando",
-                "date_filter_applied",
-                data_inicial=data_inicial,
-                data_final=data_final,
+                "date_filter_skipped_include_retroactive",
+                data_inicial_referencia=data_inicial,
+                data_final_referencia=data_final,
                 result=filter_result,
                 url=target_url,
             )

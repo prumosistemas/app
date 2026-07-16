@@ -348,7 +348,12 @@ test -n "$image"
 docker build -f server/Dockerfile -t "$image" .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-docker compose up -d --force-recreate --remove-orphans
+if grep -q '^PRUMO_API_IMAGE=' .env; then
+  sed -i "s|^PRUMO_API_IMAGE=.*$|PRUMO_API_IMAGE=$image|" .env
+else
+  printf 'PRUMO_API_IMAGE=%s\n' "$image" >> .env
+fi
+PRUMO_API_IMAGE="$image" docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 """,
             timeout=1800,
