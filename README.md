@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.47 - login mTLS corrigido, quatro solvers e retry adaptativo**
+Versao: **1.0.48 - Portal seguro, fallback economico e recovery do hCaptcha**
 
 ## Estado atual
 
@@ -9,7 +9,7 @@ Versao: **1.0.47 - login mTLS corrigido, quatro solvers e retry adaptativo**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA no Modal como rota primaria e o mesmo resolvedor no ThinkPad como fallback residencial automatico; sem Florence/Cohere.
+- Portal Nacional: Google Modo IA v19 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad para falha visual especifica; sem Florence/Cohere.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -80,9 +80,9 @@ modal deploy deploy\modal_browserless.py
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.48 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.47
+docker push ryang20/prumo-api:1.0.48
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
@@ -94,7 +94,7 @@ Servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.47 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.48 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
 docker compose up -d --force-recreate --remove-orphans

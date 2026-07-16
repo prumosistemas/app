@@ -1425,6 +1425,21 @@ def click_hcaptcha_refresh(port: int) -> bool:
     return False
 
 
+def reload_solver_page(port: int) -> bool:
+    """Recria o widget quando o checkbox fica preso sem abrir o desafio."""
+    try:
+        page = wait_solver_page(port)
+        client = CdpClient(page["webSocketDebuggerUrl"])
+        try:
+            client.call("Page.reload", {"ignoreCache": True})
+        finally:
+            client.close()
+        return True
+    except Exception as exc:
+        print(f"[Debug] Falha ao recarregar pagina do solver: {type(exc).__name__}")
+        return False
+
+
 def refresh_hcaptcha_and_wait(port: int, wait_seconds: float = 2.5) -> bool:
     refreshed = click_hcaptcha_refresh(port)
     if refreshed:
@@ -2099,6 +2114,8 @@ def auto_solve_grid(
     non_9_reloads = 0
     grid_seen = False
     legacy_provider_failed = False
+    challenge_open_failures = 0
+    challenge_opened = False
     
     for i in range(max_refreshes):
         if not solver_browser_alive(port, browser_proc):
@@ -2115,11 +2132,23 @@ def auto_solve_grid(
             break
         # 1. Garantir que o desafio está aberto
         if not ensure_challenge_open(port):
+            challenge_open_failures += 1
             print("[Auto] Falha ao abrir o desafio. Tentando clicar no checkbox...")
             click_hcaptcha_checkbox(port)
-            time.sleep(OPEN_CHALLENGE_RETRY_DELAY_SECONDS)
+            time.sleep(
+                min(
+                    OPEN_CHALLENGE_RETRY_DELAY_SECONDS * challenge_open_failures,
+                    2.0,
+                )
+            )
             if not challenge_grid_visible(port):
+                # Um widget preso nao melhora com dezenas de cliques no mesmo
+                # DOM. A cada duas falhas, recrie-o e preserve um backoff curto.
+                if challenge_open_failures % 2 == 0:
+                    reload_solver_page(port)
+                    time.sleep(min(0.5 * challenge_open_failures, 2.0))
                 continue
+        challenge_opened = True
 
         # 2. Esperar a grade de 9 tiles carregar e parar de se mexer antes de capturar.
         challenge, state = wait_for_stable_9_tile_challenge(port)
@@ -2249,7 +2278,12 @@ def auto_solve_grid(
         time.sleep(2)
     
     if not grid_seen:
-        if non_9_reloads:
+        if challenge_open_failures and not challenge_opened:
+            set_solver_error(
+                "desafio_nao_abriu",
+                f"Widget hCaptcha nao abriu o desafio apos {challenge_open_failures} ciclos.",
+            )
+        elif non_9_reloads:
             set_solver_error("nao_achou_9_tiles", f"Nao conseguiu achar 9 tiles apos {non_9_reloads} recarregamentos.")
         else:
             set_solver_error("grade_9_nao_estabilizou", f"Grade de 9 tiles nao estabilizou apos {max_refreshes} tentativas.")

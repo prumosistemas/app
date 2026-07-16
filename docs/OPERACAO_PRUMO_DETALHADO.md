@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.47.
+Este documento e a fonte de contexto operacional da versao 1.0.48.
 
 ## Estado desejado
 
@@ -173,7 +173,8 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- O solver v18 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro, a segunda conta recebe o failover e o mesmo solver no ThinkPad e o ultimo fallback residencial.
+- O solver v19 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro. A segunda conta recebe failover de quota/indisponibilidade; falha visual especifica segue para o mesmo solver no ThinkPad, evitando duplicar custo Modal no mesmo desafio.
+- Se o widget hCaptcha nao abrir, a v19 recarrega o widget com espera crescente e registra `visual_challenge_not_opened`, separado de grade instavel. URLs persistidas em erros nunca mantem query string ou token transitorio.
 - Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:

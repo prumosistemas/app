@@ -17,22 +17,22 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
-## Estado validado em 2026-07-15
+## Estado validado em 2026-07-16
 
-- API alvo: 1.0.47, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
-- Portal Alan/SIM7: run real finalizada com quatro navegadores, 169/169 notas baixadas. A validação física abriu o índice e confirmou 169 PDFs válidos e 169 XMLs parseáveis, sem arquivo ausente ou inválido.
-- Solver Portal: Google Modo IA v18 unificado. A conta principal fica aquecida e a conta `fabriciofarofa5` escala a zero quando ociosa; cada conta pode escalar até quatro containers. Não há Florence, Cohere nem resolvedor separado para grade de nove imagens.
-- ISS Laryssa: a run real mais recente validada concluiu na primeira tentativa, com 242 prestadas e 4 tomadas.
+- API alvo: 1.0.48, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
+- Portal Alan/SIM7: as quatro runs mais recentes finalizaram 84/84, 35/35, 50/50 e 74/74. Os 243 PDFs e 243 XMLs referenciados existem, são não vazios e todos os XMLs são parseáveis. Houve retries recuperados por widget/captcha e renovação de sessão, sem nota pendente no resultado final.
+- Solver Portal: Google Modo IA v19 unificado. A conta `ryangurgell20` fica aquecida; `fabriciofarofa5` escala a zero e e usada em quota/indisponibilidade. Falha visual especifica segue direto ao ThinkPad para não cobrar a mesma tentativa nas duas contas. Não há Florence, Cohere nem resolvedor separado para grade de nove imagens.
+- ISS Laryssa: a prova real `run_OY1xfaaUUenSaIS_pgioDw` concluiu Notas na primeira tentativa em 6min56s, com 242 prestadas/25 páginas e 4 tomadas/1 página, 26 XMLs novos e zero erro.
 - ISS Gabriel: a run real mais recente validada concluiu 12/12 fluxos. A raiz histórica anterior continua mostrando 12 erros corretamente, mas retentativas de bloqueios definitivos deixaram de ser agendadas.
 - ISS padrão: Modal direto. O proxy continua no ThinkPad, mas não deve ser ativado no Modal sem autenticação de máquina no Cloudflare Access.
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
-- Imagem do servidor: `ryang20/prumo-api:1.0.47`, ID `sha256:0612f93a2e9a...`; em 2026-07-15 os hashes de `main.py` e do solver dentro do container eram identicos aos da fonte em `/home/server/prumo-src`.
+- Imagem alvo do servidor: `ryang20/prumo-api:1.0.48`; a validação final deve comparar o health e os hashes do container com `/home/server/prumo-src`.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.
-- Testes locais: 69 aprovados para o deploy 1.0.47.
+- Testes locais: 71 aprovados para o deploy 1.0.48.
 
 ## Regras operacionais
 
@@ -47,5 +47,5 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 - O deploy automático Netlify pode ser ignorado por limite de créditos da conta. As telas críticas atualizadas continuam ao vivo pelas rotas do Worker Cloudflare, sem deploy manual obrigatório.
 - Debug visual fica por sete dias. Após 15 minutos, conteúdo textual é gzipado e PNG vira WebP lossless; o compose limita logs Docker a 3 x 10 MiB.
-- O registro Docker externo não foi usado no último deploy: a imagem 1.0.47 foi construída e validada diretamente no ThinkPad. Manter a 1.0.46 como rollback local.
+- O registro Docker externo não é necessário no caminho normal: a imagem 1.0.48 pode ser construída diretamente no ThinkPad após `git pull`. Manter a 1.0.47 como rollback local.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.

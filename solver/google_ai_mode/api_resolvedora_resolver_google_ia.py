@@ -38,7 +38,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-14-google-ai-mode-v18-unified-visual-fast-fallback"
+SOLVER_API_VERSION = "2026-07-16-google-ai-mode-v19-open-recovery-safe-fallback"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -92,6 +92,7 @@ _legacy_set_solver_error = legacy.set_solver_error
 
 def _set_unified_solver_error(reason: str, error: str) -> None:
     aliases = {
+        "desafio_nao_abriu": "visual_challenge_not_opened",
         "grade_9_nao_estabilizou": "visual_challenge_not_ready",
         "nao_achou_9_tiles": "visual_challenge_not_found",
         "nao_consegui_resolver_9_tiles": "visual_analysis_failed",

@@ -1180,6 +1180,50 @@ def solver_url_candidates(primary: str) -> list[str]:
     )
 
 
+def solver_endpoint_label(url: str) -> str:
+    """Identifica o endpoint sem persistir query strings ou fragmentos."""
+    parsed = urlparse(str(url or ""))
+    return parsed._replace(query="", fragment="").geturl()
+
+
+def sanitized_solver_error(exc: Exception) -> str:
+    """Mantem a causa operacional, removendo URLs e parametros sensiveis."""
+    detail = str(exc or "solver_error")
+
+    def clean_url(match: re.Match[str]) -> str:
+        return solver_endpoint_label(match.group(0).rstrip(".,;)]}"))
+
+    detail = re.sub(r"https?://[^\s]+", clean_url, detail)
+    detail = re.sub(
+        r"(?i)\b(token|secret|password|api[_-]?key)=([^\s&]+)",
+        r"\1=<redacted>",
+        detail,
+    )
+    return detail[:1000]
+
+
+def is_local_solver_url(url: str) -> bool:
+    return (urlparse(str(url or "")).hostname or "").lower() in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }
+
+
+def is_visual_solver_failure(exc: Exception) -> bool:
+    detail = str(exc or "").lower()
+    return detail.startswith("solver:") and any(
+        marker in detail
+        for marker in (
+            "visual_",
+            "grade_9",
+            "nao_achou_9",
+            "captcha_prompt",
+            "token_nao_voltou",
+        )
+    )
+
+
 def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
     status = getattr(getattr(exc, "response", None), "status_code", None)
     detail = str(exc).lower()
@@ -1322,7 +1366,12 @@ def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | 
 
 def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
     errors = []
-    for candidate in wait_for_solver_candidates(solver_url):
+    candidates = wait_for_solver_candidates(solver_url)
+    local_fallback_available = any(is_local_solver_url(url) for url in candidates)
+    skip_remote_visual_fallbacks = False
+    for candidate in candidates:
+        if skip_remote_visual_fallbacks and not is_local_solver_url(candidate):
+            continue
         try:
             token = solve_captcha_once(candidate, sitekey, request_id)
             clear_solver_endpoint_cooldown(candidate)
@@ -1331,10 +1380,21 @@ def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> st
         except Exception as exc:
             record_solver_endpoint_event(candidate, "failure", request_id, exc)
             cooldown = mark_solver_endpoint_unavailable(candidate, exc)
-            errors.append(f"{candidate}: {exc}")
+            safe_candidate = solver_endpoint_label(candidate)
+            safe_error = sanitized_solver_error(exc)
+            errors.append(f"{safe_candidate}: {safe_error}")
+            if (
+                candidate == solver_url
+                and local_fallback_available
+                and is_visual_solver_failure(exc)
+            ):
+                # A segunda conta Modal e reserva de quota/indisponibilidade.
+                # Repetir nela o mesmo desafio visual antes do fallback
+                # residencial duplica custo sem aumentar a diversidade de rota.
+                skip_remote_visual_fallbacks = True
             print(
-                f"[Solver] Falha em {candidate}; tentando proximo endpoint: "
-                f"{exc}; cooldown={cooldown}s"
+                f"[Solver] Falha em {safe_candidate}; tentando proximo endpoint: "
+                f"{safe_error}; cooldown={cooldown}s"
             )
     raise RuntimeError("solver:all_endpoints_failed: " + " | ".join(errors))
 

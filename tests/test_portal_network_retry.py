@@ -85,6 +85,53 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
     assert calls == ["https://primary.example/solve", "https://fallback.example/solve"]
 
 
+def test_visual_failure_skips_second_modal_and_uses_local_solver(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        automation,
+        "SOLVER_FALLBACK_URLS",
+        ["https://modal-2.example/solve", "http://127.0.0.1:8876/solve"],
+    )
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "https://modal-2.example/solve")
+
+    def fake_solve(url, sitekey, request_id):
+        calls.append(url)
+        if "primary" in url:
+            raise RuntimeError("solver:visual_challenge_not_ready: grade movel")
+        if "modal-2" in url:
+            raise AssertionError("a conta Modal reserva nao deve repetir falha visual")
+        return "token-local"
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    assert automation.solve_captcha_with_url(
+        "https://primary.example/solve", "key", "run"
+    ) == "token-local"
+    assert calls == ["https://primary.example/solve", "http://127.0.0.1:8876/solve"]
+
+
+def test_solver_failure_message_redacts_url_queries(monkeypatch) -> None:
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URLS", [])
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "")
+
+    def fake_solve(url, sitekey, request_id):
+        raise RuntimeError(
+            "solver:failed: https://solver.example/solve?token=segredo&attempt=abc"
+        )
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    with pytest.raises(RuntimeError) as raised:
+        automation.solve_captcha_with_url(
+            "https://solver.example/solve?access=nao-pode-vazar", "key", "run"
+        )
+
+    detail = str(raised.value)
+    assert "segredo" not in detail
+    assert "nao-pode-vazar" not in detail
+    assert "https://solver.example/solve" in detail
+
+
 def test_blank_fallback_configuration_uses_residential_solver() -> None:
     assert automation.configured_solver_fallback_url("") == (
         "http://127.0.0.1:8876/solve"
