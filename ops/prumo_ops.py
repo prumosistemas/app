@@ -354,7 +354,14 @@ else
   printf 'PRUMO_API_IMAGE=%s\n' "$image" >> .env
 fi
 PRUMO_API_IMAGE="$image" docker compose up -d --force-recreate --remove-orphans
-curl -fsS http://127.0.0.1:8000/
+for attempt in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8000/; then
+    exit 0
+  fi
+  sleep 2
+done
+echo 'API nao ficou saudavel dentro de 60 segundos.' >&2
+exit 1
 """,
             timeout=1800,
         )
