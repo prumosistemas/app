@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 
@@ -31,6 +31,7 @@ STATE_FILE = BASE_DIR / "navegador_nfse.json"
 DOWNLOAD_DIR = BASE_DIR / "downloads_nfse"
 SESSION_GENERATOR = BASE_DIR / "portal_nacional_session.py"
 DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
+PORTAL_MAX_PERIOD_DAYS = 30
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
 SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "420"))
 # O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
@@ -446,6 +447,41 @@ def normalize_date_for_portal(value: str | None) -> str | None:
     raise ValueError(f"Data invalida: {value}. Use DD/MM/AAAA ou AAAA-MM-DD.")
 
 
+def build_portal_date_windows(data_inicial: str | None, data_final: str | None) -> list[dict]:
+    """Divide o periodo em janelas mensais de no maximo 30 dias inclusivos.
+
+    O Portal rejeita intervalos com mais de 30 dias. Respeitar a virada do mes
+    deixa a auditoria alinhada ao que o usuario informou (por exemplo, junho
+    completo e depois julho parcial), sem filtrar a competencia da NFS-e.
+    """
+    start_value = normalize_date_for_portal(data_inicial)
+    end_value = normalize_date_for_portal(data_final)
+    if not start_value and not end_value:
+        return [{"index": 1, "data_inicial": None, "data_final": None, "dias": None}]
+    if not start_value or not end_value:
+        raise ValueError("Data inicial e data final devem ser informadas juntas.")
+
+    start = datetime.strptime(start_value, "%d/%m/%Y").date()
+    end = datetime.strptime(end_value, "%d/%m/%Y").date()
+    if start > end:
+        raise ValueError("Data inicial nao pode ser posterior a data final.")
+
+    windows = []
+    current = start
+    while current <= end:
+        next_month = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+        month_end = next_month - timedelta(days=1)
+        window_end = min(end, month_end, current + timedelta(days=PORTAL_MAX_PERIOD_DAYS - 1))
+        windows.append({
+            "index": len(windows) + 1,
+            "data_inicial": current.strftime("%d/%m/%Y"),
+            "data_final": window_end.strftime("%d/%m/%Y"),
+            "dias": (window_end - current).days + 1,
+        })
+        current = window_end + timedelta(days=1)
+    return windows
+
+
 def update_url_query(url: str, updates: dict) -> str:
     parsed = urlparse(url)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
@@ -668,6 +704,22 @@ def scan_current_page_links(client: CdpClient, modo: str, page: int) -> list[dic
 
 
 def consolidate_page_totals(index: dict) -> None:
+    date_windows = index.get("date_windows") or []
+    if date_windows:
+        totals = index.setdefault("totals", {})
+        totals["portal_registros"] = len(index.get("items") or {})
+        totals["portal_registros_soma_janelas"] = sum(
+            int(window.get("portal_total_registros") or 0) for window in date_windows
+        )
+        totals["paginas"] = sum(int(window.get("paginas") or 0) for window in date_windows)
+        totals["janelas"] = len(date_windows)
+        totals["duplicados_entre_janelas"] = max(
+            0,
+            sum(int(window.get("capturados") or 0) for window in date_windows)
+            - len(index.get("items") or {}),
+        )
+        return
+
     pages = index.get("pages", {})
     page_numbers = []
     page_totals = []
@@ -850,16 +902,15 @@ def nfse_navigation_headers(referer: str | None = None) -> dict:
 
 
 def requests_page_url(base_url: str, page: int, data_inicial: str | None = None, data_final: str | None = None) -> str:
-    """Monta pagina sem o filtro nativo que exclui notas retroativas.
-
-    Os parametros de data permanecem na assinatura para compatibilidade com
-    runs/retries antigos, mas nunca sao enviados ao Portal. Chaves antigas
-    tambem sao removidas caso a URL base tenha vindo de um indice legado.
-    """
+    """Monta uma pagina usando um intervalo aceito pelo Portal Nacional."""
+    start_value = normalize_date_for_portal(data_inicial)
+    end_value = normalize_date_for_portal(data_final)
+    if bool(start_value) != bool(end_value):
+        raise ValueError("Data inicial e data final devem ser informadas juntas.")
     updates = {
-        "executar": None,
-        "datainicio": None,
-        "datafim": None,
+        "executar": 1 if start_value else None,
+        "datainicio": start_value,
+        "datafim": end_value,
         "pg": page if page > 1 else None,
     }
     return update_url_query(base_url, updates)
@@ -940,9 +991,9 @@ def run_requests_index(
     update_certificate_in_index(index, session_data)
     session = requests_session_from_data(session_data)
 
-    def get_page(page: int) -> requests.Response:
+    def get_page(page: int, window_start: str | None, window_end: str | None) -> requests.Response:
         nonlocal session, session_data
-        page_url = requests_page_url(target_url, page, data_inicial, data_final)
+        page_url = requests_page_url(target_url, page, window_start, window_end)
         response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
         if response_is_login(response):
             save_index(index_path, index, "renovando_sessao", "requests_index_login_failed", page=page, url=response.url)
@@ -951,84 +1002,196 @@ def run_requests_index(
             response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
         if response_is_login(response):
             raise RuntimeError(f"Sessao nao entrou no portal por requests; URL atual: {response.url}")
+        response.raise_for_status()
         return response
 
+    date_windows = build_portal_date_windows(data_inicial, data_final)
     save_index(
         index_path,
         index,
         "indexando_requests",
         "requests_scan_started",
-        data_inicial_referencia=data_inicial,
-        data_final_referencia=data_final,
-        portal_date_filter_applied=False,
+        data_inicial=data_inicial,
+        data_final=data_final,
+        portal_date_filter_applied=bool(data_inicial and data_final),
         include_retroactive_notes=True,
+        period_strategy="monthly_windows_max_30_days",
+        janelas=len(date_windows),
     )
-    first_response = get_page(1)
-    first = page_snapshot_html(first_response.text, first_response.url)
-    portal_total = first.get("totalRegistros")
-    last_page = int(first.get("lastPage") or 1)
-    index["target_url"] = requests_page_url(target_url, 1, data_inicial, data_final)
-    index["totals"]["portal_registros"] = portal_total
-    index["totals"]["paginas"] = last_page
     previous_items = dict(index.get("items") or {})
     index["pages"] = {}
     index["items"] = {}
-    save_index(index_path, index, "indexando_requests", "requests_pagination_detected", total=portal_total, paginas=last_page)
+    index["date_windows"] = []
+    index["target_url"] = target_url
 
-    if last_page > 1:
-        print(f"Paginador por requests: confirmando ultima pagina ({last_page}).")
-        last_response = get_page(last_page)
-        last_snapshot = page_snapshot_html(last_response.text, last_response.url)
-        if last_snapshot.get("lastPage"):
-            last_page = max(last_page, int(last_snapshot.get("lastPage") or last_page))
-            index["totals"]["paginas"] = last_page
-            save_index(index_path, index, "indexando_requests", "requests_last_page_confirmed", paginas=last_page)
-
-    print(f"Total informado no portal: {portal_total}")
-    print(f"Paginas a capturar por requests: {last_page}")
-
-    for page in range(1, last_page + 1):
-        page_url = requests_page_url(target_url, page, data_inicial, data_final)
-        print(f"Indexando por requests pagina {page}/{last_page}: {page_url}")
-        save_index(index_path, index, "indexando_requests", "requests_page_scan_started", page=page)
-        response = first_response if page == 1 else get_page(page)
-        snapshot = page_snapshot_html(response.text, response.url)
-        links = scan_html_links(response.text, modo, page, response.url)
-        index.setdefault("pages", {})[str(page)] = {
-            "page": page,
-            "url": page_url,
-            "status": "capturada",
-            "captured_at": now_iso(),
-            "portal_total_text": snapshot.get("descricao"),
-            "portal_total_registros": snapshot.get("totalRegistros"),
-            "links_count": len(links),
-            "method": "requests",
+    for window in date_windows:
+        window_index = int(window["index"])
+        window_start = window.get("data_inicial")
+        window_end = window.get("data_final")
+        first_response = get_page(1, window_start, window_end)
+        first = page_snapshot_html(first_response.text, first_response.url)
+        portal_total = first.get("totalRegistros")
+        if portal_total is None:
+            raise RuntimeError(
+                f"Portal nao informou o total da janela {window_start or 'sem filtro'} a {window_end or 'sem filtro'}."
+            )
+        portal_total = int(portal_total)
+        last_page = int(first.get("lastPage") or 1)
+        window_state = {
+            **window,
+            "portal_total_registros": portal_total,
+            "paginas": last_page,
+            "capturados": 0,
+            "status": "indexando",
         }
-        for item in links:
-            key = item["id"] or note_id_from_href(item["href"])
-            existing = previous_items.get(key, index.setdefault("items", {}).get(key, {}))
-            status = "baixado" if existing.get("status") == "baixado" else existing.get("status") or "pendente"
-            index["items"][key] = {
-                **existing,
-                "id": key,
-                "modo": modo,
-                "page": page,
-                "href": item.get("href"),
-                "text": item.get("text"),
-                "status": status,
-                "captured_at": existing.get("captured_at") or now_iso(),
-                "updated_at": now_iso(),
-            }
-        save_index(index_path, index, "indexando_requests", "requests_page_scan_finished", page=page, links=len(links))
+        index["date_windows"].append(window_state)
+        save_index(
+            index_path,
+            index,
+            "indexando_requests",
+            "requests_window_detected",
+            window=window_index,
+            data_inicial=window_start,
+            data_final=window_end,
+            total=portal_total,
+            paginas=last_page,
+        )
+
+        if last_page > 1:
+            last_response = get_page(last_page, window_start, window_end)
+            last_snapshot = page_snapshot_html(last_response.text, last_response.url)
+            last_page = max(last_page, int(last_snapshot.get("lastPage") or last_page))
+            window_state["paginas"] = last_page
+
+        print(
+            f"Janela {window_index}/{len(date_windows)} {window_start or 'sem filtro'} a "
+            f"{window_end or 'sem filtro'}: {portal_total} registros em {last_page} paginas."
+        )
+        window_ids: set[str] = set()
+        for scan_attempt in range(1, 4):
+            for page in range(1, last_page + 1):
+                page_key = f"w{window_index:02d}-p{page:03d}"
+                page_url = requests_page_url(target_url, page, window_start, window_end)
+                save_index(
+                    index_path,
+                    index,
+                    "indexando_requests",
+                    "requests_page_scan_started",
+                    window=window_index,
+                    page=page,
+                    attempt=scan_attempt,
+                )
+                response = first_response if page == 1 and scan_attempt == 1 else get_page(page, window_start, window_end)
+                snapshot = page_snapshot_html(response.text, response.url)
+                links = scan_html_links(response.text, modo, page, response.url)
+                index["pages"][page_key] = {
+                    "page": page,
+                    "window": window_index,
+                    "data_inicial": window_start,
+                    "data_final": window_end,
+                    "url": page_url,
+                    "status": "capturada",
+                    "captured_at": now_iso(),
+                    "portal_total_text": snapshot.get("descricao"),
+                    "portal_total_registros": snapshot.get("totalRegistros"),
+                    "links_count": len(links),
+                    "method": "requests",
+                    "scan_attempt": scan_attempt,
+                }
+                for item in links:
+                    key = item["id"] or note_id_from_href(item["href"])
+                    window_ids.add(key)
+                    current = index["items"].get(key, {})
+                    existing = previous_items.get(key, current)
+                    status = "baixado" if existing.get("status") == "baixado" else existing.get("status") or "pendente"
+                    seen_windows = set(current.get("windows") or existing.get("windows") or [])
+                    seen_windows.add(window_index)
+                    index["items"][key] = {
+                        **existing,
+                        **current,
+                        "id": key,
+                        "modo": modo,
+                        "page": page,
+                        "window": window_index,
+                        "windows": sorted(seen_windows),
+                        "data_inicial_janela": window_start,
+                        "data_final_janela": window_end,
+                        "href": item.get("href"),
+                        "text": item.get("text"),
+                        "status": status,
+                        "captured_at": existing.get("captured_at") or now_iso(),
+                        "updated_at": now_iso(),
+                    }
+                window_state["capturados"] = len(window_ids)
+                save_index(
+                    index_path,
+                    index,
+                    "indexando_requests",
+                    "requests_page_scan_finished",
+                    window=window_index,
+                    page=page,
+                    attempt=scan_attempt,
+                    links=len(links),
+                )
+            if len(window_ids) == portal_total:
+                break
+            if scan_attempt < 3:
+                save_index(
+                    index_path,
+                    index,
+                    "indexando_requests",
+                    "requests_window_retry",
+                    window=window_index,
+                    portal_total=portal_total,
+                    captured=len(window_ids),
+                    next_attempt=scan_attempt + 1,
+                )
+                time.sleep(scan_attempt * 2)
+
+        window_state["capturados"] = len(window_ids)
+        if len(window_ids) != portal_total:
+            window_state["status"] = "incompleta"
+            consolidate_page_totals(index)
+            save_index(
+                index_path,
+                index,
+                "indice_incompleto",
+                "requests_window_count_mismatch",
+                window=window_index,
+                data_inicial=window_start,
+                data_final=window_end,
+                portal_total=portal_total,
+                captured=len(window_ids),
+            )
+            raise RuntimeError(
+                f"Indice incompleto na janela {window_start} a {window_end}: "
+                f"Portal informou {portal_total}, indice capturou {len(window_ids)}."
+            )
+        window_state["status"] = "completa"
+        window_state["completed_at"] = now_iso()
+        consolidate_page_totals(index)
+        save_index(
+            index_path,
+            index,
+            "indexando_requests",
+            "requests_window_finished",
+            window=window_index,
+            portal_total=portal_total,
+            captured=len(window_ids),
+        )
 
     consolidate_page_totals(index)
     captured = len(index.get("items", {}))
-    if portal_total is not None and captured != int(portal_total):
-        save_index(index_path, index, "indice_incompleto", "requests_count_mismatch", portal_total=portal_total, captured=captured)
-        print(f"AVISO: portal informou {portal_total}, indice capturou {captured}.")
-    else:
-        save_index(index_path, index, "indice_pronto", "requests_scan_finished", captured=captured)
-        print(f"Indice pronto por requests: {captured} notas.")
+    save_index(
+        index_path,
+        index,
+        "indice_pronto",
+        "requests_scan_finished",
+        captured=captured,
+        soma_janelas=index["totals"].get("portal_registros_soma_janelas"),
+        duplicados_entre_janelas=index["totals"].get("duplicados_entre_janelas"),
+    )
+    print(f"Indice pronto por requests: {captured} notas unicas em {len(date_windows)} janela(s).")
 
 
 def extract_modal_data(html_text: str, base_url: str) -> dict:
@@ -2130,8 +2293,10 @@ def main() -> int:
         "data_final": data_final,
         "modo": args.modo,
         "tipo_download": args.tipo_download,
-        "portal_date_filter_applied": False,
+        "portal_date_filter_applied": bool(data_inicial and data_final),
         "include_retroactive_notes": True,
+        "period_strategy": "monthly_windows_max_30_days",
+        "date_window_max_days": PORTAL_MAX_PERIOD_DAYS,
     }
     index["tipo_download"] = args.tipo_download
     index["download_tipos"] = normalize_download_tipos(args.tipo_download)
