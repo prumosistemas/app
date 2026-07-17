@@ -1307,6 +1307,14 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         return 300
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
+    # Este retorno aparece quando o container perdeu a sessao anonima do
+    # Google Modo IA e passa varios minutos reabrindo desafios sem conseguir
+    # analisar. Um cooldown compartilhado evita que cada nota repita os 150s
+    # de timeout; as proximas chamadas seguem para a conta reserva e, por fim,
+    # para o ThinkPad. Outros erros visuais isolados continuam sem derrubar o
+    # pool inteiro.
+    if "visual_challenge_not_ready" in detail:
+        return 300
     # O endpoint respondeu e apenas esta tentativa visual nao venceu o
     # hCaptcha. Nao derrube o pool inteiro nem desvie as outras threads para o
     # ThinkPad: somente a requisicao atual deve tentar o fallback residencial.
