@@ -132,103 +132,103 @@ export default {
       }
 
       if (url.pathname === "/api/setup" && request.method === "GET") {
-        return handleSetup(request, env);
+        return await handleSetup(request, env);
       }
 
       if (url.pathname === "/api/login" && request.method === "POST") {
-        return handleLoginPost(request, env, ctx);
+        return await handleLoginPost(request, env, ctx);
       }
 
       if (url.pathname === "/api/logout" && request.method === "POST") {
-        return handleLogout(request, env, ctx);
+        return await handleLogout(request, env, ctx);
       }
 
       if (url.pathname === "/api/me" && request.method === "GET") {
-        return handleMe(request, env);
+        return await handleMe(request, env);
       }
 
       if (url.pathname === "/api/change-password" && request.method === "POST") {
-        return handleChangePassword(request, env);
+        return await handleChangePassword(request, env);
       }
 
       if (url.pathname === "/api/master/companies" && request.method === "GET") {
-        return handleMasterListCompanies(request, env);
+        return await handleMasterListCompanies(request, env);
       }
 
       if (url.pathname.startsWith("/api/master/companies/") && request.method === "GET") {
-        return handleMasterGetCompany(request, env);
+        return await handleMasterGetCompany(request, env);
       }
 
       if (url.pathname === "/api/master/companies" && request.method === "POST") {
-        return handleMasterCreateCompany(request, env);
+        return await handleMasterCreateCompany(request, env);
       }
 
       if (url.pathname === "/api/master/companies/toggle" && request.method === "POST") {
-        return handleMasterToggleCompany(request, env);
+        return await handleMasterToggleCompany(request, env);
       }
 
       if (url.pathname === "/api/master/companies/delete" && request.method === "POST") {
-        return handleMasterDeleteCompany(request, env);
+        return await handleMasterDeleteCompany(request, env);
       }
 
       if (url.pathname === "/api/master/owners/reset-password" && request.method === "POST") {
-        return handleMasterResetOwnerPassword(request, env);
+        return await handleMasterResetOwnerPassword(request, env);
       }
 
       if (url.pathname === "/api/master/logs" && request.method === "GET") {
-        return handleMasterLogs(request, env);
+        return await handleMasterLogs(request, env);
       }
 
       if (url.pathname === "/api/master/metrics" && request.method === "GET") {
-        return handleMasterMetrics(request, env);
+        return await handleMasterMetrics(request, env);
       }
 
       if (url.pathname === "/api/master/modal-billing" && request.method === "GET") {
-        return handleMasterModalBilling(request, env);
+        return await handleMasterModalBilling(request, env);
       }
 
       if (url.pathname === "/api/billing" && request.method === "GET") {
-        return handleBilling(request, env);
+        return await handleBilling(request, env);
       }
 
       if (url.pathname === "/api/master/billing" && request.method === "GET") {
-        return handleMasterBilling(request, env);
+        return await handleMasterBilling(request, env);
       }
 
       if (url.pathname === "/api/master/billing/settings" && request.method === "POST") {
-        return handleMasterBillingSettings(request, env);
+        return await handleMasterBillingSettings(request, env);
       }
 
       if (url.pathname === "/api/master/billing/payments" && request.method === "POST") {
-        return handleMasterBillingPaymentCreate(request, env);
+        return await handleMasterBillingPaymentCreate(request, env);
       }
 
       if (url.pathname === "/api/master/billing/payments/delete" && request.method === "POST") {
-        return handleMasterBillingPaymentDelete(request, env);
+        return await handleMasterBillingPaymentDelete(request, env);
       }
 
       if (url.pathname === "/api/users" && request.method === "GET") {
-        return handleListUsers(request, env);
+        return await handleListUsers(request, env);
       }
 
       if (url.pathname === "/api/users" && request.method === "POST") {
-        return handleCreateUser(request, env);
+        return await handleCreateUser(request, env);
       }
 
       if (url.pathname === "/api/users/delete" && request.method === "POST") {
-        return handleDeleteUser(request, env);
+        return await handleDeleteUser(request, env);
       }
 
       if (url.pathname === "/api/users/toggle" && request.method === "POST") {
-        return handleToggleUser(request, env);
+        return await handleToggleUser(request, env);
       }
 
       if (url.pathname === "/api/users/reset-password" && request.method === "POST") {
-        return handleResetUserPassword(request, env);
+        return await handleResetUserPassword(request, env);
       }
 
       if (url.pathname.startsWith("/py/")) {
-        return handlePythonProxy(request, env);
+        return await handlePythonProxy(request, env);
       }
 
       return jsonResponse(request, env, { ok: false, error: "Rota não encontrada." }, 404);

@@ -527,8 +527,20 @@
       }
 
       if (!res.ok) {
+        if (typeof data === "string") {
+          const looksLikeHtml = /^\s*<!doctype\s+html/i.test(data) || /<html(?:\s|>)/i.test(data);
+          if (looksLikeHtml || res.status >= 500) {
+            const rayId = (res.headers.get("cf-ray") || "").split("-")[0].trim();
+            const supportCode = rayId ? ` Código: ${rayId}.` : "";
+            throw new Error(`Serviço temporariamente indisponível. Tente novamente em instantes.${supportCode}`);
+          }
+        }
+
         const detail = data?.error || data?.detail || data?.message || data;
-        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        const requestId = data && typeof data === "object" ? String(data.request_id || "").trim() : "";
+        const supportCode = requestId ? ` Código: ${requestId}.` : "";
+        const message = typeof detail === "string" ? detail : JSON.stringify(detail);
+        throw new Error(`${message || "Falha no login."}${supportCode}`);
       }
 
       return data;

@@ -17,7 +17,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
-## Estado validado em 2026-07-16
+## Estado validado em 2026-07-17
 
 - API alvo: 1.0.49, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - Portal Nacional: as datas inicial/final são metadados de referência da run, não filtros enviados ao Portal. O índice percorre todas as páginas para preservar notas retroativas. A prova real pós-deploy capturou 75/75 recebidas em 5 páginas e 85/85 emitidas em 6 páginas, sem parâmetro de data na consulta.
@@ -28,12 +28,13 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - ISS padrão: Modal direto. O proxy continua no ThinkPad, mas não deve ser ativado no Modal sem autenticação de máquina no Cloudflare Access.
 - Token do Browserless rotacionado em 2026-07-12; deploy Modal e handshake WebSocket 101 validados após a rotação.
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
+- Login/Worker: o incidente `1101` de 2026-07-17 revelou rejeições assíncronas escapando do `try/catch` porque os handlers eram retornados sem `await`. Todas as rotas assíncronas agora são aguardadas dentro da barreira de erro; respostas HTML de infraestrutura são reduzidas a uma mensagem segura com código de suporte, sem inserir o documento da Cloudflare no formulário.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
 - Imagem do servidor: `ryang20/prumo-api:1.0.49`, ID curto `739e36545b55`; a API respondeu a versão 1.0.49 após a recriação do container.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.
-- Testes locais: 78 aprovados para o deploy 1.0.49.
+- Testes locais: 80 aprovados; a API permanece na versão 1.0.49 e o Worker recebeu a correção defensiva de autenticação.
 - Prova isolada pós-deploy: o solver residencial v19 abriu o hCaptcha real após recovery, atravessou quatro etapas visuais e devolveu token; ao final havia 0/4 navegadores locais ativos.
 - Billing em 2026-07-16: principal com US$ 6,38 no mês (US$ 4,46 do app Portal; saldo estimado US$ 23,62) e fallback com US$ 2,37 (saldo estimado US$ 27,63).
 
