@@ -38,7 +38,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-16-google-ai-mode-v19-open-recovery-safe-fallback"
+SOLVER_API_VERSION = "2026-07-18-google-ai-mode-v20-empty-frame-retry"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -52,6 +52,10 @@ PROVIDER_STATS: dict[str, Any] = {
     "last_ai_queries": None,
     "last_source_count": None,
 }
+
+
+class VisualFrameNotReadyError(ValueError):
+    """O provedor respondeu corretamente, mas o quadro capturado nao tinha alvo."""
 
 
 def _load_module(path: Path, name: str) -> ModuleType:
@@ -1350,6 +1354,11 @@ def _parse_non9_objects(parsed: dict[str, Any]) -> tuple[list[Any], dict[str, An
     raw_objects = parsed.get("objetos")
     if not isinstance(raw_objects, dict):
         raise ValueError("Campo objetos ausente ou invalido")
+    if not raw_objects:
+        # Alguns desafios animados exibem por poucos instantes apenas o fundo.
+        # Isto nao e falha do Modo IA: recapture o mesmo desafio sem abrir
+        # cooldown nem perder a sessao visual ja avancada.
+        raise VisualFrameNotReadyError("Quadro visual sem alvo; recaptura necessaria")
 
     detections: list[Any] = []
     by_key: dict[str, Any] = {}
@@ -1913,6 +1922,28 @@ def analyze_visual_with_google_ai(
             f"http={result.http_requests} consultas={result.ai_queries} fontes={len(result.sources)}"
         )
         return click_choice
+    except VisualFrameNotReadyError as exc:
+        legacy.record_provider_success()
+        legacy.set_solver_error("visual_challenge_not_ready", str(exc))
+        (challenge_dir / "resposta-google-ia.json").write_text(
+            json.dumps(
+                {
+                    "tipo": "visual_unificado",
+                    "adaptador_interacao": "recapturar_quadro",
+                    "pergunta": captcha_question,
+                    "provedor": "google_ai_mode",
+                    "modelo": PROVIDER_MODEL,
+                    "erro": type(exc).__name__,
+                    "detalhe": str(exc),
+                    "resposta_bruta": raw_answer,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"[Google AI] Quadro sem alvo; recapturando sem penalizar o provedor: {exc}")
+        return None
     except Exception as exc:
         state = legacy.record_provider_failure(str(exc))
         legacy.set_solver_error(

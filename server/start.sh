@@ -61,7 +61,7 @@ EOF
     --max-browsers 4 \
     --max-provider-failures 30 \
     --max-solver-failures 20 \
-    --max-solve-seconds 150 \
+    --max-solve-seconds "${PORTAL_LOCAL_MAX_SOLVE_SECONDS:-240}" \
     >> "$artifact_dir/service.log" 2>&1 &
   echo "[startup] resolvedor residencial do Portal iniciado em 127.0.0.1:8876"
 }
