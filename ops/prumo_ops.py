@@ -266,7 +266,16 @@ def modal_run(store: SecretStore, account: str, arguments: list[str], extra_env:
     token_id = store.require(id_name)
     token_secret = store.require(secret_name)
     env = os.environ.copy()
-    env.update({"MODAL_TOKEN_ID": token_id, "MODAL_TOKEN_SECRET": token_secret})
+    env.update(
+        {
+            "MODAL_TOKEN_ID": token_id,
+            "MODAL_TOKEN_SECRET": token_secret,
+            # A CLI Modal usa simbolos Unicode no progresso. Sem UTF-8, o
+            # Python do Windows pode abortar antes do deploy com codec cp1252.
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
     env.update(extra_env or {})
     command = ["modal", *arguments]
     result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
