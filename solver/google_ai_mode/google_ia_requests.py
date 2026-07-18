@@ -574,7 +574,10 @@ def recover_session_with_chrome(
             ws = websocket.create_connection(str(page["webSocketDebuggerUrl"]), timeout=12)
             try:
                 session: CountingSession | None = None
-                for wait_seconds in (3.0, 6.0, 12.0):
+                # Respeite a janela operacional configurada. A sequencia fixa
+                # de 3+6+12 s era repetida em ate tres Chromes e consumia
+                # praticamente todo o prazo do captcha antes do fallback.
+                for wait_seconds in (RECOVERY_BROWSER_WAIT_SECONDS or (10.0,)):
                     time.sleep(wait_seconds)
                     state_result = _cdp_command(
                         ws,

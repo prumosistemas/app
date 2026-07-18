@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.52.
+Este documento e a fonte de contexto operacional da versao 1.0.53.
 
 ## Estado desejado
 
@@ -173,8 +173,9 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- O solver v19 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro. A segunda conta recebe failover de quota/indisponibilidade; falha visual especifica segue para o mesmo solver no ThinkPad, evitando duplicar custo Modal no mesmo desafio.
+- O solver v19 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro. A segunda conta recebe failover de quota/indisponibilidade; falha visual especifica segue para o mesmo solver no ThinkPad, evitando duplicar custo Modal no mesmo desafio e sem bloquear as outras notas.
 - Se o widget hCaptcha nao abrir, a v19 recarrega o widget com espera crescente e registra `visual_challenge_not_opened`, separado de grade instavel. URLs persistidas em erros nunca mantem query string ou token transitorio.
+- Na 1.0.53, `visual_challenge_not_ready` nao abre cooldown global. Cada container Modal aceita uma entrada ativa, a principal mantem um container e um buffer, e a reserva escala a zero. A sessao anonima recuperada sincroniza em 15 segundos e a recuperacao Chrome usa um ciclo curto.
 - Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
@@ -192,18 +193,11 @@ Health do solver:
 Invoke-RestMethod https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/health
 ```
 
-Deploy do solver:
+Deploy do solver sem trocar o perfil Modal global:
 
 ```powershell
-modal profile activate ryanzin
-$env:PORTAL_MODAL_MIN_CONTAINERS='1'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate fabriciofarofa5
-$env:PORTAL_MODAL_MIN_CONTAINERS='0'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate ryanzin
+python -m ops.prumo_ops modal deploy --account primary --target portal
+python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
 
 ## Fallback local de navegador

@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.52
+Versao: 1.0.53
 Data: 2026-07-15
 Modo atual: producao unica, sem homologacao ativa
 
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.52",
+  "version": "1.0.53",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -157,20 +157,16 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Volume privado: `prumo-portal-google-ai-state`.
 - Rota padrao: direta, sem proxy. O proxy local responde no ThinkPad, mas o probe a partir do Modal expira no Cloudflare Access; só definir `PRUMO_MODAL_PROXY_HOSTNAME` após configurar e validar autenticação de máquina.
 
-Deploy manual das duas contas:
+Deploy seguro das duas contas, sem trocar perfil global:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile activate ryanzin
-$env:PORTAL_MODAL_MIN_CONTAINERS='1'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='3'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate fabriciofarofa5
-$env:PORTAL_MODAL_MIN_CONTAINERS='0'
-$env:PORTAL_MODAL_BUFFER_CONTAINERS='2'
-modal deploy deploy\modal_portal_nacional_google_solver.py
-modal profile activate ryanzin
+python -m ops.prumo_ops modal deploy --account primary --target portal
+python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
+
+A CLI aplica `min_containers=1` e `buffer_containers=1` na principal. A conta
+reserva usa zero nos dois valores e somente escala quando houver failover real.
 
 Validar:
 
@@ -491,8 +487,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.52 .
-docker push ryang20/prumo-api:1.0.52
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.53 .
+docker push ryang20/prumo-api:1.0.53
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -503,10 +499,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.52 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.53 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.52
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.53
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

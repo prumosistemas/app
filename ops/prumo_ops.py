@@ -298,9 +298,9 @@ def modal_command(store: SecretStore, action: str, account: str, target: str | N
             modal_run(store, account, ["deploy", "deploy/modal_browserless.py"])
         elif target == "portal":
             sizing = (
-                {"PORTAL_MODAL_MIN_CONTAINERS": "1", "PORTAL_MODAL_BUFFER_CONTAINERS": "3"}
+                {"PORTAL_MODAL_MIN_CONTAINERS": "1", "PORTAL_MODAL_BUFFER_CONTAINERS": "1"}
                 if account == "primary"
-                else {"PORTAL_MODAL_MIN_CONTAINERS": "0", "PORTAL_MODAL_BUFFER_CONTAINERS": "2"}
+                else {"PORTAL_MODAL_MIN_CONTAINERS": "0", "PORTAL_MODAL_BUFFER_CONTAINERS": "0"}
             )
             modal_run(store, account, ["deploy", "deploy/modal_portal_nacional_google_solver.py"], sizing)
         else:

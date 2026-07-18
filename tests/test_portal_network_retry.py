@@ -212,10 +212,10 @@ def test_visual_failure_does_not_cool_down_entire_modal_pool() -> None:
     ) == 0
 
 
-def test_repeated_not_ready_opens_five_minute_cooldown() -> None:
+def test_not_ready_is_scoped_to_the_current_captcha() -> None:
     assert automation.solver_endpoint_cooldown_seconds(
         RuntimeError("solver:visual_challenge_not_ready: sessao visual indisponivel")
-    ) == 300
+    ) == 0
 
 
 def test_endpoint_outages_still_open_cooldown() -> None:

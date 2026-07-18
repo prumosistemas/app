@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import modal
@@ -171,8 +172,16 @@ def _prepare_instance_state() -> None:
     corrida entre quatro sessoes anonimas do Google Modo IA.
     """
     GOOGLE_STATE_ACTIVE.mkdir(parents=True, exist_ok=True)
+    try:
+        # Containers de uma mesma rajada podem nascer enquanto outro acabou de
+        # publicar uma sessao valida. Recarregue o Volume antes de copiar a
+        # semente para nao iniciar com o snapshot anterior.
+        google_state.reload()
+    except Exception as exc:
+        print(f"[state] semente nao recarregada: {type(exc).__name__}", flush=True)
     for name in (
         "cookies_google_limpo.json",
+        "cookies_google_limpo.backup.json",
         "cookies_google_limpo_backup.json",
         "ask_session.json",
         "ask_session_backup.json",
@@ -189,6 +198,7 @@ def _persist_instance_state() -> bool:
     GOOGLE_STATE_SEED.mkdir(parents=True, exist_ok=True)
     for name in (
         "cookies_google_limpo.json",
+        "cookies_google_limpo.backup.json",
         "cookies_google_limpo_backup.json",
         "ask_session.json",
         "ask_session_backup.json",
@@ -215,7 +225,7 @@ def _start_state_sync_loop() -> None:
     """Salva recuperacoes feitas durante solves longos sem reiniciar o app."""
     def worker() -> None:
         while True:
-            time.sleep(60)
+            time.sleep(15)
             try:
                 _persist_instance_state()
             except Exception as exc:
@@ -264,6 +274,19 @@ def _start_artifact_retention_loop() -> None:
             time.sleep(3600)
 
     threading.Thread(target=worker, name="artifact-retention", daemon=True).start()
+
+
+def _start_artifact_sync_loop() -> None:
+    """Publica logs e imagens de debug sem esperar o web server encerrar."""
+    def worker() -> None:
+        while True:
+            time.sleep(60)
+            try:
+                debug_artifacts.commit()
+            except Exception as exc:
+                print(f"[artifacts] falha ao publicar debug: {type(exc).__name__}", flush=True)
+
+    threading.Thread(target=worker, name="artifact-sync", daemon=True).start()
 
 
 def _prewarm_google_ai_session() -> None:
@@ -409,8 +432,8 @@ def proxy_probe() -> str:
         # Cliente v16 do projeto validado. No Modal a base Ubuntu nao traz
         # Firefox apt usavel; use Chrome/CDP em Xvfb, com timeout HTTP curto.
         "GOOGLE_AI_RECOVERY_POLICY": "chrome",
-        "GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS": "3",
-        "GOOGLE_AI_RECOVERY_WAIT_SECONDS": "10",
+        "GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS": "1",
+        "GOOGLE_AI_RECOVERY_WAIT_SECONDS": "4,8",
         "GOOGLE_AI_FIREFOX_FALLBACK": "0",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
         "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
@@ -422,12 +445,13 @@ def proxy_probe() -> str:
         "NO_PROXY": "127.0.0.1,localhost",
     },
 )
-@modal.concurrent(max_inputs=2, target_inputs=1)
+@modal.concurrent(max_inputs=1, target_inputs=1)
 @modal.web_server(PORT, startup_timeout=240)
 def solver_server() -> None:
     _start_proxy_tunnel()
     _prepare_instance_state()
     _start_artifact_retention_loop()
+    _start_artifact_sync_loop()
     _prewarm_google_ai_session()
     _start_state_sync_loop()
     # O projeto organizado mantem o listener da API em 127.0.0.1. O relay
@@ -437,6 +461,15 @@ def solver_server() -> None:
         f"TCP-LISTEN:{PORT},fork,reuseaddr,bind=0.0.0.0",
         f"TCP:127.0.0.1:{INTERNAL_PORT}",
     ]
+    try:
+        configured_max_solve_seconds = int(
+            os.environ.get("PORTAL_MODAL_MAX_SOLVE_SECONDS", "90")
+        )
+    except (TypeError, ValueError):
+        configured_max_solve_seconds = 90
+    # Uma configuracao antiga de conta nao pode manter cada tentativa cara e
+    # presa por 150 s. O piso evita timeouts agressivos em containers frios.
+    max_solve_seconds = str(max(30, min(90, configured_max_solve_seconds)))
     solver_command = [
             "xvfb-run",
             "-a",
@@ -456,10 +489,11 @@ def solver_server() -> None:
             "--max-solver-failures",
             "20",
             "--max-solve-seconds",
-            os.environ.get("PORTAL_MODAL_MAX_SOLVE_SECONDS", "90"),
+            max_solve_seconds,
         ]
     # Mantem o stdout no painel do Modal e uma copia persistente por container.
-    log_path = GOOGLE_ARTIFACT_ROOT / f"service-{socket.gethostname()}.log"
+    artifact_instance_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+    log_path = GOOGLE_ARTIFACT_ROOT / f"service-{artifact_instance_id}.log"
     shell_command = " ".join(subprocess.list2cmdline([part]) for part in solver_command)
     subprocess.Popen(
         ["sh", "-c", f"{shell_command} 2>&1 | tee -a {subprocess.list2cmdline([str(log_path)])}"],
