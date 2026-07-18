@@ -140,10 +140,10 @@ principal e `0.00` USD na conta fallback. O saldo mostrado e uma estimativa
 sobre o credito mensal configurado, nao uma quota oficial exposta pelo Modal.
 Nunca versionar esses tokens.
 
-Em 2026-07-16, depois das runs do Alan e do deploy v19, a consulta viva retornou
-`6.38496197` USD na conta principal, dos quais `4.45954434` USD pertenciam ao
-app Portal, e `2.37357090` USD na conta fallback. Saldos mensais estimados:
-`23.61503803` USD e `27.62642910` USD, respectivamente.
+Em 2026-07-18, a consulta viva do app Portal atualmente ativo somou cerca de
+`7.34` USD na conta principal e `5.10` USD na conta fallback no intervalo
+retornado pela API. O historico de billing ainda lista apps antigos ja parados;
+por isso o painel master e a referencia operacional para credito estimado.
 
 ## Modal do Portal Nacional
 

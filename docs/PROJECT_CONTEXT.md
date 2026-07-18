@@ -39,6 +39,8 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Prova isolada pós-deploy: o solver residencial v19 abriu o hCaptcha real após recovery, atravessou quatro etapas visuais e devolveu token; ao final havia 0/4 navegadores locais ativos.
 - Prova controlada Gabriel pós-1.0.57: duas notas pendentes concluíram 2/2; a run ficou com 9 baixadas, 23 pendentes por limite de teste e zero item em execução. O desafio residencial longo avançou por 13 respostas visuais válidas dentro da janela de 240 s.
 - Billing consultado em 2026-07-18: o app Portal atualmente ativo acumulava aproximadamente US$ 7,34 na conta principal e US$ 5,10 na fallback no intervalo retornado pela API; o painel master continua sendo a referência operacional de crédito estimado.
+- Fechamento 1.0.58: API e imagem Docker em 1.0.58; solvers principal, reserva e residencial em v21, todos com circuito fechado e zero navegador ativo. Login, Portal e ISS responderam 200 pelo Worker; login inválido retornou JSON 400 sem HTML/1101 e os dois HTMLs de automação não expõem seletor de navegadores. Git local, `origin/main` e servidor estavam no mesmo commit.
+- Host no fechamento: `docker`, `cloudflared`, `fail2ban` e `prumo-monitor.service` ativos; somente `prumo-api` entre os containers Prumo; 30% do disco usado e 66 GiB livres.
 
 ## Regras operacionais
 
