@@ -278,10 +278,20 @@ def modal_run(store: SecretStore, account: str, arguments: list[str], extra_env:
     )
     env.update(extra_env or {})
     command = ["modal", *arguments]
-    result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=900)
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=900,
+    )
     safe = redact((result.stdout or "") + (result.stderr or ""), [token_id, token_secret]).strip()
     if safe:
-        print(safe)
+        console_encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(safe.encode(console_encoding, errors="replace").decode(console_encoding))
     if result.returncode:
         raise OpsError(f"Modal terminou com codigo {result.returncode}.")
 

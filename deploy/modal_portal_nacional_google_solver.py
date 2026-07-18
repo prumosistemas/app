@@ -409,7 +409,7 @@ def proxy_probe() -> str:
     secrets=proxy_access_secrets,
     volumes={
         "/google-ai-seed": google_state,
-        str(GOOGLE_ARTIFACT_ROOT): debug_artifacts,
+        "/solver-artifacts": debug_artifacts,
     },
     min_containers=MIN_CONTAINERS,
     buffer_containers=BUFFER_CONTAINERS,
@@ -422,7 +422,9 @@ def proxy_probe() -> str:
     env={
         "GOOGLE_AI_PROJECT": "/app/google-ai-client",
         "GOOGLE_AI_STATE_DIR": "/tmp/google-ai-state",
-        "GOOGLE_AI_ARTIFACT_ROOT": str(GOOGLE_ARTIFACT_ROOT),
+        # Literal POSIX: o deploy tambem roda no Windows e str(Path('/...'))
+        # pode virar uma raiz com barra invertida fora do Volume montado.
+        "GOOGLE_AI_ARTIFACT_ROOT": "/solver-artifacts",
         "GOOGLE_CHROME_BIN": "/usr/local/bin/google-chrome-prumo",
         "MODO_IA_DETECTOR_PROJECT": "/app/detector",
         "HOST": "0.0.0.0",
