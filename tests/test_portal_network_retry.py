@@ -235,6 +235,13 @@ def test_google_session_failure_cools_only_that_endpoint() -> None:
     ) == 300
 
 
+def test_local_google_session_failure_has_short_cooldown() -> None:
+    assert automation.mark_solver_endpoint_unavailable(
+        "http://127.0.0.1:8876/solve",
+        RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel"),
+    ) == 30
+
+
 def test_endpoint_outages_still_open_cooldown() -> None:
     response = requests.Response()
     response.status_code = 503

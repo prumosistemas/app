@@ -1330,6 +1330,15 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
 
 def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
     cooldown = solver_endpoint_cooldown_seconds(exc)
+    if (
+        cooldown > 30
+        and is_local_solver_url(url)
+        and "google_ai_request_failed" in str(exc).lower()
+    ):
+        # No ThinkPad nao ha credito Modal a proteger e o IP residencial costuma
+        # formar uma nova sessao rapidamente. Cinco minutos aqui apenas deixa
+        # todas as threads esperando; 30 s ainda evita uma rajada de recovery.
+        cooldown = 30
     if cooldown <= 0:
         return 0
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:

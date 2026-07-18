@@ -90,6 +90,7 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - Na 1.0.53, uma sessão Modo IA recuperada por container é sincronizada a cada 15 segundos com o Volume privado e imediatamente após o prewarm. Cada container recarrega a semente antes de iniciar; a recuperação Chrome usa uma tentativa curta configurada, em vez de três ciclos longos.
 - Na 1.0.54, a causa do provedor não é sobrescrita pelo encerramento visual genérico: sessão Modo IA/navegador indisponível tenta a conta Modal reserva; rejeição visual comum continua no ThinkPad.
 - Na 1.0.55, timeout do health durante cold start é apenas diagnóstico. A run preserva a URL principal e cada POST decide o failover; uma falha confirmada da sessão Google põe apenas aquele endpoint em cooldown por cinco minutos, evitando repetir recovery caro em todas as notas.
+- Na 1.0.56, o cooldown de sessão permanece em cinco minutos nos Modal, mas cai para 30 segundos no ThinkPad residencial. Assim o fallback gratuito se recupera sem deixar todas as tarefas paradas.
 - O timeout visual no Modal foi reduzido de 150 para 90 segundos; desafios não concluídos seguem para failover sem prender as quatro tarefas por vários minutos.
 - Alan e Gabriel usam raízes de dados e runtimes distintos. A prova pela API em produção mostrou zero run IDs em comum; Gabriel recebeu 404 ao solicitar diretamente a run SIM7 do Alan.
 - Logs e imagens de captcha são publicados no Volume privado a cada minuto, com nome por container, e continuam sujeitos à retenção de sete dias.
