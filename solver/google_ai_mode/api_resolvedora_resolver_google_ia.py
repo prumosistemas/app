@@ -99,6 +99,22 @@ def _set_unified_solver_error(reason: str, error: str) -> None:
         "falha_clicar_9_tiles": "visual_click_failed",
         "falha_submit_9_tiles": "visual_submit_failed",
     }
+    existing = legacy.get_solver_error()
+    # O nucleo encerra o ciclo com uma classificacao visual generica. Preserve
+    # falhas anteriores do provedor/navegador: elas devem tentar a segunda
+    # conta Modal, enquanto um desafio visual dificil segue ao ThinkPad.
+    if existing.get("reason") in {
+        "provider_circuit_open",
+        "google_ai_request_failed",
+        "google_ai_image_missing",
+        "browser_closed",
+    } and reason in {
+        "grade_9_nao_estabilizou",
+        "nao_achou_9_tiles",
+        "nao_consegui_resolver_9_tiles",
+        "solve_timeout",
+    }:
+        return
     _legacy_set_solver_error(aliases.get(reason, reason), error)
 
 

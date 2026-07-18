@@ -88,6 +88,7 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - A run SIM7 de 01/06 a 17/07 concluiu 374 PDFs e 374 XMLs referenciados, sem erro final. A duração de 8h26 e 546 inícios de item expôs retrabalho entre XML e PDF.
 - A partir da 1.0.52, sucesso do XML é preservado no índice mesmo se o solver do PDF lançar exceção; o retry continua no PDF e não paga outro captcha do XML.
 - Na 1.0.53, uma sessão Modo IA recuperada por container é sincronizada a cada 15 segundos com o Volume privado e imediatamente após o prewarm. Cada container recarrega a semente antes de iniciar; a recuperação Chrome usa uma tentativa curta configurada, em vez de três ciclos longos.
+- Na 1.0.54, a causa do provedor não é sobrescrita pelo encerramento visual genérico: sessão Modo IA/navegador indisponível tenta a conta Modal reserva; rejeição visual comum continua no ThinkPad.
 - O timeout visual no Modal foi reduzido de 150 para 90 segundos; desafios não concluídos seguem para failover sem prender as quatro tarefas por vários minutos.
 - Alan e Gabriel usam raízes de dados e runtimes distintos. A prova pela API em produção mostrou zero run IDs em comum; Gabriel recebeu 404 ao solicitar diretamente a run SIM7 do Alan.
 - Logs e imagens de captcha são publicados no Volume privado a cada minuto, com nome por container, e continuam sujeitos à retenção de sete dias.
