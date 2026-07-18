@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.56 - Portal automatico, isolado e com recovery local curto**
+Versao: **1.0.58 - Portal automatico, isolado e com fallback visual resiliente**
 
 ## Estado atual
 
@@ -9,7 +9,7 @@ Versao: **1.0.56 - Portal automatico, isolado e com recovery local curto**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA v19 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad para falha visual especifica; sem Florence/Cohere.
+- Portal Nacional: Google Modo IA v21 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad para falha visual especifica; sem Florence/Cohere.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -79,9 +79,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.56 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.58 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.56
+docker push ryang20/prumo-api:1.0.58
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

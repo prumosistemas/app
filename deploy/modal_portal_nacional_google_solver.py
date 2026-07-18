@@ -437,6 +437,9 @@ def proxy_probe() -> str:
         "GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS": "1",
         "GOOGLE_AI_RECOVERY_WAIT_SECONDS": "4,8",
         "GOOGLE_AI_FIREFOX_FALLBACK": "0",
+        # Um container aquecido nao pode permanecer recusando solves pelo resto
+        # da vida. O servidor ja evita esse endpoint durante o mesmo intervalo.
+        "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "300",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
         "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
         "PRUMO_MODAL_PROXY_ENABLED": "1" if PROXY_ENABLED else "0",

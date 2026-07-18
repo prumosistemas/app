@@ -130,7 +130,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.57",
+    version="1.0.58",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
     lifespan=lifespan,
 )
@@ -476,7 +476,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "Prumo API",
-        "version": "1.0.57",
+        "version": "1.0.58",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,

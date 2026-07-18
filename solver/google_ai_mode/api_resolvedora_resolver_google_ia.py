@@ -38,7 +38,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-18-google-ai-mode-v20-empty-frame-retry"
+SOLVER_API_VERSION = "2026-07-18-google-ai-mode-v21-circuit-rearm"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -1011,6 +1011,7 @@ def reset_provider_circuit() -> None:
         legacy.PROVIDER_FAILURE_TOTAL = 0
         legacy.PROVIDER_CIRCUIT_OPEN = False
         legacy.PROVIDER_LAST_ERROR = None
+        legacy.PROVIDER_CIRCUIT_OPENED_AT = 0.0
     try:
         legacy.PROVIDER_ABORT_FILE.unlink()
     except FileNotFoundError:
@@ -1028,6 +1029,7 @@ def record_provider_failure(detail: str) -> dict:
             and legacy.PROVIDER_FAILURE_COUNT >= legacy.PROVIDER_FAILURE_LIMIT
         ):
             legacy.PROVIDER_CIRCUIT_OPEN = True
+            legacy.PROVIDER_CIRCUIT_OPENED_AT = time.monotonic()
             opened_now = True
         state = {
             "open": legacy.PROVIDER_CIRCUIT_OPEN,

@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.56
-Data: 2026-07-15
+Versao: 1.0.58
+Data: 2026-07-18
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.56",
+  "version": "1.0.58",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -109,14 +109,15 @@ Deploy do Modal:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile activate ryanzin
-modal deploy deploy\modal_browserless.py
+python -m ops.prumo_ops modal deploy --account primary --target iss
 ```
 
 Relatorio de custo vivo:
 
 ```powershell
-modal billing report --for "this month" --json
+python -m ops.prumo_ops modal billing --account primary --target iss
+python -m ops.prumo_ops modal billing --account primary --target portal
+python -m ops.prumo_ops modal billing --account fallback --target portal
 ```
 
 O painel master usa `modal.Workspace.billing.report()` e consulta separadamente
@@ -180,6 +181,7 @@ Configuracao da API Python:
 PORTAL_NACIONAL_SOLVER_URL=https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve
 PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacional-google-solver-sol-ffa9e3.modal.run/solve,http://127.0.0.1:8876/solve
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
+PORTAL_LOCAL_MAX_SOLVE_SECONDS=240
 ```
 
 A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e somente fallback Modal e escala a zero quando ociosa. O master consulta o billing das duas contas e mostra o ultimo endpoint que concluiu uma resolucao.
@@ -261,9 +263,10 @@ Se a API cair no meio de uma run, o estado salvo em SQLite/pastas permanece. A r
 
 Worker de producao:
 
-```bash
-cd /home/server/prumo-src/cloudflare
-wrangler deploy
+```powershell
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+python -m ops.prumo_ops cloudflare deploy
+python -m ops.prumo_ops cloudflare deploy --apply
 ```
 
 D1 de producao:
@@ -281,8 +284,8 @@ Segredos do Worker:
 
 Conferir deploys:
 
-```bash
-wrangler deployments list --name morning-credit-8a59
+```powershell
+python -m ops.prumo_ops cloudflare status
 ```
 
 ## Netlify e HTMLs
@@ -448,6 +451,7 @@ Teste confirmado em 2026-07-06:
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
 - Em 2026-07-16 o Modo IA v19 manteve o contrato visual unificado e adicionou recovery do widget com backoff. `ryangurgell20` e a rota normal; `fabriciofarofa5` fica reservada a quota/indisponibilidade; `127.0.0.1:8876` recebe falha visual especifica sem duplicar custo na conta Modal reserva.
+- Em 2026-07-18 o Modo IA v21 passou a recapturar quadros temporais vazios sem penalizar o provedor. O Modal permanece em 90 s por solve, o fallback residencial usa 240 s e o circuito Modal se rearma em 300 s.
 - A prova pós-deploy no ThinkPad usou o sitekey real observado nos artefatos: a v18 não abriu o widget e terminou com causa genérica; a v19 recarregou o widget, capturou quatro etapas visuais em cerca de 1,4 s cada e devolveu token. O health terminou em `0/4` navegadores ativos.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
@@ -471,24 +475,26 @@ python -m py_compile server\main.py server\db.py server\domain.py server\run_que
 Deploy Worker:
 
 ```powershell
-cd C:\Users\ryang\Desktop\projetosv2\projeto\cloudflare
-wrangler deploy
+cd C:\Users\ryang\Desktop\projetosv2\projeto
+python -m ops.prumo_ops cloudflare deploy
+python -m ops.prumo_ops cloudflare deploy --apply
 ```
 
 Deploy Modal:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-modal profile activate ryanzin
-modal deploy deploy\modal_browserless.py
+python -m ops.prumo_ops modal deploy --account primary --target iss
+python -m ops.prumo_ops modal deploy --account primary --target portal
+python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
 
 Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.56 .
-docker push ryang20/prumo-api:1.0.56
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.58 .
+docker push ryang20/prumo-api:1.0.58
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -499,10 +505,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.56 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.58 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.56
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.58
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```
@@ -525,8 +531,9 @@ docker logs --tail 100 prumo-api
 No PC:
 
 ```powershell
-wrangler deployments list --name morning-credit-8a59
-modal billing report --for "this month" --json
+python -m ops.prumo_ops cloudflare status
+python -m ops.prumo_ops modal billing --account primary --target portal
+python -m ops.prumo_ops modal billing --account fallback --target portal
 git status
 git rev-parse HEAD
 git ls-remote origin refs/heads/main

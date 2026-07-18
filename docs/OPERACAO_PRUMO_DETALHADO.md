@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.56.
+Este documento e a fonte de contexto operacional da versao 1.0.58.
 
 ## Estado desejado
 
@@ -179,6 +179,8 @@ Teste local confirmado em 2026-07-06:
 - Na 1.0.54, falha real da sessao Google Modo IA ou do navegador preserva sua classificacao e tenta a conta Modal reserva. Apenas rejeicao visual do desafio segue direto ao ThinkPad.
 - Na 1.0.55, timeout do health em cold start nao troca a rota da run inteira. O POST real tenta o pool principal e aplica failover por captcha; falha confirmada da sessao Google abre cooldown somente para aquele endpoint e evita recovery repetido no lote.
 - Na 1.0.56, esse cooldown continua em cinco minutos nos Modal para poupar credito e fica limitado a 30 segundos no solver residencial, que pode tentar recuperar sem custo externo.
+- Na 1.0.57, quadros temporais sem alvo sao recapturados sem penalizar o Modo IA e o fallback residencial aceita ate 240 segundos para preservar desafios longos; o Modal continua em 90 segundos para limitar custo.
+- Na 1.0.58, o circuito interno do Modal registra o instante de abertura e se rearma em 300 segundos, evitando 503 permanente em container aquecido.
 - Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
@@ -232,8 +234,9 @@ Depois ajustar `BROWSER_CDP_POOL` no `.env` e reiniciar `prumo-api`.
 git status
 git rev-parse HEAD
 git ls-remote origin refs/heads/main
-wrangler deployments list --name morning-credit-8a59
-modal billing report --for "this month" --json
+python -m ops.prumo_ops cloudflare status
+python -m ops.prumo_ops modal billing --account primary --target portal
+python -m ops.prumo_ops modal billing --account fallback --target portal
 ```
 
 Servidor:
