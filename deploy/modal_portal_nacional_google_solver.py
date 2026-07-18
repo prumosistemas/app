@@ -183,6 +183,47 @@ def _prepare_instance_state() -> None:
             shutil.copy2(source, target)
 
 
+def _persist_instance_state() -> bool:
+    """Publica uma sessao anonima saudavel como semente dos containers frios."""
+    copied = False
+    GOOGLE_STATE_SEED.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "cookies_google_limpo.json",
+        "cookies_google_limpo_backup.json",
+        "ask_session.json",
+        "ask_session_backup.json",
+    ):
+        source = GOOGLE_STATE_ACTIVE / name
+        if not source.is_file() or source.stat().st_size <= 2:
+            continue
+        target = GOOGLE_STATE_SEED / name
+        # Um container que nao conseguiu recuperar o Modo IA ainda possui a
+        # copia antiga em /tmp. Ele nunca deve sobrescrever uma semente mais
+        # nova publicada por outro container saudavel.
+        if target.is_file() and source.stat().st_mtime <= target.stat().st_mtime:
+            continue
+        temporary = GOOGLE_STATE_SEED / f".{name}.{socket.gethostname()}.{os.getpid()}.tmp"
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+        copied = True
+    if copied:
+        google_state.commit()
+    return copied
+
+
+def _start_state_sync_loop() -> None:
+    """Salva recuperacoes feitas durante solves longos sem reiniciar o app."""
+    def worker() -> None:
+        while True:
+            time.sleep(60)
+            try:
+                _persist_instance_state()
+            except Exception as exc:
+                print(f"[state] falha ao persistir sessao: {type(exc).__name__}", flush=True)
+
+    threading.Thread(target=worker, name="google-state-sync", daemon=True).start()
+
+
 def _prune_debug_artifacts() -> int:
     """Mantem sete dias e compacta evidencias que nao estao mais em uso."""
     completed = subprocess.run(
@@ -276,6 +317,11 @@ def _prewarm_google_ai_session() -> None:
         )
         elapsed = time.monotonic() - started
         if completed.returncode == 0:
+            try:
+                persisted = _persist_instance_state()
+                print(f"[prewarm] semente atualizada: {persisted}.", flush=True)
+            except Exception as exc:
+                print(f"[prewarm] sessao pronta; falha ao publicar semente: {type(exc).__name__}", flush=True)
             print(f"[prewarm] sessao Google Modo IA pronta em {elapsed:.1f}s.", flush=True)
             return
         tail = (completed.stderr or "").strip().splitlines()[-1:] or [""]
@@ -383,6 +429,7 @@ def solver_server() -> None:
     _prepare_instance_state()
     _start_artifact_retention_loop()
     _prewarm_google_ai_session()
+    _start_state_sync_loop()
     # O projeto organizado mantem o listener da API em 127.0.0.1. O relay
     # expoe somente a porta esperada pelo web_server do Modal.
     relay_command = [
@@ -409,7 +456,7 @@ def solver_server() -> None:
             "--max-solver-failures",
             "20",
             "--max-solve-seconds",
-            "150",
+            os.environ.get("PORTAL_MODAL_MAX_SOLVE_SECONDS", "90"),
         ]
     # Mantem o stdout no painel do Modal e uma copia persistente por container.
     log_path = GOOGLE_ARTIFACT_ROOT / f"service-{socket.gethostname()}.log"

@@ -128,10 +128,9 @@
                   <div><label>Notas</label><select name="modo"><option value="recebidas">Recebidas</option><option value="emitidas">Emitidas</option><option value="ambos">Recebidas e emitidas</option></select></div>
                   <div><label>Arquivos</label><select name="tipo_download"><option value="ambos">XML e PDF</option><option value="xml">Só XML</option><option value="pdf">Só PDF</option></select></div>
                   <div><label>Limite teste</label><input name="max_items" type="number" min="0" max="5000" value="0"></div>
-                  <div><label>Concorrência</label><input name="concorrencia" type="number" min="1" max="16" value="1"></div>
                   <div><label>Tentativas</label><input name="retries" type="number" min="1" max="20" value="8"></div>
                 </div>
-                <p class="muted" style="margin:8px 0 0;">Períodos longos são consultados em janelas de até 30 dias e unidos sem duplicar notas. A competência pode ser anterior ao período informado.</p>
+                <p class="muted" style="margin:8px 0 0;">Períodos longos são consultados em janelas de até 30 dias e unidos sem duplicar notas. A competência pode ser anterior ao período informado. A velocidade é ajustada automaticamente pelo servidor.</p>
                 <div class="actions"><button id="btnStart" type="submit">Iniciar run</button></div>
               </form>
               <div id="certNotice"></div>
@@ -236,7 +235,6 @@
         modo: fd.get("modo"),
         tipo_download: fd.get("tipo_download"),
         max_items: Number(fd.get("max_items") || 0),
-        concorrencia: Number(fd.get("concorrencia") || 1),
         retries: Number(fd.get("retries") || 8),
         renovar_sessao: true
       };

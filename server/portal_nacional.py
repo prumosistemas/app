@@ -34,6 +34,10 @@ DEFAULT_SOLVER_URL = os.getenv(
     "PORTAL_NACIONAL_SOLVER_URL",
     "https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve",
 ).strip()
+PORTAL_DOWNLOAD_CONCURRENCY = max(
+    1,
+    min(8, int(os.getenv("PORTAL_NACIONAL_DOWNLOAD_CONCURRENCY", "4"))),
+)
 
 router = APIRouter(prefix="/api/portal-nacional", tags=["portal-nacional"])
 
@@ -50,14 +54,12 @@ class PortalRunPayload(BaseModel):
     cert_index: int = 0
     renovar_sessao: bool = True
     max_items: int = 0
-    concorrencia: int = 4
     retries: int = 6
 
 
 class PortalRetryPayload(BaseModel):
     tipo_download: str = Field(default="ambos")
     max_items: int = 0
-    concorrencia: int = 4
     retries: int = 6
 
 
@@ -303,7 +305,10 @@ def _normalize_cfg(payload: PortalRunPayload | PortalRetryPayload | Dict[str, An
         "cert_index": cert_index,
         "renovar_sessao": bool(raw.get("renovar_sessao", True)),
         "max_items": _safe_int(raw.get("max_items"), 0, 0, 5000),
-        "concorrencia": _safe_int(raw.get("concorrencia"), 4, 1, 16),
+        # A capacidade e definida pelo servidor. Aceitar um numero arbitrario
+        # do navegador desequilibra duas pessoas simultaneas e aumenta timeout
+        # sem criar capacidade real no Modal/ThinkPad.
+        "concorrencia": PORTAL_DOWNLOAD_CONCURRENCY,
         "retries": _safe_int(raw.get("retries"), 6, 1, 20),
     }
 
@@ -633,7 +638,11 @@ async def portal_state(ctx: WorkerContext = Depends(get_worker_context)) -> Dict
         "certificate_error": certificate_error,
         "active_run_id": (_active_runtime(ctx) or {}).get("run_id"),
         "runs": [_compact_run(ctx, path.parent) for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)],
-        "limits": {"concorrencia_max": 16, "max_items_max": 5000},
+        "limits": {
+            "concorrencia": PORTAL_DOWNLOAD_CONCURRENCY,
+            "concorrencia_automatica": True,
+            "max_items_max": 5000,
+        },
     }
 
 

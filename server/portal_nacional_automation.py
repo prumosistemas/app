@@ -1713,7 +1713,19 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
             files_by_tipo[tipo] = existing
             methods_by_tipo.setdefault(tipo, f"existing_{tipo}")
             continue
-        result = download_item_tipo_requests(session, item, solver_url, download_dir, tipo)
+        try:
+            result = download_item_tipo_requests(session, item, solver_url, download_dir, tipo)
+        except Exception as exc:
+            # Preserve o tipo anterior ja concluido. Antes, uma excecao no PDF
+            # descartava o XML obtido na mesma tentativa e o captcha do XML era
+            # pago/resolvido novamente no retry.
+            errors.append({
+                "ok": False,
+                "reason": sanitized_solver_error(exc),
+                "tipo": tipo,
+                "exception_kind": type(exc).__name__,
+            })
+            break
         if result.get("ok"):
             files_by_tipo[tipo] = result.get("file")
             methods_by_tipo[tipo] = result.get("method")

@@ -25,7 +25,7 @@ Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o es
 
 1. Confirme `/health`: `provider=google_ai_mode`, `route=direct` e circuitos fechados.
 2. Confirme que o certificado abre antes de criar a run.
-3. Em diagnóstico, inicie com `max_items=1`, `concorrencia=1` e pelo menos 6 tentativas. Em produção validada, use concorrência 4.
+3. Em diagnóstico, inicie com `max_items=1` e pelo menos 6 tentativas. A concorrência é definida automaticamente pelo backend em quatro tarefas e não aparece no HTML.
 4. Aguarde a run terminar; não reinicie durante um solve ativo de até 420 segundos.
 5. Valide `item_downloaded`, os arquivos XML/PDF e o status final.
 6. Só depois aumente o lote.
@@ -82,3 +82,11 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - Cada janela percorre todas as páginas e só é aceita quando os IDs únicos capturados coincidem com o total informado pelo Portal. Após três varreduras incompletas, a run falha antes dos downloads.
 - Os IDs de todas as janelas são unidos e deduplicados. A competência da nota não é filtrada, então competências retroativas, inclusive maio dentro de uma consulta posterior, permanecem no resultado.
 - O índice registra as janelas, totais individuais, soma bruta, quantidade global única e duplicados entre janelas. Na sessão SIM7, os totais observados foram 169 para 01/06-30/06 e 205 para 01/07-17/07.
+
+## Desempenho e isolamento - correção de 2026-07-18
+
+- A run SIM7 de 01/06 a 17/07 concluiu 374 PDFs e 374 XMLs referenciados, sem erro final. A duração de 8h26 e 546 inícios de item expôs retrabalho entre XML e PDF.
+- A partir da 1.0.52, sucesso do XML é preservado no índice mesmo se o solver do PDF lançar exceção; o retry continua no PDF e não paga outro captcha do XML.
+- Uma sessão Modo IA recuperada por container é sincronizada a cada minuto com o Volume privado e imediatamente após o prewarm. Containers frios passam a receber a semente saudável mais recente.
+- O timeout visual no Modal foi reduzido de 150 para 90 segundos; desafios não concluídos seguem para failover sem prender as quatro tarefas por vários minutos.
+- Alan e Gabriel usam raízes de dados e runtimes distintos. A prova pela API em produção mostrou zero run IDs em comum; Gabriel recebeu 404 ao solicitar diretamente a run SIM7 do Alan.
