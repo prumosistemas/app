@@ -85,6 +85,17 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
     assert calls == ["https://primary.example/solve", "https://fallback.example/solve"]
 
 
+def test_cold_health_timeout_keeps_primary_for_real_post(monkeypatch) -> None:
+    def timeout(*args, **kwargs):
+        raise requests.ReadTimeout("container em prewarm")
+
+    monkeypatch.setattr(automation.requests, "get", timeout)
+
+    primary = "https://primary.example/solve"
+    assert automation.require_solver_api(primary) == primary
+    assert automation.SOLVER_ENDPOINT_COOLDOWNS == {}
+
+
 def test_visual_failure_skips_second_modal_and_uses_local_solver(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(
@@ -216,6 +227,12 @@ def test_not_ready_is_scoped_to_the_current_captcha() -> None:
     assert automation.solver_endpoint_cooldown_seconds(
         RuntimeError("solver:visual_challenge_not_ready: sessao visual indisponivel")
     ) == 0
+
+
+def test_google_session_failure_cools_only_that_endpoint() -> None:
+    assert automation.solver_endpoint_cooldown_seconds(
+        RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel")
+    ) == 300
 
 
 def test_endpoint_outages_still_open_cooldown() -> None:

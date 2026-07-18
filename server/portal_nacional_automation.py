@@ -1307,6 +1307,12 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         return 300
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
+    # Diferente de uma grade apenas instavel, este erro preservado confirma que
+    # a sessao Google Modo IA daquele endpoint nao se formou. Evite pagar o
+    # mesmo recovery em todas as notas do lote; a atual tenta a proxima conta e
+    # as seguintes pulam o endpoint por cinco minutos.
+    if "google_ai_request_failed" in detail:
+        return 300
     # Este retorno tambem aparece em uma unica grade ainda carregando. Ele nao
     # prova que o pool Modal inteiro perdeu a sessao: colocar o endpoint em
     # cooldown aqui desviava simultaneamente todas as outras notas para o
@@ -1361,37 +1367,27 @@ def wait_for_solver_candidates(primary: str) -> list[str]:
 
 
 def require_solver_api(solver_url: str) -> str:
-    last_error: Exception | None = None
-    candidates = solver_url_candidates(solver_url)
-    for candidate_index, candidate in enumerate(candidates):
-        attempts = 2 if candidate_index == 0 and len(candidates) > 1 else 6
-        for attempt in range(1, attempts + 1):
-            try:
-                response = requests.get(solver_api_health_url(candidate), timeout=12)
-                response.raise_for_status()
-                health = response.json()
-                fatal = health.get("fatal_circuit") or {}
-                if fatal.get("open"):
-                    # No Modal o circuito e local ao container. Rejeitar todo o
-                    # endpoint aqui impede que a requisicao alcance outra
-                    # instancia saudavel do pool. O POST decide e faz fallback.
-                    print(
-                        "[Solver] Health degradado em um container; "
-                        f"tentando o pool: {fatal.get('reason') or 'solver'}"
-                    )
-                if candidate != solver_url:
-                    print(f"[Solver] Usando fallback saudavel: {candidate}")
-                return candidate
-            except Exception as exc:
-                last_error = exc
-                cooldown = mark_solver_endpoint_unavailable(candidate, exc)
-                print(
-                    f"[Solver] Health indisponivel ({attempt}/{attempts}) em {candidate}: "
-                    f"{exc}; cooldown={cooldown}s"
-                )
-                if attempt < attempts:
-                    time.sleep(min(3 * attempt, 12))
-    raise RuntimeError(f"Nenhum solver ficou disponivel: {last_error}")
+    # O health de um container Modal frio pode expirar enquanto o prewarm ainda
+    # esta formando a sessao. Ele e apenas diagnostico: escolher aqui outro URL
+    # desviava a run inteira e duplicava a decisao de failover que ja ocorre em
+    # cada POST /solve. Preserve sempre a rota primaria; a chamada real marca
+    # cooldown por 429/5xx/transporte e tenta os fallbacks na ordem correta.
+    try:
+        response = requests.get(solver_api_health_url(solver_url), timeout=12)
+        response.raise_for_status()
+        health = response.json()
+        fatal = health.get("fatal_circuit") or {}
+        if fatal.get("open"):
+            print(
+                "[Solver] Health degradado em um container; "
+                f"o POST testara o pool: {fatal.get('reason') or 'solver'}"
+            )
+    except Exception as exc:
+        print(
+            "[Solver] Health inconclusivo; o POST real decidira o failover: "
+            f"{sanitized_solver_error(exc)}"
+        )
+    return solver_url
 
 
 def solver_response_json(response: requests.Response) -> dict:

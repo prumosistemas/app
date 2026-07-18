@@ -17,7 +17,7 @@ PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacio
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
-A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente: 429 troca de conta por 300 segundos; 5xx/circuito por 90 segundos; falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e nao derrubam a conta inteira.
+A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente: 429 ou sessão Google confirmadamente indisponível troca de conta por 300 segundos; 5xx/circuito por 90 segundos; falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e nao derrubam a conta inteira.
 
 Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o estado anônimo fica no Volume privado. No ThinkPad, fica em `/opt/prumo/data/_api_data/google_ai_solver_state`, coberto pelo volume persistente; somente o código entra no Git e na imagem.
 
@@ -89,6 +89,7 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - A partir da 1.0.52, sucesso do XML é preservado no índice mesmo se o solver do PDF lançar exceção; o retry continua no PDF e não paga outro captcha do XML.
 - Na 1.0.53, uma sessão Modo IA recuperada por container é sincronizada a cada 15 segundos com o Volume privado e imediatamente após o prewarm. Cada container recarrega a semente antes de iniciar; a recuperação Chrome usa uma tentativa curta configurada, em vez de três ciclos longos.
 - Na 1.0.54, a causa do provedor não é sobrescrita pelo encerramento visual genérico: sessão Modo IA/navegador indisponível tenta a conta Modal reserva; rejeição visual comum continua no ThinkPad.
+- Na 1.0.55, timeout do health durante cold start é apenas diagnóstico. A run preserva a URL principal e cada POST decide o failover; uma falha confirmada da sessão Google põe apenas aquele endpoint em cooldown por cinco minutos, evitando repetir recovery caro em todas as notas.
 - O timeout visual no Modal foi reduzido de 150 para 90 segundos; desafios não concluídos seguem para failover sem prender as quatro tarefas por vários minutos.
 - Alan e Gabriel usam raízes de dados e runtimes distintos. A prova pela API em produção mostrou zero run IDs em comum; Gabriel recebeu 404 ao solicitar diretamente a run SIM7 do Alan.
 - Logs e imagens de captcha são publicados no Volume privado a cada minuto, com nome por container, e continuam sujeitos à retenção de sete dias.

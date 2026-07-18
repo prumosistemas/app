@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.54.
+Este documento e a fonte de contexto operacional da versao 1.0.55.
 
 ## Estado desejado
 
@@ -177,6 +177,7 @@ Teste local confirmado em 2026-07-06:
 - Se o widget hCaptcha nao abrir, a v19 recarrega o widget com espera crescente e registra `visual_challenge_not_opened`, separado de grade instavel. URLs persistidas em erros nunca mantem query string ou token transitorio.
 - Na 1.0.53, `visual_challenge_not_ready` nao abre cooldown global. Cada container Modal aceita uma entrada ativa, a principal mantem um container e um buffer, e a reserva escala a zero. A sessao anonima recuperada sincroniza em 15 segundos e a recuperacao Chrome usa um ciclo curto.
 - Na 1.0.54, falha real da sessao Google Modo IA ou do navegador preserva sua classificacao e tenta a conta Modal reserva. Apenas rejeicao visual do desafio segue direto ao ThinkPad.
+- Na 1.0.55, timeout do health em cold start nao troca a rota da run inteira. O POST real tenta o pool principal e aplica failover por captcha; falha confirmada da sessao Google abre cooldown somente para aquele endpoint e evita recovery repetido no lote.
 - Desafios hCaptcha ainda dependem do Modo IA; por isso o timeout deve ficar em `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420`, com retries/backoff que reaproveitam arquivos ja baixados.
 
 Gerar sessao pelo IP do servidor usando store Windows, caminho legado:
