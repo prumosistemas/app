@@ -670,6 +670,7 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
     if (!window.hcaptcha || !document.getElementById('hcaptcha-root')) return;
     window.__hcaptchaWidgetId = window.hcaptcha.render('hcaptcha-root', {{
       sitekey,
+      size: 'invisible',
       callback: window.captchaOk,
       'error-callback': window.captchaErro,
       'expired-callback': window.captchaExpirou
@@ -722,6 +723,22 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
 """
                     )
                     if widget_state and widget_state.get("checkboxFrames"):
+                        time.sleep(0.25)
+                        execute_state = client.eval(
+                            """
+(() => ({
+  executeCalled: Boolean(window.__hcaptchaExecuteCalled),
+  executeError: window.__hcaptchaExecuteError || null,
+  tokenReady: Boolean(window.__lastHcaptchaToken)
+}))()
+"""
+                        ) or {}
+                        print(
+                            "[Solver API] Widget oficial pronto: "
+                            f"execute={bool(execute_state.get('executeCalled'))} "
+                            f"erro={bool(execute_state.get('executeError'))} "
+                            f"token={bool(execute_state.get('tokenReady'))}"
+                        )
                         with SOLVER_WIDGET_LOCK:
                             SOLVER_WIDGET_SITEKEYS[port] = sitekey
                         return parent
