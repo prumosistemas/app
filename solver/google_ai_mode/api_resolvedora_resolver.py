@@ -2519,18 +2519,23 @@ def auto_solve_grid(
         set_solver_error("token_nao_voltou", "hCaptcha nao devolveu token depois do submit.")
         time.sleep(2)
     
-    if not grid_seen:
-        if challenge_open_failures and not challenge_opened:
-            set_solver_error(
-                "desafio_nao_abriu",
-                f"Widget hCaptcha nao abriu o desafio apos {challenge_open_failures} ciclos.",
-            )
-        elif non_9_reloads:
-            set_solver_error("nao_achou_9_tiles", f"Nao conseguiu achar 9 tiles apos {non_9_reloads} recarregamentos.")
-        else:
-            set_solver_error("grade_9_nao_estabilizou", f"Grade de 9 tiles nao estabilizou apos {max_refreshes} tentativas.")
-    elif legacy_provider_failed:
-        set_solver_error("nao_consegui_resolver_9_tiles", "Achei 9 tiles, mas nao consegui resolver com a IA dentro do limite.")
+    # Nao esconda um timeout real sob a ultima leitura generica da grade. A
+    # causa preservada orienta o failover e deixa claro quando o desafio abriu,
+    # foi analisado, mas a sequencia completa excedeu o teto da chamada.
+    current_reason = str(get_solver_error().get("reason") or "")
+    if current_reason != "solve_timeout":
+        if not grid_seen:
+            if challenge_open_failures and not challenge_opened:
+                set_solver_error(
+                    "desafio_nao_abriu",
+                    f"Widget hCaptcha nao abriu o desafio apos {challenge_open_failures} ciclos.",
+                )
+            elif non_9_reloads:
+                set_solver_error("nao_achou_9_tiles", f"Nao conseguiu achar 9 tiles apos {non_9_reloads} recarregamentos.")
+            else:
+                set_solver_error("grade_9_nao_estabilizou", f"Grade de 9 tiles nao estabilizou apos {max_refreshes} tentativas.")
+        elif legacy_provider_failed:
+            set_solver_error("nao_consegui_resolver_9_tiles", "Achei 9 tiles, mas nao consegui resolver com a IA dentro do limite.")
     print("[Auto] Falha apos todas as tentativas.")
     return None
 

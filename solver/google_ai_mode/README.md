@@ -23,11 +23,11 @@ O iframe do hCaptcha permanece com animação e temporizadores nativos durante
 toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
 relocalizado no quadro atual imediatamente antes do clique.
 
-Na v36, o documento mínimo do widget é injetado por CDP mantendo a origem
-oficial `https://www.nfse.gov.br`. Isso evita que uma resposta visual correta
-seja recusada por ter sido emitida numa página `127.0.0.1`. O script é carregado
-explicitamente depois da troca do documento, com CSP liberada somente nessa
-página isolada do solver; resets reinjetam o mesmo widget sem perder a origem.
+Na v41, a página oficial da NFS-e é mantida como contexto do widget visível.
+Isso evita que uma resposta visual correta seja recusada por ter sido emitida
+numa página `127.0.0.1`. O script é carregado explicitamente depois da troca do
+documento, com CSP liberada somente nessa página isolada do solver; resets
+reinjetam o mesmo widget sem perder a origem.
 A URL recebida pelo solver é limitada aos hosts oficiais; `PORTAL_SOLVER_PRESERVE_ORIGIN=0` existe
 somente como compatibilidade de rollback para o documento local antigo.
 O canvas visual é reconhecido por sua estrutura e dimensões, sem depender do
@@ -37,9 +37,11 @@ Quando o hCaptcha aprova o checkbox sem exibir grade, o token é recolhido e
 devolvido imediatamente, sem recarregar o widget nem consumir uma análise visual.
 Se o clique no iframe pai não abrir a grade, o solver tenta imediatamente um
 clique CDP dentro do iframe do checkbox, sem esperar o timeout antigo de 30 s.
-O widget é renderizado em modo invisível e o desafio é iniciado primeiro pela
-API oficial `hcaptcha.execute`; os cliques
-ficam como recuperação para widgets que não aceitem execução programática.
+O widget é renderizado em modo visível. O checkbox e a API oficial
+`hcaptcha.execute` são tentados, com cliques CDP como recuperação. Estados que
+existem, mas não contêm grade, canvas, tarefas nem conclusão, renovam o navegador
+após duas leituras; o teto de 240 s permite atravessar várias etapas temporais
+reais sem pagar principal, reserva e fallback por sequências incompletas.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume

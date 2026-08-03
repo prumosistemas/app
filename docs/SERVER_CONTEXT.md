@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.63
+Versao: 1.0.67
 Data: 2026-08-03
 Modo atual: producao unica, sem homologacao ativa
 
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.63",
+  "version": "1.0.67",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -451,7 +451,7 @@ Teste confirmado em 2026-07-06:
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
 - Em 2026-07-16 o Modo IA v19 manteve o contrato visual unificado e adicionou recovery do widget com backoff. `ryangurgell20` e a rota normal; `fabriciofarofa5` fica reservada a quota/indisponibilidade; `127.0.0.1:8876` recebe falha visual especifica sem duplicar custo na conta Modal reserva.
-- Em 2026-07-18 o Modo IA v21 passou a recapturar quadros temporais vazios sem penalizar o provedor. O Modal permanece em 90 s por solve, o fallback residencial usa 240 s e o circuito Modal se rearma em 300 s.
+- Em 2026-08-03 o Modo IA v41 passou a renovar cedo estados sem grade/canvas/tarefas, preservar `solve_timeout` e usar 240 s no Modal e no fallback residencial para sequências temporais com várias etapas. O circuito Modal se rearma em 300 s.
 - A prova pós-deploy no ThinkPad usou o sitekey real observado nos artefatos: a v18 não abriu o widget e terminou com causa genérica; a v19 recarregou o widget, capturou quatro etapas visuais em cerca de 1,4 s cada e devolveu token. O health terminou em `0/4` navegadores ativos.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
@@ -493,8 +493,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.63 .
-docker push ryang20/prumo-api:1.0.63
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.67 .
+docker push ryang20/prumo-api:1.0.67
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -505,10 +505,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.63 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.67 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.63
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.67
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

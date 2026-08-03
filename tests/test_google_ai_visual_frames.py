@@ -187,3 +187,17 @@ def test_truthy_but_empty_challenge_state_renews_browser_early(monkeypatch) -> N
     error = SOLVER.legacy.get_solver_error()
     assert error["reason"] == "desafio_nao_pronto"
     assert "sem grade, canvas ou tarefas" in error["detail"]
+
+
+def test_timeout_reason_is_not_overwritten_by_generic_grid_error(monkeypatch) -> None:
+    monkeypatch.setattr(SOLVER.legacy, "extract_token_from_page", lambda _port: None)
+    monkeypatch.setattr(SOLVER.legacy, "solver_browser_alive", lambda *_args: True)
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "fatal_circuit_state",
+        lambda: {"open": False, "reason": None, "error": None},
+    )
+
+    assert SOLVER.legacy.auto_solve_grid(9222, 0, 1, deadline=0) is None
+    error = SOLVER.legacy.get_solver_error()
+    assert error["reason"] == "solve_timeout"
