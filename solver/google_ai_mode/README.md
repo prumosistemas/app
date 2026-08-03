@@ -12,10 +12,12 @@ Arquivos:
 
 O fluxo visual classifica cada cena como estática, temporal completa,
 trajetória ou desconhecida. Perguntas que dependem do ciclo inteiro (por exemplo,
-"nunca"/"sempre") observam até 40 quadros/~8,6 s, encerram antes quando o
-canvas completa o ciclo e enviam uma única sobreposição de permanência na mesma
-geometria do clique (passagem fraca, permanência forte); a montagem cronológica
-continua salva para depuração. Uma cena
+"nunca"/"sempre") observam até 80 quadros/~17,4 s e só encerram antes depois
+de movimento comprovado, ao menos dez segundos e retorno relativo ao estado
+inicial. A IA continua recebendo uma única sobreposição de permanência na mesma
+geometria do clique (passagem fraca, permanência forte), enquanto os quadros
+extras são processados no próprio container; a montagem cronológica continua
+salva para depuração. Uma cena
 complexa repetida além do limite é trocada pelo botão de atualizar do hCaptcha.
 O loop visual é restaurado antes do clique para que o próprio widget processe
 a interação; o congelamento existe somente durante a análise do Modo IA.

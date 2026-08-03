@@ -28,7 +28,7 @@ def test_never_lands_uses_full_sequence_without_trajectory_override():
     solver = _solver()
     question = "Clique na flor onde a abelha nunca pousa"
 
-    assert solver._temporal_capture_plan(question) == (40, 220)
+    assert solver._temporal_capture_plan(question) == (80, 220)
     assert solver._question_needs_full_temporal_sequence(question)
     assert not solver._question_wants_trajectory_destination(question)
     assert solver._classify_visual_challenge(question)["category"] == "temporal_full"
@@ -84,10 +84,10 @@ def test_montage_coordinates_return_to_original_frame():
     assert converted["escolha"]["y"] == pytest.approx(400, abs=1)
 
 
-def test_temporal_montage_keeps_forty_frames_under_three_megapixels(tmp_path):
+def test_temporal_montage_keeps_eighty_frames_under_three_megapixels(tmp_path):
     solver = _solver()
     frames = []
-    for index in range(40):
+    for index in range(80):
         path = tmp_path / f"quadro-{index + 1:02d}.jpg"
         solver.legacy.Image.effect_noise((1000, 640), 40 + index).convert("RGB").save(path)
         frames.append(path)
@@ -98,9 +98,9 @@ def test_temporal_montage_keeps_forty_frames_under_three_megapixels(tmp_path):
     )
 
     assert result and result.is_file()
-    assert info["frame_count"] == 40
+    assert info["frame_count"] == 80
     assert info["columns"] == 8
-    assert info["rows"] == 5
+    assert info["rows"] == 10
     assert info["montage_width"] * info["montage_height"] < 3_000_000
 
 

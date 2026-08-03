@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v26-occupancy-overlay"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v27-full-temporal-cycle"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -356,9 +356,11 @@ def _question_wants_trajectory_destination(question: str) -> bool:
 def _temporal_capture_plan(question: str) -> tuple[int, int]:
     """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
     if _question_needs_full_temporal_sequence(question):
-        # Teto de 40 quadros/~8,6 s. A captura pode encerrar antes quando o
-        # canvas volta ao primeiro estado depois de pelo menos quatro segundos.
-        return 40, 220
+        # Comecamos a observar quando o desafio ja pode estar no meio da
+        # animacao. Uma janela de ~17,4 s permite atravessar um ciclo inteiro
+        # mesmo nesse caso. O custo de IA continua sendo uma unica imagem de
+        # ocupacao; os quadros extras sao processados localmente no container.
+        return 80, 220
     return 4, 180
 
 
@@ -454,14 +456,14 @@ def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
         return None
     opened = []
     try:
-        for path in usable[:48]:
+        for path in usable[:80]:
             opened.append(legacy.Image.open(path).convert("RGB"))
         source_width, source_height = opened[0].size
         columns = 8 if len(opened) > 32 else 6 if len(opened) > 16 else 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
         rows = math.ceil(len(opened) / columns)
         gap = 6
-        max_canvas_width = 2100
-        max_canvas_height = 1800
+        max_canvas_width = 1900
+        max_canvas_height = 1650
         width_by_canvas = (max_canvas_width - gap * (columns - 1)) // columns
         height_by_canvas = (max_canvas_height - gap * (rows - 1)) // rows
         width_by_height = round(height_by_canvas * source_width / source_height)
@@ -557,23 +559,48 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
     try:
         import numpy as np
 
-        arrays = []
+        selected = usable[:80]
         target_size = None
-        for path in usable[:48]:
+        # A mediana nao precisa reter todos os quadros em RAM. Uma amostra
+        # uniforme fornece o fundo estatico; depois acumulamos a ocupacao em
+        # streaming para usar toda a sequencia com baixo pico de memoria.
+        sample_count = min(21, len(selected))
+        sample_indexes = sorted(
+            {
+                round(index * (len(selected) - 1) / max(1, sample_count - 1))
+                for index in range(sample_count)
+            }
+        )
+        samples = []
+        for index in sample_indexes:
+            path = selected[index]
             with legacy.Image.open(path) as image:
                 rgb = image.convert("RGB")
                 if target_size is None:
                     target_size = rgb.size
                 elif rgb.size != target_size:
                     rgb = rgb.resize(target_size)
-                arrays.append(np.asarray(rgb, dtype=np.uint8))
-        stack = np.stack(arrays, axis=0)
-        background = np.median(stack, axis=0).astype(np.uint8)
-        delta = np.max(np.abs(stack.astype(np.int16) - background.astype(np.int16)), axis=3)
-        occupancy = np.sum(delta >= 34, axis=0).astype(np.float32)
-        # Quatro quadros no mesmo ponto ja representam permanencia forte. Um
-        # unico quadro continua visivel, mas bem mais fraco (trajeto/voo).
-        strength = np.clip(occupancy / 4.0, 0.0, 1.0)
+                samples.append(np.asarray(rgb, dtype=np.uint8))
+        background = np.median(np.stack(samples, axis=0), axis=0).astype(np.uint8)
+        background_i16 = background.astype(np.int16)
+        occupancy = np.zeros(background.shape[:2], dtype=np.float32)
+        processed_count = 0
+        for path in selected:
+            with legacy.Image.open(path) as image:
+                rgb = image.convert("RGB")
+                if rgb.size != target_size:
+                    rgb = rgb.resize(target_size)
+                frame = np.asarray(rgb, dtype=np.uint8)
+            delta = np.max(
+                np.abs(frame.astype(np.int16) - background_i16),
+                axis=2,
+            )
+            occupancy += delta >= 34
+            processed_count += 1
+        # O limiar cresce com a janela: voo rapido fica fraco e pousadas, que
+        # ocupam varios quadros consecutivos, continuam fortes.
+        dwell_frames = max(4, round(processed_count * 0.07))
+        strength = np.clip(occupancy / float(dwell_frames), 0.0, 1.0)
         strength_image = legacy.Image.fromarray((strength * 255).astype(np.uint8), mode="L")
         strength_image = strength_image.filter(ImageFilter.GaussianBlur(radius=4))
         strength = np.asarray(strength_image, dtype=np.float32) / 255.0
@@ -590,7 +617,9 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
         (folder / "evidencia-permanencia-temporal-info.json").write_text(
             json.dumps(
                 {
-                    "frame_count": len(arrays),
+                    "frame_count": processed_count,
+                    "background_sample_count": len(samples),
+                    "strong_dwell_frames": dwell_frames,
                     "columns": 1,
                     "rows": 1,
                     "frame_width": width,
@@ -625,10 +654,9 @@ def _capture_visual_canvas_sequence(
         return []
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
-        # A coleta adaptativa observa ate ~8,6 s depois da estabilizacao do
-        # canvas, mas encerra cedo quando a cena retorna ao primeiro estado.
-        # O teto maior inclui o tempo em que o desafio desenha os quadros.
-        client.ws.settimeout(17 if frame_count > 32 else 13 if frame_count > 16 else 10 if frame_count > 4 else 6)
+        # O teto longo cobre um ciclo completo mesmo quando a coleta comeca no
+        # meio da animacao. O websocket ganha folga para serializar os quadros.
+        client.ws.settimeout(30 if frame_count > 48 else 20 if frame_count > 32 else 13 if frame_count > 16 else 10 if frame_count > 4 else 6)
         try:
             data = client.eval(
                 f"""
@@ -709,18 +737,32 @@ new Promise(async (resolve) => {{
   let initialSignature = null;
   let cycleDetected = false;
   let cycleDifference = null;
+  let maximumChangedRatio = 0;
+  let maximumMeanDelta = 0;
   try {{
     for (let i = 0; i < {max(2, frame_count)}; i++) {{
       frames.push(src.toDataURL('image/jpeg', 0.86));
       const signature = motionSignature();
       if (!initialSignature) {{
         initialSignature = new Uint8ClampedArray(signature);
-      }} else if (
-        {max(2, frame_count)} > 16 &&
-        i * {max(40, interval_ms)} >= 4000
-      ) {{
+      }} else {{
         cycleDifference = signatureDifference(initialSignature, signature);
-        if (cycleDifference.changed_ratio <= 0.006 && cycleDifference.mean_delta <= 1.8) {{
+        maximumChangedRatio = Math.max(maximumChangedRatio, cycleDifference.changed_ratio);
+        maximumMeanDelta = Math.max(maximumMeanDelta, cycleDifference.mean_delta);
+        const elapsed = i * {max(40, interval_ms)};
+        const movedEnough = maximumChangedRatio >= 0.001 || maximumMeanDelta >= 0.35;
+        const returnedNearStart =
+          cycleDifference.changed_ratio <= Math.max(0.00025, maximumChangedRatio * 0.14) &&
+          cycleDifference.mean_delta <= Math.max(0.12, maximumMeanDelta * 0.14);
+        // A regra anterior encerrava em quatro segundos porque a abelha ocupa
+        // poucos pixels da cena. So aceite retorno depois de uma janela longa,
+        // movimento comprovado e diferenca relativa pequena.
+        if (
+          {max(2, frame_count)} > 16 &&
+          elapsed >= 10000 &&
+          movedEnough &&
+          returnedNearStart
+        ) {{
           cycleDetected = true;
           break;
         }}
@@ -756,6 +798,8 @@ new Promise(async (resolve) => {{
     visual_score: score,
     cycle_detected: cycleDetected,
     cycle_difference: cycleDifference,
+    maximum_changed_ratio: maximumChangedRatio,
+    maximum_mean_delta: maximumMeanDelta,
     frames
   }});
 }})
@@ -811,6 +855,8 @@ new Promise(async (resolve) => {{
                     "visual_score": data.get("visual_score"),
                     "cycle_detected": bool(data.get("cycle_detected")),
                     "cycle_difference": data.get("cycle_difference"),
+                    "maximum_changed_ratio": data.get("maximum_changed_ratio"),
+                    "maximum_mean_delta": data.get("maximum_mean_delta"),
                     "capture_method": "canvas_to_data_url_sequence",
                 },
                 ensure_ascii=False,
