@@ -121,10 +121,12 @@ def test_temporal_occupancy_board_preserves_click_geometry(tmp_path):
 
     assert result and result.is_file()
     assert info["frame_count"] == 8
-    assert info["columns"] == 2
+    assert info["columns"] == 1
     assert info["rows"] == 1
     assert info["frame_width"] == 320
     assert info["frame_height"] == 200
+    assert info["montage_width"] == 320
+    assert info["montage_height"] == 200
 
 
 def test_repeated_complex_scene_is_marked_for_rotation(tmp_path):

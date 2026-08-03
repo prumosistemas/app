@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v25-temporal-occupancy"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v26-occupancy-overlay"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -546,10 +546,10 @@ def _build_motion_overlay(folder: Path, frames: list[Path]) -> Path | None:
 def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | None:
     """Resume permanencia temporal sem perder a geometria dos alvos.
 
-    O painel esquerdo e a mediana temporal (fundo/alvos estaticos). O direito
-    sobrepoe calor amarelo/vermelho proporcional ao numero de quadros em que
-    houve mudanca naquele ponto. Passagens rapidas ficam fracas; permanencias
-    ficam fortes. Ambos usam exatamente a geometria clicavel original.
+    O fundo e a mediana temporal (alvos estaticos) e recebe calor
+    amarelo/vermelho proporcional ao numero de quadros em que houve mudanca
+    naquele ponto. Passagens rapidas ficam fracas; permanencias ficam fortes.
+    A imagem final preserva exatamente a geometria clicavel original.
     """
     usable = [path for path in frames if path.is_file() and not legacy.png_seems_blank(path)]
     if len(usable) < 4:
@@ -583,30 +583,24 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
         alpha = (0.72 * strength)[..., None]
         overlaid = (background * (1.0 - alpha) + heat * alpha).astype(np.uint8)
 
-        base_image = legacy.Image.fromarray(background, mode="RGB")
         heat_image = legacy.Image.fromarray(overlaid, mode="RGB")
-        width, height = base_image.size
-        gap = 8
-        board = legacy.Image.new("RGB", (width * 2 + gap, height), "white")
-        board.paste(base_image, (0, 0))
-        board.paste(heat_image, (width + gap, 0))
+        width, height = heat_image.size
         board_path = folder / "evidencia-permanencia-temporal.jpg"
-        board.save(board_path, format="JPEG", quality=90, optimize=False)
+        heat_image.save(board_path, format="JPEG", quality=90, optimize=False)
         (folder / "evidencia-permanencia-temporal-info.json").write_text(
             json.dumps(
                 {
                     "frame_count": len(arrays),
-                    "columns": 2,
+                    "columns": 1,
                     "rows": 1,
                     "frame_width": width,
                     "frame_height": height,
-                    "gap_px": gap,
-                    "montage_width": width * 2 + gap,
+                    "gap_px": 0,
+                    "montage_width": width,
                     "montage_height": height,
                     "source_width": width,
                     "source_height": height,
-                    "left_panel": "temporal_median_background",
-                    "right_panel": "occupancy_heatmap_weak_path_strong_dwell",
+                    "panel": "temporal_median_with_occupancy_heatmap",
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1469,14 +1463,13 @@ def _unified_visual_prompt(
     sequence_note = ""
     if frame_count > 1 and temporal_layout == "occupancy":
         sequence_note = f"""
-A imagem tem DOIS PAINEIS da mesma cena durante {temporal_span_ms / 1000.0:.1f}
-segundos. O painel esquerdo mostra o fundo/alvos estaticos em escala grande. O
-direito mostra os mesmos alvos com um mapa de permanencia: rastros fracos indicam
-passagem rapida e amarelo/vermelho forte indica que o objeto ficou naquele ponto
-por varios quadros. Em perguntas com "pousa", "visita", "nunca" ou "sempre",
-diferencie passagem de permanencia. Compare TODOS os alvos e escolha o ponto exato
-do unico alvo compatível em qualquer painel. As coordenadas continuam 0..1000 da
-imagem inteira e depois serao convertidas para a cena original.
+A imagem e uma SOBREPOSICAO DE PERMANENCIA da mesma cena durante
+{temporal_span_ms / 1000.0:.1f} segundos, mantendo exatamente as coordenadas do
+canvas original. O fundo mostra os alvos estaticos; rastros fracos indicam passagem
+rapida e amarelo/vermelho forte indica que o objeto ficou naquele ponto por varios
+quadros. Em perguntas com "pousa", "visita", "nunca" ou "sempre", diferencie
+passagem de permanencia. Compare TODOS os alvos e escolha o centro exato do unico
+alvo compativel nas coordenadas 0..1000 da imagem.
 """
     elif frame_count > 1 and temporal_layout == "montage":
         sequence_note = f"""
