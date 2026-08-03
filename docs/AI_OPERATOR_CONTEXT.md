@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
 Versao do app: **1.0.58**
-Atualizado em: **2026-07-18**
+Atualizado em: **2026-08-03**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -42,6 +42,10 @@ Este arquivo substitui comandos antigos com `wrangler`, `modal profile` ou
 variaveis secretas escritos em snapshots historicos. Os detalhes arquiteturais
 dos documentos antigos continuam validos, mas a interface operacional canonica
 e `ops.prumo_ops`.
+
+Na cobrança, nunca trate `billing_disabled` como decisão manual do administrador.
+Pagamento confirmado limpa somente o bloqueio financeiro; `manual_disabled`
+permanece até o administrador reativar explicitamente o colaborador.
 
 ## Topologia atual
 

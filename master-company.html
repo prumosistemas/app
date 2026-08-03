@@ -107,13 +107,14 @@
       if(user.deletion_status)return'<span class="pill bad">Exclusão pendente</span>';
       if(Number(company.disabled)===1&&user.role==="member")return'<span class="pill bad">Bloqueado pela empresa</span>';
       if(Number(company.disabled)===1&&user.role==="owner")return'<span class="pill warn">Somente leitura</span>';
-      return Number(user.disabled)===1?'<span class="pill bad">Desativado</span>':'<span class="pill ok">Ativo</span>';
+      if(user.role==="member"&&Number(user.billing_disabled)===1)return'<span class="pill warn">Pagamento pendente</span>';
+      return Number(user.manual_disabled)===1?'<span class="pill bad">Desativado</span>':'<span class="pill ok">Ativo</span>';
     }
     function metric(label,value){return`<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;}
     function userStatus(user){
       if(user.deletion_status)return'<span class="pill bad">Exclusão pendente</span>';
-      if(Number(user.billing_disabled)===1)return'<span class="pill warn">Pagamento vencido</span>';
-      if(Number(user.disabled)===1)return'<span class="pill bad">Desativado</span>';
+      if(Number(user.billing_disabled)===1)return`<span class="pill warn">Pagamento pendente</span>${Number(user.manual_disabled)===1?'<br><span class="small">Também desativado pelo administrador</span>':""}`;
+      if(Number(user.manual_disabled)===1)return'<span class="pill bad">Desativado</span>';
       return '<span class="pill ok">Ativo</span>';
     }
     function csvEscape(value){ return `"${String(value??"").replaceAll('"','""')}"`; }
@@ -166,13 +167,13 @@
     function render(){
       const stats=company.stats||{}; const totals=stats.totals||{}; const storage=stats.storage||{}; const statUsers=new Map((stats.users||[]).map(item=>[String(item.user_id),item]));
       $("companyName").textContent=company.name||"Empresa"; $("companyId").textContent=company.id||"";
-      $("globalMsg").className=`notice ${company.deletion_status?"err":Number(company.disabled)===1?"info":"ok"}`;
-      $("globalMsg").textContent=company.deletion_status?"Exclusão sincronizada em andamento.":Number(company.disabled)===1?"Empresa desativada. O administrador possui acesso somente leitura.":"Empresa ativa.";
+      $("globalMsg").className=`notice ${company.deletion_status?"err":Number(company.disabled)===1?"info":company.billing_pending?"err":"ok"}`;
+      $("globalMsg").textContent=company.deletion_status?"Exclusão sincronizada em andamento.":Number(company.disabled)===1?"Empresa desativada. O administrador possui acesso somente leitura.":company.billing_pending?`Pagamento pendente. Colaboradores sem acesso. Ativo até: ${ts(company.billing_active_until)}.`:"Empresa ativa.";
       $("summaryCards").innerHTML=[
         ["Usuários",company.users?.length||0],["Colaboradores",company.member_count||0],["CNPJs únicos",totals.cnpjs_unique||0],
         ["Itens cadastrados",totals.items||0],["Contas ISS",totals.accounts||0],["Runs",totals.runs||0],
       ].map(item=>metric(item[0],item[1])).join("");
-      $("companyMeta").innerHTML=`<div>Administrador: <code>${esc(company.owner_email||"-")}</code></div><div>Status: ${Number(company.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</div><div>Criada em: <code>${esc(ts(company.created_at))}</code></div><div>Conjuntos: <b>${Number(totals.datasets||0)}</b> · Retries: <b>${Number(totals.retries||0)}</b></div>`;
+      $("companyMeta").innerHTML=`<div>Administrador: <code>${esc(company.owner_email||"-")}</code></div><div>Status: ${Number(company.disabled)===1?'<span class="pill bad">Desativada</span>':company.billing_pending?'<span class="pill warn">Pendente</span>':'<span class="pill ok">Ativa</span>'}</div><div>Ativo até: <code>${esc(ts(company.billing_active_until))}</code></div><div>Criada em: <code>${esc(ts(company.created_at))}</code></div><div>Conjuntos: <b>${Number(totals.datasets||0)}</b> · Retries: <b>${Number(totals.retries||0)}</b></div>`;
       const orphan=(storage.orphan_user_folders||[]);
       $("storageMeta").innerHTML=`<div>Status: ${storage.healthy===false?'<span class="pill bad">Verificar</span>':'<span class="pill ok">Saudável</span>'}</div><div>Pasta: <code>${esc(storage.path||"-")}</code></div><div>Arquivos: <b>${Number(storage.files||0)}</b> · Pastas: <b>${Number(storage.folders||0)}</b> · Tamanho: <b>${esc(bytes(storage.bytes))}</b></div><div>Última alteração: <code>${esc(ts(storage.last_modified_at))}</code></div>${orphan.length?`<div class="notice err">Pastas órfãs: ${esc(orphan.join(", "))}</div>`:""}`;
       $("usersTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Email</th><th>Tipo</th><th>Status</th><th>Último login</th><th>Ação</th></tr></thead><tbody>${(company.users||[]).map(user=>`<tr><td>${esc(user.email)}</td><td>${esc(role(user.role))}</td><td>${userStatus(user)}</td><td>${esc(ts(user.current_login_at))}</td><td><button class="secondary" data-open-user="${esc(user.id)}">Ver dados</button></td></tr>`).join("")}</tbody></table></div>`;

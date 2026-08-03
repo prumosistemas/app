@@ -19,6 +19,19 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-18
 
+### Atualização de cobrança em 2026-08-03
+
+- O Worker separa bloqueio financeiro (`billing_disabled`) de desativação feita pelo administrador (`manual_disabled`). Pagamento pendente bloqueia os colaboradores e informa o email do administrador somente depois de a senha correta ser validada; a confirmação do pagamento remove apenas o bloqueio financeiro.
+- O painel da empresa mostra aviso vermelho persistente, identifica colaboradores como `Pagamento pendente`, oculta `Reativar` durante a pendência e abriu diretamente em `Usuários`; a antiga `Visão geral` foi removida. A aba de pagamento orienta `Contate o responsável`.
+- O painel master mostra a empresa como `Pendente` quando `active_until` expirou, sem confundir cobrança com a ação manual `Desativar empresa`. A suíte local passou com 98 testes Pytest e 52 testes Unittest antes da publicação.
+
+### Correção ISS/login em 2026-08-03
+
+- A criação de conta do ISS usa a rota canônica `POST /py/api/accounts`, sem barra final. O proxy também normaliza barras finais antes de chamar o FastAPI. Isso elimina o `307` que apontava para `http://api.prumosistemas.com.br/api/accounts` e fazia o Worker responder `A API interna não respondeu.` ao tentar reutilizar o corpo do POST.
+- `login-farol.png` e `iss-fortaleza-logo.png` estavam no Netlify, mas eram interceptados pelos padrões do Worker `/login*` e `/iss-fortaleza*`. O Worker agora encaminha apenas esses dois caminhos exatos para a origem estática; ambos foram validados em produção com HTTP 200 e `image/png`.
+- A troca obrigatória de senha conserva somente o aviso fixo `Sua conta exige troca de senha antes de continuar.`; os dois avisos dinâmicos redundantes foram removidos.
+- Worker publicado sem alterar bindings, segredos, rotas ou cron. API e container 1.0.58 permaneceram saudáveis. Validação local: 102 testes Pytest e 52 testes Unittest.
+
 - API alvo: 1.0.58, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - Portal Nacional: o período é dividido por mês em janelas inclusivas de até 30 dias, cada janela é validada contra o total informado pelo Portal e os IDs são unidos sem duplicação. O período não filtra a competência: notas retroativas continuam incluídas. Para a SIM7, o Portal informou 169 emitidas em 01/06-30/06 e 205 em 01/07-17/07.
 - Portal Alan/SIM7: a prova completa de 01/06 a 17/07 finalizou 374/374, com janelas 169/169 e 205/205, zero duplicata e zero erro final. Foram removidos 62 XMLs órfãos de tentativas antigas depois de validar fisicamente os 374 XMLs e 374 PDFs referenciados; nenhum arquivo válido foi removido.

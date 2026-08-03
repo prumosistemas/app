@@ -553,7 +553,6 @@
         if (data.authenticated) {
           if (data.user?.must_change_password) {
             showChangePassword();
-            setMsg("warn", "Sessão válida, mas a troca de senha é obrigatória.");
             return;
           }
 
@@ -568,6 +567,7 @@
     }
 
     function showChangePassword() {
+      clearMsg();
       $("formTitle").textContent = "Trocar senha";
       $("loginForm").classList.add("hidden");
       $("changePasswordForm").classList.remove("hidden");
@@ -609,7 +609,6 @@
 
         if (data.must_change_password) {
           showChangePassword();
-          setMsg("warn", "Login aceito. Troque a senha para continuar.");
           return;
         }
 

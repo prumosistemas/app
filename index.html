@@ -336,6 +336,7 @@
           <p id="pageSubtitle">Escolha uma aplicação para continuar.</p>
         </div>
       </div>
+      <div id="billingPendingBanner" class="notice err hidden" style="margin-bottom:18px;font-weight:600;" role="alert"></div>
 
       <section id="toolsSection" class="section active">
         <div id="toolsMsg"></div>
@@ -565,6 +566,13 @@
       $("meEmail").textContent = user.email || "-";
       $("meRole").textContent = roleLabel(user.role);
       $("meCompany").textContent = user.company_name || user.company_id || "-";
+
+      const billingBanner = $("billingPendingBanner");
+      const billingPending = user.role === "owner" && user.billing && user.billing.active === false;
+      billingBanner.classList.toggle("hidden", !billingPending);
+      billingBanner.textContent = billingPending
+        ? `Pagamento pendente. Seus colaboradores não conseguirão acessar até a confirmação do pagamento. Ativo até: ${user.billing.active_until ? formatTs(user.billing.active_until) : "nenhum pagamento confirmado"}. Contate o responsável.`
+        : "";
 
       if (user.must_change_password) {
         $("passwordMsg").innerHTML = msg("warn", "Sua conta precisa trocar a senha temporária antes de continuar.");

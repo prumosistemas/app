@@ -3581,7 +3581,7 @@ $("btnSaveAccount").addEventListener("click",async()=>{
     if(!alias)throw new Error("Informe o alias/nome da conta.");
     if(accountAliasExists(alias,id))throw new Error("Já existe uma conta com este nome.");
     const payload={ alias, usuario:$("accountUsuario").value.trim(), senha:$("accountSenha").value.trim() };
-    const path=id?"/py/api/accounts/"+encodeURIComponent(id):"/py/api/accounts/";
+    const path=id?"/py/api/accounts/"+encodeURIComponent(id):"/py/api/accounts";
     const method=id?"PUT":"POST";
     const saved=await apiFetch(path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const acc=saved?.account||saved?.data||saved;

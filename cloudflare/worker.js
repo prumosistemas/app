@@ -54,6 +54,14 @@ const LIGHT_CLEANUP_INTERVAL_SECONDS = 60;
 const HEAVY_CLEANUP_INTERVAL_SECONDS = 3600;
 const BILLING_STATE_REFRESH_SECONDS = 60;
 
+// Estes arquivos vivem na origem estática (Netlify), mas os padrões
+// /login* e /iss-fortaleza* também os fazem passar por este Worker.
+// A lista explícita evita liberar caminhos arbitrários da origem.
+const ORIGIN_STATIC_ASSET_PATHS = new Set([
+  "/login-farol.png",
+  "/iss-fortaleza-logo.png",
+]);
+
 let migrationPromise = null;
 let lastLightCleanupAt = 0;
 let lastHeavyCleanupAt = 0;
@@ -77,6 +85,10 @@ export default {
             "x-content-type-options": "nosniff",
           },
         });
+      }
+
+      if (["GET", "HEAD"].includes(request.method) && ORIGIN_STATIC_ASSET_PATHS.has(url.pathname)) {
+        return await fetch(request);
       }
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/" || url.pathname === "")) {
@@ -424,6 +436,7 @@ async function handleLoginPost(request, env, ctx) {
       u.password_hash,
       u.disabled,
       u.manual_disabled,
+      u.billing_disabled,
       u.company_id,
       u.role,
       u.must_change_password,
@@ -434,18 +447,8 @@ async function handleLoginPost(request, env, ctx) {
     LIMIT 1
   `).bind(email).first();
 
-  if (user) {
-    const billingState = await maybeApplyBillingStateForCompany(env.db, user.company_id);
-    if (user.role === "member") {
-      user.disabled = Number(user.manual_disabled) === 1 || !billingState.active ? 1 : 0;
-    }
-  }
-
-  if (
-    !user ||
-    Number(user.disabled) === 1 ||
-    (Number(user.company_disabled) === 1 && user.role !== "owner")
-  ) {
+  let billingState = null;
+  if (!user) {
     await fakePasswordDelay(env);
     return jsonResponse(request, env, { ok: false, error: "Email ou senha inválidos." }, 401);
   }
@@ -456,7 +459,28 @@ async function handleLoginPost(request, env, ctx) {
     return jsonResponse(request, env, { ok: false, error: "Email ou senha inválidos." }, 401);
   }
 
+  billingState = await maybeApplyBillingStateForCompany(env.db, user.company_id);
+  if (user.role === "member") {
+    user.disabled = Number(user.manual_disabled) === 1 || !billingState.active ? 1 : 0;
+    user.billing_disabled = billingState.active ? 0 : 1;
+  }
+
   await clearLoginRateLimits(env.db, ip, emailHash);
+
+  if (user.role === "member") {
+    const ownerEmail = await getCompanyOwnerEmail(env.db, user.company_id);
+    if (!billingState?.active || Number(user.billing_disabled) === 1) {
+      return jsonResponse(request, env, memberAccessDeniedPayload("billing_pending", ownerEmail), 403);
+    }
+    if (Number(user.manual_disabled) === 1) {
+      return jsonResponse(request, env, memberAccessDeniedPayload("manually_disabled", ownerEmail), 403);
+    }
+    if (Number(user.company_disabled) === 1) {
+      return jsonResponse(request, env, memberAccessDeniedPayload("company_disabled", ownerEmail), 403);
+    }
+  } else if (Number(user.disabled) === 1 || (Number(user.company_disabled) === 1 && user.role !== "owner")) {
+    return jsonResponse(request, env, { ok: false, error: "Email ou senha inválidos." }, 401);
+  }
 
   const ts = now();
 
@@ -496,6 +520,7 @@ async function handleLoginPost(request, env, ctx) {
       ok: true,
       must_change_password: Number(user.must_change_password) === 1,
       company_disabled: Number(user.company_disabled) === 1,
+      billing: user.role === "owner" ? billingState : null,
       csrf,
       session_token: session.rawToken,
       user: {
@@ -554,7 +579,7 @@ async function handleMe(request, env) {
     return jsonResponse(
       request,
       env,
-      { authenticated: false },
+      { authenticated: false, ...(auth.denial || {}) },
       401,
       auth.clearCookie ? clearSessionCookie(env) : null
     );
@@ -576,6 +601,7 @@ async function handleMe(request, env) {
       company_name: auth.user.company_name,
       must_change_password: Boolean(auth.user.must_change_password),
       company_disabled: Boolean(auth.user.company_disabled),
+      billing: auth.user.billing || null,
       last_login_at: auth.user.last_login_at,
       current_login_at: auth.user.current_login_at,
     },
@@ -698,12 +724,17 @@ async function handleMasterListCompanies(request, env) {
     const stats = await fetchPythonCompanyStats(env, auth.user, company.id);
     enriched.push({
       ...company,
+      billing_active_until: Number(company.billing_active_until || 0) || null,
+      billing_active: Number(company.billing_active_until || 0) >= now(),
+      billing_pending: Number(company.billing_active_until || 0) < now(),
       deletion_status: deletionJobs.get(`company:${company.id}`)?.status || null,
       is_master_company: users.some((user) => user.role === "master"),
       users,
       member_count: users.filter((user) => user.role === "member").length,
       active_member_count: users.filter((user) => user.role === "member" && Number(user.disabled) === 0).length,
       disabled_member_count: users.filter((user) => user.role === "member" && Number(user.disabled) === 1).length,
+      manual_disabled_member_count: users.filter((user) => user.role === "member" && Number(user.manual_disabled) === 1).length,
+      billing_pending_member_count: users.filter((user) => user.role === "member" && Number(user.billing_disabled) === 1).length,
       stats,
     });
   }
@@ -740,12 +771,17 @@ async function handleMasterGetCompany(request, env) {
     ok: true,
     company: {
       ...company,
+      billing_active_until: Number(company.billing_active_until || 0) || null,
+      billing_active: Number(company.billing_active_until || 0) >= now(),
+      billing_pending: Number(company.billing_active_until || 0) < now(),
       deletion_status: deletionJobs.get(`company:${company.id}`)?.status || null,
       is_master_company: users.some((user) => user.role === "master"),
       users,
       member_count: users.filter((user) => user.role === "member").length,
       active_member_count: users.filter((user) => user.role === "member" && Number(user.disabled) === 0).length,
       disabled_member_count: users.filter((user) => user.role === "member" && Number(user.disabled) === 1).length,
+      manual_disabled_member_count: users.filter((user) => user.role === "member" && Number(user.manual_disabled) === 1).length,
+      billing_pending_member_count: users.filter((user) => user.role === "member" && Number(user.billing_disabled) === 1).length,
       stats: detail,
     },
   });
@@ -1316,7 +1352,7 @@ async function handleListUsers(request, env) {
     return jsonResponse(request, env, { ok: false, error: "Troca de senha obrigatória." }, 403);
   }
 
-  await applyBillingStateForCompany(env.db, auth.user.company_id);
+  const billing = await applyBillingStateForCompany(env.db, auth.user.company_id);
   const users = await getCompanyUsers(env.db, auth.user.company_id);
   const stats = await fetchPythonCompanyStats(env, auth.user, auth.user.company_id);
   const deletionJobs = await getActiveDeletionJobs(env.db);
@@ -1331,6 +1367,7 @@ async function handleListUsers(request, env) {
   return jsonResponse(request, env, {
     ok: true,
     company_disabled: Boolean(auth.user.company_disabled),
+    billing,
     users: users.map((user) => ({
       ...user,
       deletion_status: deletionJobs.get(`member:${user.id}`)?.status || null,
@@ -1373,7 +1410,6 @@ async function handleCreateUser(request, env) {
     FROM users
     WHERE company_id = ?
       AND role = 'member'
-      AND disabled = 0
   `).bind(auth.user.company_id).first();
 
   const totalMembers = Number(countRow?.total || 0);
@@ -1774,7 +1810,11 @@ async function handlePythonProxy(request, env) {
 
   const url = new URL(request.url);
 
-  const path = url.pathname.slice("/py".length) || "/";
+  const rawPath = url.pathname.slice("/py".length) || "/";
+  // As rotas FastAPI deste serviço não terminam em barra. Remover a barra
+  // evita o 307 gerado pelo backend, que apontava para http:// e tentava
+  // reutilizar um corpo POST de uso único dentro do Worker.
+  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, "") : rawPath;
   const base = String(env.PYTHON_API_URL).replace(/\/+$/, "");
   const targetUrl = `${base}${path}${url.search}`;
 
@@ -1819,7 +1859,12 @@ async function handlePythonProxy(request, env) {
     }
     upstreamResponse = await fetch(targetUrl, init);
   } catch (err) {
-    console.error("PY PROXY ERROR:", err);
+    console.error(JSON.stringify({
+      message: "python proxy request failed",
+      method: request.method,
+      path,
+      error: err instanceof Error ? err.message : String(err),
+    }));
 
     return jsonResponse(request, env, {
       ok: false,
@@ -2159,6 +2204,41 @@ async function clearLoginRateLimits(db, ip, emailHash) {
    AUTH / SESSION
 ========================= */
 
+function memberAccessDeniedPayload(reason, ownerEmail) {
+  const contact = ownerEmail ? ` Fale com o administrador da empresa: ${ownerEmail}.` : " Fale com o administrador da empresa.";
+  if (reason === "billing_pending") {
+    return {
+      code: "billing_pending",
+      error: `Pagamento pendente. Não acessível.${contact}`,
+      admin_email: ownerEmail || null,
+    };
+  }
+  if (reason === "manually_disabled") {
+    return {
+      code: "manually_disabled",
+      error: `Acesso desativado pelo administrador da empresa.${contact}`,
+      admin_email: ownerEmail || null,
+    };
+  }
+  return {
+    code: "company_disabled",
+    error: `Empresa temporariamente indisponível.${contact}`,
+    admin_email: ownerEmail || null,
+  };
+}
+
+async function getCompanyOwnerEmail(db, companyId) {
+  if (!companyId) return "";
+  const row = await db.prepare(`
+    SELECT email
+    FROM users
+    WHERE company_id = ?
+      AND role = 'owner'
+    LIMIT 1
+  `).bind(companyId).first();
+  return String(row?.email || "");
+}
+
 async function requireAuth(request, env) {
   const auth = await getAuth(request, env);
 
@@ -2167,7 +2247,7 @@ async function requireAuth(request, env) {
       response: jsonResponse(
         request,
         env,
-        { ok: false, authenticated: false, error: "Não autenticado." },
+        { ok: false, authenticated: false, error: "Não autenticado.", ...(auth.denial || {}) },
         401,
         auth.clearCookie ? clearSessionCookie(env) : null
       ),
@@ -2292,6 +2372,8 @@ async function getAuth(request, env, options = {}) {
       u.role AS role,
       u.must_change_password AS must_change_password,
       u.disabled AS disabled,
+      u.manual_disabled AS manual_disabled,
+      u.billing_disabled AS billing_disabled,
       u.password_changed_at AS password_changed_at,
       u.last_login_at AS last_login_at,
       u.current_login_at AS current_login_at,
@@ -2309,15 +2391,20 @@ async function getAuth(request, env, options = {}) {
     return { ok: false, clearCookie: true };
   }
 
+  let billingState = null;
   if (refreshBilling && row.role !== "master") {
-    await maybeApplyBillingStateForCompany(env.db, row.company_id);
+    billingState = await maybeApplyBillingStateForCompany(env.db, row.company_id);
     const userState = await env.db.prepare(`
-      SELECT disabled
+      SELECT disabled, manual_disabled, billing_disabled
       FROM users
       WHERE id = ?
       LIMIT 1
     `).bind(row.uid).first();
-    if (userState) row.disabled = userState.disabled;
+    if (userState) {
+      row.disabled = userState.disabled;
+      row.manual_disabled = userState.manual_disabled;
+      row.billing_disabled = userState.billing_disabled;
+    }
   }
 
   const currentUserAgentHash = await sha256Hex(
@@ -2339,13 +2426,37 @@ async function getAuth(request, env, options = {}) {
 
   if (
     revoked ||
-    disabled ||
-    (companyDisabled && row.role !== "owner") ||
     absoluteExpired ||
     idleExpired ||
     passwordChangedAfterLogin ||
     userAgentChanged
   ) {
+    await revokeSession(env.db, row.session_hash);
+    return { ok: false, clearCookie: true };
+  }
+
+  const memberDenied = row.role === "member" && (
+    Number(row.billing_disabled) === 1 ||
+    Number(row.manual_disabled) === 1 ||
+    companyDisabled
+  );
+
+  if (memberDenied) {
+    await revokeSession(env.db, row.session_hash);
+    const ownerEmail = await getCompanyOwnerEmail(env.db, row.company_id);
+    const reason = Number(row.billing_disabled) === 1
+      ? "billing_pending"
+      : Number(row.manual_disabled) === 1
+        ? "manually_disabled"
+        : "company_disabled";
+    return {
+      ok: false,
+      clearCookie: true,
+      denial: memberAccessDeniedPayload(reason, ownerEmail),
+    };
+  }
+
+  if (disabled || (companyDisabled && row.role !== "owner")) {
     await revokeSession(env.db, row.session_hash);
     return { ok: false, clearCookie: true };
   }
@@ -2371,6 +2482,7 @@ async function getAuth(request, env, options = {}) {
       role: row.role,
       must_change_password: Number(row.must_change_password) === 1,
       company_disabled: companyDisabled,
+      billing: row.role === "owner" ? billingState : null,
       last_login_at: row.last_login_at === null || row.last_login_at === undefined
         ? null
         : Number(row.last_login_at),
@@ -2539,6 +2651,12 @@ async function getCompaniesForMaster(db) {
       c.name,
       c.created_at,
       c.disabled,
+      (
+        SELECT MAX(p.active_until)
+        FROM payments p
+        WHERE p.company_id = c.id
+          AND p.status = 'paid'
+      ) AS billing_active_until,
       u.id AS owner_id,
       u.email AS owner_email,
       u.last_login_at AS owner_last_login_at,
@@ -2660,18 +2778,26 @@ function summarizeBilling(payments) {
 }
 
 async function isCompanyBillingActive(db, companyId) {
-  if (!companyId) return false;
+  return (await getCompanyBillingState(db, companyId)).active;
+}
+
+async function getCompanyBillingState(db, companyId) {
+  if (!companyId) return { active: false, active_until: null };
   const row = await db.prepare(`
     SELECT MAX(active_until) AS active_until
     FROM payments
     WHERE company_id = ?
       AND status = 'paid'
   `).bind(companyId).first();
-  return Number(row?.active_until || 0) >= now();
+  const activeUntil = Number(row?.active_until || 0);
+  return {
+    active: activeUntil >= now(),
+    active_until: activeUntil || null,
+  };
 }
 
 async function maybeApplyBillingStateForCompany(db, companyId) {
-  if (!companyId) return { active: false };
+  if (!companyId) return { active: false, active_until: null };
 
   const key = String(companyId);
   const ts = now();
@@ -2687,10 +2813,10 @@ async function maybeApplyBillingStateForCompany(db, companyId) {
 }
 
 async function applyBillingStateForCompany(db, companyId) {
-  if (!companyId) return { active: false };
-  const active = await isCompanyBillingActive(db, companyId);
+  if (!companyId) return { active: false, active_until: null };
+  const state = await getCompanyBillingState(db, companyId);
 
-  if (active) {
+  if (state.active) {
     await db.prepare(`
       UPDATE users
       SET billing_disabled = 0,
@@ -2698,7 +2824,7 @@ async function applyBillingStateForCompany(db, companyId) {
       WHERE company_id = ?
         AND role = 'member'
     `).bind(companyId).run();
-    return { active: true };
+    return state;
   }
 
   await db.prepare(`
@@ -2707,9 +2833,8 @@ async function applyBillingStateForCompany(db, companyId) {
         disabled = 1
     WHERE company_id = ?
       AND role = 'member'
-      AND manual_disabled = 0
   `).bind(companyId).run();
-  return { active: false };
+  return state;
 }
 
 function normalizeBillingMonth(value) {

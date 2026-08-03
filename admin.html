@@ -165,6 +165,7 @@
       margin-bottom: 20px;
     }
     .topline h2 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
+    .billing-banner { margin: -6px 0 18px; font-weight: 600; }
 
     .section { display: none; }
     .section.active { display: block; }
@@ -814,11 +815,7 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Contas
       </button>
-      <button class="nav-btn active" data-area="admin" data-section="adminOverviewSection">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Visão geral
-      </button>
-      <button class="nav-btn hidden" data-role="owner" data-section="usersSection">
+      <button class="nav-btn active hidden" data-role="owner" data-section="usersSection">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Usuários
       </button>
@@ -846,8 +843,9 @@
 
   <main>
     <div class="topline">
-      <h2 id="pageTitle">Visão geral</h2>
+      <h2 id="pageTitle">Usuários</h2>
     </div>
+    <div id="billingPendingBanner" class="notice err billing-banner hidden" role="alert"></div>
 
     <section id="runsSection" class="section hidden">
       <div class="runs-layout">
@@ -1015,34 +1013,9 @@
       </div>
     </section>
 
-    <section id="adminOverviewSection" class="section active">
+    <section id="usersSection" class="section active">
       <div class="admin-grid">
         <div id="adminGlobalMsg"></div>
-        <div class="admin-grid three">
-          <div class="card">
-            <div class="card-head"><h3>Usuário</h3></div>
-            <div class="card-body admin-meta">
-              <p>Email: <code id="adminMeEmail">-</code></p>
-              <p>Tipo: <code id="adminMeRole">-</code></p>
-              <p>Empresa: <code id="adminMeCompany">-</code></p>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h3>Sessão</h3></div>
-            <div class="card-body admin-meta">
-              <p>Criada em: <code id="adminSessionCreated">-</code></p>
-              <p>Última atividade: <code id="adminSessionSeen">-</code></p>
-              <p>Expira em: <code id="adminSessionExpires">-</code></p>
-            </div>
-          </div>
-        </div>
-        <div id="mustChangeBox" class="notice warn hidden">Esta conta precisa trocar a senha temporária antes de usar o sistema.</div>
-        <div id="adminAccessBox" class="notice info hidden"></div>
-      </div>
-    </section>
-
-    <section id="usersSection" class="section">
-      <div class="admin-grid">
         <div class="card">
           <div class="card-head"><h3>Criar colaborador</h3></div>
           <div class="card-body">
@@ -1523,7 +1496,7 @@ function applyRoleUI(user) {
   const companyDisabled = Boolean(user?.company_disabled);
   const issAllowed = isIssRole(role);
   const issSections = ["runsSection", "datasetsSection", "accountsSection", "debugSection"];
-  const adminSections = ["adminOverviewSection", "usersSection", "billingSection"];
+  const adminSections = ["usersSection", "billingSection"];
 
   document.querySelectorAll("[data-area='iss']").forEach(el => el.classList.toggle("hidden", !issAllowed));
   document.querySelectorAll("[data-area='admin']").forEach(el => el.classList.toggle("hidden", issAllowed));
@@ -1563,6 +1536,19 @@ function renderAdminMe(data) {
     ["adminSessionExpires", formatUnixTs(session.absolute_expires_at)],
   ];
   pairs.forEach(([id, value]) => { if ($(id)) $(id).textContent = value; });
+}
+
+function renderBillingPendingBanner(billing) {
+  const banner = $("billingPendingBanner");
+  if (!banner) return;
+  const pending = billing && billing.active === false;
+  banner.classList.toggle("hidden", !pending);
+  if (!pending) {
+    banner.textContent = "";
+    return;
+  }
+  const activeUntil = billing.active_until ? formatUnixTs(billing.active_until) : "nenhum pagamento confirmado";
+  banner.textContent = `Pagamento pendente. Seus colaboradores não conseguirão acessar até a confirmação do pagamento. Ativo até: ${activeUntil}. Contate o responsável.`;
 }
 
 
@@ -1683,7 +1669,6 @@ function switchSection(sectionId){
     runsSection:"Runs",
     datasetsSection:"Conjuntos",
     accountsSection:"Contas",
-    adminOverviewSection:"Visão geral",
     usersSection:"Usuários",
     billingSection:"Pagamento",
     debugSection:"Debug Log",
@@ -1774,6 +1759,7 @@ async function loadMe(){
     const user = mePayload?.user || mePayload || {};
     applyRoleUI(user);
     renderAdminMe(mePayload);
+    renderBillingPendingBanner(user.billing || null);
     $("meBox").className = "notice info";
     $("meBox").innerHTML =
       `<strong>${escapeHtml(user.email || "—")}</strong>`+
@@ -1869,13 +1855,13 @@ async function loadUsers() {
               <tr>
                 <td>${escapeHtml(u.email)}</td>
                 <td>${escapeHtml(roleLabel(u.role))}</td>
-                <td>${u.deletion_status ? `<span class="pill bad">Exclusão pendente</span>` : u.blocked_by_company ? `<span class="pill bad">Bloqueado pela empresa</span>` : Number(u.disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
+                <td>${u.deletion_status ? `<span class="pill bad">Exclusão pendente</span>` : u.blocked_by_company ? `<span class="pill bad">Bloqueado pela empresa</span>` : u.blocked_by_billing ? `<span class="pill bad">Pagamento pendente</span>${Number(u.manual_disabled) === 1 ? `<br><span class="small">Também desativado pelo administrador</span>` : ""}` : Number(u.manual_disabled) === 1 ? `<span class="pill bad">Desativado</span>` : `<span class="pill ok">Ativo</span>`}</td>
                 <td><span class="small">Anterior: ${formatUnixTs(u.last_login_at)}<br>Atual: ${formatUnixTs(u.current_login_at)}</span></td>
                 <td>
                   ${u.role === "member" && !companyDisabled && !u.deletion_status ? `
                     <div class="actions">
-                      ${Number(u.disabled) === 0 ? `<button class="sm secondary" onclick="confirmResetUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')">Resetar senha</button>` : ""}
-                      <button class="sm ${Number(u.disabled) === 1 ? "secondary" : "danger"}" onclick="confirmToggleUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}', '${Number(u.disabled) === 1 ? "enable" : "disable"}')">${Number(u.disabled) === 1 ? "Reativar" : "Desativar"}</button>
+                      ${!u.blocked_by_billing && Number(u.manual_disabled) === 0 ? `<button class="sm secondary" onclick="confirmResetUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')">Resetar senha</button>` : ""}
+                      ${!u.blocked_by_billing ? `<button class="sm ${Number(u.manual_disabled) === 1 ? "secondary" : "danger"}" onclick="confirmToggleUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}', '${Number(u.manual_disabled) === 1 ? "enable" : "disable"}')">${Number(u.manual_disabled) === 1 ? "Reativar" : "Desativar"}</button>` : ""}
                       <button class="sm danger" onclick="confirmDeleteUser('${escapeHtml(u.id)}', '${escapeHtml(u.email)}')">Excluir</button>
                     </div>` : "-"}
                 </td>
@@ -1901,9 +1887,11 @@ async function loadBilling() {
     const summary = data.summary || {};
     const settings = data.settings || {};
     const activeUntil = summary.active_until ? formatUnixTs(summary.active_until) : "Sem pagamento lançado";
+    renderBillingPendingBanner(summary);
     $("billingSummary").innerHTML = `
       <p>Status: ${summary.active ? `<span class="pill ok">Ativo</span>` : `<span class="pill bad">Pendente</span>`}</p>
-      <p>Ativo até: <code>${escapeHtml(activeUntil)}</code></p>`;
+      <p>Ativo até: <code>${escapeHtml(activeUntil)}</code></p>
+      ${summary.active ? "" : `<div class="notice err">Contate o responsável para confirmar o pagamento e liberar os colaboradores.</div>`}`;
     $("billingPix").innerHTML = `
       ${settings.qr_code_url ? `<div style="display:flex;justify-content:center;"><img src="${escapeHtml(settings.qr_code_url)}" alt="QR Code PIX" style="max-width:220px;width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px;"></div>` : `<div class="notice info">QR Code ainda não cadastrado pelo master.</div>`}
       <div><label>Chave PIX</label><div class="notice info">${escapeHtml(settings.pix_key || "Chave PIX não cadastrada")}</div></div>
@@ -1979,7 +1967,7 @@ async function startPolling(){
       window.location.href = "/#account";
       return;
     }
-    switchSection("adminOverviewSection");
+    switchSection("usersSection");
     if(user.role === "owner") loadUsers();
   } catch(err){
     if($("apiDot")) $("apiDot").className="api-dot err";
@@ -2922,7 +2910,7 @@ $("btnSaveAccount").addEventListener("click",async()=>{
     if(!alias)throw new Error("Informe o alias/nome da conta.");
     if(accountAliasExists(alias,id))throw new Error("Já existe uma conta com este nome.");
     const payload={ alias, usuario:$("accountUsuario").value.trim(), senha:$("accountSenha").value.trim() };
-    const path=id?"/py/api/accounts/"+encodeURIComponent(id):"/py/api/accounts/";
+    const path=id?"/py/api/accounts/"+encodeURIComponent(id):"/py/api/accounts";
     const method=id?"PUT":"POST";
     const saved=await apiFetch(path,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const acc=saved?.account||saved?.data||saved;
@@ -3173,7 +3161,7 @@ if($("changePasswordForm")) $("changePasswordForm").addEventListener("submit", a
     e.target.reset();
     showAdminMsg("ok", "Senha alterada.");
     await loadMe();
-    switchSection(isIssRole() ? "contaSection" : "adminOverviewSection");
+    switchSection(isIssRole() ? "contaSection" : "usersSection");
   } catch(err) {
     showAdminMsg("err", err.message);
   }

@@ -61,6 +61,7 @@
     .pill.ok { color:var(--green); background:#ecfdf3; }
     .pill.info { color:var(--accent); background:var(--accent-lt); }
     .pill.bad { color:var(--red); background:#fef2f2; }
+    .pill.warn { color:var(--amber); background:#fffbeb; }
     .small { color:var(--text3); font-size:12px; }
     .notice { padding:10px 12px; border-radius:7px; border:1px solid; white-space:pre-line; }
     .notice.info { color:var(--accent); background:var(--accent-lt); border-color:#c7d2fe; }
@@ -259,7 +260,16 @@ function adminDatasetsAccounts(stats){
 }
 function companyStatsSummary(company){
   const totals=company.stats?.totals || {};
-  return `<div class="small">Colaboradores: <b>${Number(company.member_count||0)}</b> (${Number(company.active_member_count||0)} ativos, ${Number(company.disabled_member_count||0)} desativados)<br>Runs: <b>${Number(totals.runs||0)}</b> &middot; Retries: <b>${Number(totals.retries||0)}</b> &middot; Conjuntos: <b>${Number(totals.datasets||0)}</b> &middot; Contas: <b>${Number(totals.accounts||0)}</b></div>`;
+  const accessSummary = company.billing_pending
+    ? `${Number(company.billing_pending_member_count||0)} com pagamento pendente, ${Number(company.manual_disabled_member_count||0)} desativados pelo administrador`
+    : `${Number(company.active_member_count||0)} ativos, ${Number(company.manual_disabled_member_count||0)} desativados`;
+  return `<div class="small">Colaboradores: <b>${Number(company.member_count||0)}</b> (${accessSummary})<br>Runs: <b>${Number(totals.runs||0)}</b> &middot; Retries: <b>${Number(totals.retries||0)}</b> &middot; Conjuntos: <b>${Number(totals.datasets||0)}</b> &middot; Contas: <b>${Number(totals.accounts||0)}</b></div>`;
+}
+function companyStatus(company){
+  if(company.deletion_status) return '<span class="pill bad">Exclusão pendente</span>';
+  if(Number(company.disabled)===1) return '<span class="pill bad">Desativada</span>';
+  if(company.billing_pending) return '<span class="pill warn">Pendente</span>';
+  return '<span class="pill ok">Ativa</span>';
 }
 function companyUsersDetails(company){
   const users=company.users || [];
@@ -274,7 +284,7 @@ async function loadCompanies(){
     companiesCache = rows;
     refreshBillingCompanySelect();
     if(!rows.length){ $("companiesTable").innerHTML="<span class='small'>Nenhuma empresa encontrada.</span>"; return; }
-    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${c.deletion_status?'<span class="pill bad">Exclusão pendente</span>':Number(c.disabled)===1?'<span class="pill bad">Desativada</span>':'<span class="pill ok">Ativa</span>'}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="/master-company?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
+    $("companiesTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Administrador</th><th>Resumo</th><th>Status</th><th>Criada em</th><th>Ações</th></tr></thead><tbody>${rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.owner_email || "-")}</td><td>${companyStatsSummary(c)}</td><td>${companyStatus(c)}</td><td>${esc(ts(c.created_at))}</td><td><div class="actions"><a class="button-link" href="/master-company?id=${encodeURIComponent(c.id)}">Abrir empresa</a>${c.owner_id&&!c.deletion_status?`<button class="secondary" data-reset="${esc(c.owner_id)}" data-email="${esc(c.owner_email||"")}">Resetar senha</button>`:""}${c.is_master_company||c.deletion_status?"":`<button class="secondary" data-toggle="${esc(c.id)}" data-intent="${Number(c.disabled)===1?"enable":"disable"}">${Number(c.disabled)===1?"Reativar":"Desativar"}</button><button class="danger" data-delete="${esc(c.id)}">Apagar</button>`}</div></td></tr>`).join("")}</tbody></table></div>`;
     $("companiesTable").querySelectorAll("[data-reset]").forEach(btn=>btn.onclick=()=>resetOwner(btn.dataset.reset,btn.dataset.email));
     $("companiesTable").querySelectorAll("[data-toggle]").forEach(btn=>btn.onclick=()=>toggleCompany(btn.dataset.toggle,btn.dataset.intent));
     $("companiesTable").querySelectorAll("[data-delete]").forEach(btn=>btn.onclick=()=>deleteCompany(btn.dataset.delete));
@@ -342,7 +352,7 @@ async function deletePayment(id,label){
   if(!confirm(`Excluir este pagamento?\n\n${label}\n\nIsso recalcula imediatamente o status de acesso da empresa.`)) return;
   await api("/api/master/billing/payments/delete",{method:"POST",body:JSON.stringify({payment_id:id,confirm:"DELETE"})});
   message("ok","Pagamento excluído.");
-  await loadBilling();
+  await Promise.all([loadBilling(), loadCompanies()]);
 }
 async function loadLogs(){
   try{
@@ -432,7 +442,7 @@ $("billingPaymentForm")?.addEventListener("submit",async event=>{
     await api("/api/master/billing/payments",{method:"POST",body:JSON.stringify(payload)});
     event.target.note.value="";
     message("ok","Pagamento marcado como pago.");
-    await loadBilling();
+    await Promise.all([loadBilling(), loadCompanies()]);
   } catch(err){ message("err",err.message); }
 });
 $("createCompanyForm").onsubmit=async event=>{ event.preventDefault(); const payload=Object.fromEntries(new FormData(event.target).entries()); try{ const data=await api("/api/master/companies",{method:"POST",body:JSON.stringify(payload)}); event.target.reset(); message("ok","Empresa criada. Senha temporária de "+data.owner.email+":\n"+data.owner.temporary_password); loadCompanies(); } catch(err){ message("err",err.message); } };
