@@ -10,6 +10,11 @@ Arquivos:
 - `google_ia_requests.py`: cliente anônimo do Modo IA.
 - `detector_visual.py`: caixas e coordenadas visuais.
 
+O fluxo visual classifica cada cena como estática, temporal completa,
+trajetória ou desconhecida. Perguntas que dependem do ciclo inteiro (por exemplo,
+"nunca"/"sempre") usam 16 quadros em uma montagem cronológica; uma cena
+complexa repetida além do limite é trocada pelo botão de atualizar do hCaptcha.
+
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume
 privado do Modal; o código é carregado da imagem em `/app`.

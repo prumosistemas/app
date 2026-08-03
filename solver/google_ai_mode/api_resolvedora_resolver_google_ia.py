@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
@@ -38,7 +40,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-07-18-google-ai-mode-v21-circuit-rearm"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v22-temporal-classifier"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -52,6 +54,8 @@ PROVIDER_STATS: dict[str, Any] = {
     "last_ai_queries": None,
     "last_source_count": None,
 }
+CHALLENGE_SCENE_LOCK = threading.Lock()
+CHALLENGE_SCENE_ATTEMPTS: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 class VisualFrameNotReadyError(ValueError):
@@ -309,24 +313,188 @@ def _image_entropy(path: Path) -> float:
         return 0.0
 
 
+_LONG_TEMPORAL_TERMS = (
+    "nunca",
+    "sempre",
+    "pousa",
+    "pousou",
+    "visita",
+    "visitou",
+    "passa por",
+    "passou por",
+    "durante o movimento",
+    "ao longo",
+)
+
+_TRAJECTORY_DESTINATION_TERMS = (
+    "destino",
+    "vai chegar",
+    "ira chegar",
+    "irá chegar",
+    "para onde",
+    "direcao",
+    "direção",
+    "trajetoria",
+    "trajetória",
+)
+
+
+def _question_needs_full_temporal_sequence(question: str) -> bool:
+    normalized = (question or "").casefold()
+    return any(term in normalized for term in _LONG_TEMPORAL_TERMS)
+
+
+def _question_wants_trajectory_destination(question: str) -> bool:
+    normalized = (question or "").casefold()
+    if "nunca" in normalized:
+        return False
+    return any(term in normalized for term in _TRAJECTORY_DESTINATION_TERMS)
+
+
+def _temporal_capture_plan(question: str) -> tuple[int, int]:
+    """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
+    if _question_needs_full_temporal_sequence(question):
+        # 16 quadros cobrem 2,7 s: mais de um ciclo dos desafios de pouso atuais.
+        return 16, 180
+    return 4, 180
+
+
+def _classify_visual_challenge(question: str) -> dict[str, Any]:
+    normalized = (question or "").casefold().strip()
+    if _question_needs_full_temporal_sequence(normalized):
+        category, difficulty, max_same_scene_attempts = "temporal_full", "alta", 1
+    elif _question_wants_trajectory_destination(normalized):
+        category, difficulty, max_same_scene_attempts = "temporal_trajectory", "media", 2
+    elif any(
+        term in normalized
+        for term in ("move", "movimento", "mudanca", "mudança", "animado", "animação")
+    ):
+        category, difficulty, max_same_scene_attempts = "temporal_dynamic", "alta", 1
+    elif normalized:
+        category, difficulty, max_same_scene_attempts = "visual_static", "baixa", 2
+    else:
+        category, difficulty, max_same_scene_attempts = "unknown", "alta", 1
+    frame_count, interval_ms = _temporal_capture_plan(normalized)
+    return {
+        "category": category,
+        "difficulty": difficulty,
+        "frame_count": frame_count,
+        "interval_ms": interval_ms,
+        "capture_span_ms": max(0, frame_count - 1) * interval_ms,
+        "max_same_scene_attempts": max_same_scene_attempts,
+    }
+
+
+def _scene_fingerprint(path: Path) -> str | None:
+    """Hash perceptual estavel quando apenas o pequeno objeto animado muda."""
+    try:
+        with legacy.Image.open(path) as image:
+            small = image.convert("L").resize((16, 16))
+            pixels = list(small.getdata())
+        mean = sum(pixels) / max(1, len(pixels))
+        bits = "".join("1" if pixel >= mean else "0" for pixel in pixels)
+        return f"{int(bits, 2):064x}"
+    except Exception:
+        return None
+
+
+def _hash_distance(left: str | None, right: str | None) -> int:
+    if not left or not right:
+        return 256
+    try:
+        return (int(left, 16) ^ int(right, 16)).bit_count()
+    except (TypeError, ValueError):
+        return 256
+
+
+def _register_scene_attempt(
+    request_id: str,
+    classification: dict[str, Any],
+    image_path: Path,
+) -> dict[str, Any]:
+    fingerprint = _scene_fingerprint(image_path)
+    category = str(classification.get("category") or "unknown")
+    key = (request_id, category)
+    with CHALLENGE_SCENE_LOCK:
+        previous = CHALLENGE_SCENE_ATTEMPTS.get(key)
+        same_scene = bool(
+            previous
+            and _hash_distance(fingerprint, previous.get("fingerprint")) <= 14
+        )
+        attempt = int(previous.get("attempt") or 0) + 1 if same_scene and previous else 1
+        CHALLENGE_SCENE_ATTEMPTS[key] = {
+            "fingerprint": fingerprint,
+            "attempt": attempt,
+            "updated_at": time.monotonic(),
+        }
+        if len(CHALLENGE_SCENE_ATTEMPTS) > 512:
+            oldest = sorted(
+                CHALLENGE_SCENE_ATTEMPTS,
+                key=lambda item: CHALLENGE_SCENE_ATTEMPTS[item]["updated_at"],
+            )[:128]
+            for old_key in oldest:
+                CHALLENGE_SCENE_ATTEMPTS.pop(old_key, None)
+    return {
+        "same_scene": same_scene,
+        "same_scene_attempt": attempt,
+        "fingerprint_sha256": hashlib.sha256(
+            (fingerprint or "unavailable").encode("ascii")
+        ).hexdigest()[:16],
+    }
+
+
 def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
-    """Monta quatro instantes em ordem temporal sem alterar a escala de clique."""
+    """Monta os instantes em ordem temporal e registra a geometria dos paineis."""
     usable = [path for path in frames if path.is_file() and not legacy.png_seems_blank(path)]
     if len(usable) < 2:
         return None
     opened = []
     try:
-        for path in usable[:4]:
+        for path in usable[:16]:
             opened.append(legacy.Image.open(path).convert("RGB"))
-        width, height = opened[0].size
-        opened = [image if image.size == (width, height) else image.resize((width, height)) for image in opened]
-        gap = 8
-        canvas = legacy.Image.new("RGB", (width * 2 + gap, height * 2 + gap), "white")
-        positions = ((0, 0), (width + gap, 0), (0, height + gap), (width + gap, height + gap))
-        for image, position in zip(opened, positions):
+        source_width, source_height = opened[0].size
+        columns = 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
+        rows = math.ceil(len(opened) / columns)
+        frame_width = min(source_width, 500)
+        frame_height = max(1, round(source_height * frame_width / source_width))
+        opened = [
+            image.resize((frame_width, frame_height))
+            if image.size != (frame_width, frame_height)
+            else image
+            for image in opened
+        ]
+        gap = 6
+        canvas_width = frame_width * columns + gap * (columns - 1)
+        canvas_height = frame_height * rows + gap * (rows - 1)
+        canvas = legacy.Image.new("RGB", (canvas_width, canvas_height), "white")
+        for index, image in enumerate(opened):
+            position = (
+                (index % columns) * (frame_width + gap),
+                (index // columns) * (frame_height + gap),
+            )
             canvas.paste(image, position)
         sequence_path = folder / "sequencia-temporal.jpg"
-        canvas.save(sequence_path, format="JPEG", quality=86, optimize=False)
+        canvas.save(sequence_path, format="JPEG", quality=88, optimize=False)
+        (folder / "sequencia-temporal-info.json").write_text(
+            json.dumps(
+                {
+                    "frame_count": len(opened),
+                    "columns": columns,
+                    "rows": rows,
+                    "frame_width": frame_width,
+                    "frame_height": frame_height,
+                    "gap_px": gap,
+                    "montage_width": canvas_width,
+                    "montage_height": canvas_height,
+                    "source_width": source_width,
+                    "source_height": source_height,
+                    "order": "row_major_left_to_right_top_to_bottom",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return sequence_path
     finally:
         for image in opened:
@@ -378,7 +546,10 @@ def _capture_visual_canvas_sequence(
         return []
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
-        client.ws.settimeout(6)
+        # A coleta longa dura ~2,7 s depois da estabilizacao do canvas. O teto
+        # anterior de 6 s podia abortar justamente quando o desafio demorava a
+        # desenhar os primeiros quadros.
+        client.ws.settimeout(10 if frame_count > 4 else 6)
         try:
             data = client.eval(
                 f"""
@@ -1148,6 +1319,8 @@ def _unified_visual_prompt(
     image_height: int | None = None,
     frame_count: int = 1,
     reference_present: bool = False,
+    temporal_layout: str = "single",
+    temporal_span_ms: int = 0,
 ) -> str:
     size_note = (
         f"Dimensoes da area clicavel: {image_width} x {image_height} pixels."
@@ -1160,7 +1333,16 @@ def _unified_visual_prompt(
         else "Nao presuma referencia externa; use somente a imagem."
     )
     sequence_note = ""
-    if frame_count > 1:
+    if frame_count > 1 and temporal_layout == "montage":
+        sequence_note = f"""
+A imagem e uma MONTAGEM CRONOLOGICA de {frame_count} quadros da mesma cena, em ordem
+da esquerda para a direita e de cima para baixo, cobrindo aproximadamente
+{temporal_span_ms / 1000.0:.1f} segundos. Examine TODOS os paineis antes de responder.
+Para perguntas com "nunca", escolha somente o alvo que nao recebeu o objeto em nenhum
+quadro; nao extrapole apenas a direcao do ultimo movimento. Indique a caixa e o ponto
+do alvo em qualquer um dos paineis, nas coordenadas 0..1000 da montagem inteira.
+"""
+    elif frame_count > 1:
         sequence_note = f"""
 A imagem e uma sobreposicao temporal de {frame_count} quadros da MESMA cena. O ultimo
 quadro e predominante e os anteriores aparecem como rastros. Use os rastros para entender
@@ -1398,20 +1580,29 @@ def _sequence_coordinates_to_frame(
     frame_height: int,
     montage_width: int,
     montage_height: int,
+    columns: int = 2,
+    rows: int = 2,
+    gap_x: int = 0,
+    gap_y: int = 0,
 ) -> dict[str, Any]:
-    """Converte caixas 0..1000 da montagem 2x2 para um quadro individual."""
+    """Converte caixas 0..1000 de uma montagem para um quadro individual."""
     converted = json.loads(json.dumps(parsed, ensure_ascii=False))
     objects = converted.get("objetos")
     if not isinstance(objects, dict):
         return converted
-    gap_x = max(0, montage_width - frame_width * 2)
-    gap_y = max(0, montage_height - frame_height * 2)
 
-    def axis(values: list[Any], frame_size: int, montage_size: int, gap: int) -> list[float]:
+    def axis(
+        values: list[Any],
+        frame_size: int,
+        montage_size: int,
+        gap: int,
+        cell_count: int,
+    ) -> list[float]:
         nums = [float(value) for value in values]
         center_px = (sum(nums) / len(nums)) / 1000.0 * montage_size
-        second = center_px >= frame_size + gap / 2.0
-        offset = frame_size + gap if second else 0.0
+        stride = frame_size + gap
+        cell = min(max(0, int(center_px // max(1, stride))), max(0, cell_count - 1))
+        offset = cell * stride
         return [min(1000.0, max(0.0, ((value / 1000.0 * montage_size) - offset) / frame_size * 1000.0)) for value in nums]
 
     selected_key = str((converted.get("escolha") or {}).get("objeto") or "")
@@ -1421,8 +1612,20 @@ def _sequence_coordinates_to_frame(
             continue
         box = raw["caixa"]
         try:
-            x1, x2 = axis([box.get("x1"), box.get("x2")], frame_width, montage_width, gap_x)
-            y1, y2 = axis([box.get("y1"), box.get("y2")], frame_height, montage_height, gap_y)
+            x1, x2 = axis(
+                [box.get("x1"), box.get("x2")],
+                frame_width,
+                montage_width,
+                gap_x,
+                columns,
+            )
+            y1, y2 = axis(
+                [box.get("y1"), box.get("y2")],
+                frame_height,
+                montage_height,
+                gap_y,
+                rows,
+            )
         except (TypeError, ValueError):
             continue
         box.update({"x1": x1, "x2": x2, "y1": y1, "y2": y2})
@@ -1435,8 +1638,12 @@ def _sequence_coordinates_to_frame(
             choice["y"] = (selected_box[1] + selected_box[3]) / 2.0
         else:
             try:
-                choice["x"] = axis([choice.get("x")], frame_width, montage_width, gap_x)[0]
-                choice["y"] = axis([choice.get("y")], frame_height, montage_height, gap_y)[0]
+                choice["x"] = axis(
+                    [choice.get("x")], frame_width, montage_width, gap_x, columns
+                )[0]
+                choice["y"] = axis(
+                    [choice.get("y")], frame_height, montage_height, gap_y, rows
+                )[0]
             except (TypeError, ValueError):
                 pass
     return converted
@@ -1731,6 +1938,21 @@ def analyze_visual_with_google_ai(
             challenge_dir,
             sorted(challenge_dir.glob("quadro-[0-9][0-9].jpg")),
         ) or overlay_path
+    frame_paths = sorted(challenge_dir.glob("quadro-[0-9][0-9].jpg"))
+    if not frame_paths:
+        frame_paths = sorted(challenge_dir.glob("quadro-[0-9][0-9].png"))
+    frame_count = len(frame_paths)
+    temporal_span_ms = 0
+    try:
+        capture_info = json.loads((challenge_dir / "canvas-info.json").read_text(encoding="utf-8"))
+        temporal_span_ms = max(0, frame_count - 1) * int(capture_info.get("interval_ms") or 0)
+    except Exception:
+        capture_info = {}
+    full_temporal_sequence = (
+        _question_needs_full_temporal_sequence(captcha_question)
+        and sequence_path.is_file()
+        and frame_count >= 6
+    )
     has_temporal_artifacts = sequence_path.is_file() or overlay_path.is_file()
     tracked_centers = _motion_centers(challenge_dir) if has_temporal_artifacts else []
     displacement = 0.0
@@ -1747,10 +1969,14 @@ def analyze_visual_with_google_ai(
         visual_score = float(canvas_info.get("visual_score") or 0.0)
     except Exception:
         pass
-    moving_sequence = has_temporal_artifacts and overlay_path.is_file() and (
-        displacement >= 4.5 or (temporal_frames >= 3 and visual_score >= 12.0)
+    moving_sequence = has_temporal_artifacts and overlay_path.is_file() and displacement >= 4.5
+    query_path = (
+        sequence_path
+        if full_temporal_sequence
+        else overlay_path
+        if moving_sequence
+        else full_path
     )
-    query_path = overlay_path if moving_sequence else full_path
     if not legacy.provider_request_allowed():
         state = legacy.provider_circuit_state()
         legacy.set_solver_error(
@@ -1772,30 +1998,45 @@ def analyze_visual_with_google_ai(
         except Exception:
             pass
         reference_present = _top_reference_has_visual_content(full_path, top_cut)
-        if not moving_sequence:
+        if not moving_sequence and not full_temporal_sequence:
             query_path = full_path if reference_present else image_path
-        frame_count = len(list(challenge_dir.glob("quadro-[0-9][0-9].jpg"))) if moving_sequence else 1
-        if frame_count == 0 and moving_sequence:
-            frame_count = len(list(challenge_dir.glob("quadro-[0-9][0-9].png")))
+        analyzed_frame_count = frame_count if (moving_sequence or full_temporal_sequence) else 1
         with legacy.Image.open(query_path) as query_image:
             query_width, query_height = query_image.size
         result = _query_image(
             query_path,
             _unified_visual_prompt(
                 captcha_question,
-                width,
-                height,
-                frame_count=frame_count,
+                query_width,
+                query_height,
+                frame_count=analyzed_frame_count,
                 reference_present=(reference_present and query_path == full_path),
+                temporal_layout="montage" if full_temporal_sequence else "overlay",
+                temporal_span_ms=temporal_span_ms,
             ),
         )
         raw_answer = result.answer
         parsed = _parse_json_answer(raw_answer)
-        parsed_original = parsed
-        if query_path == full_path:
+        parsed_original = json.loads(json.dumps(parsed, ensure_ascii=False))
+        if full_temporal_sequence and query_path == sequence_path:
+            montage_info = json.loads(
+                (challenge_dir / "sequencia-temporal-info.json").read_text(encoding="utf-8")
+            )
+            parsed = _sequence_coordinates_to_frame(
+                parsed,
+                frame_width=int(montage_info["frame_width"]),
+                frame_height=int(montage_info["frame_height"]),
+                montage_width=int(montage_info["montage_width"]),
+                montage_height=int(montage_info["montage_height"]),
+                columns=int(montage_info["columns"]),
+                rows=int(montage_info["rows"]),
+                gap_x=int(montage_info.get("gap_px") or 0),
+                gap_y=int(montage_info.get("gap_px") or 0),
+            )
+        elif query_path == full_path:
             parsed = _full_coordinates_to_selectable(parsed, full_height, top_cut)
         motion_override = None
-        if frame_count > 1:
+        if analyzed_frame_count > 1 and _question_wants_trajectory_destination(captcha_question):
             motion_override = _override_different_choice_from_motion(
                 parsed,
                 challenge_dir,
@@ -1884,8 +2125,15 @@ def analyze_visual_with_google_ai(
                     "modelo": PROVIDER_MODEL,
                     "imagem_analisada": str(query_path),
                     "imagem_base_coordenadas": str(image_path),
-                    "quadros_temporais": frame_count,
-                    "evidencia_visual": "sequencia_temporal" if moving_sequence else "quadro_unico",
+                    "quadros_temporais": analyzed_frame_count,
+                    "janela_temporal_ms": temporal_span_ms,
+                    "evidencia_visual": (
+                        "montagem_temporal_completa"
+                        if full_temporal_sequence
+                        else "sobreposicao_temporal"
+                        if moving_sequence
+                        else "quadro_unico"
+                    ),
                     "deslocamento_medido": displacement,
                     "trajetoria_local": motion_override,
                     "validacao_antes_clique": live_relocation,
@@ -1988,6 +2236,7 @@ def _save_and_analyze_visual_fast(
         return None
 
     prompt_text = str(state.get("prompt") or "")
+    classification = _classify_visual_challenge(prompt_text)
     folder = legacy.create_challenge_debug_folder(
         request_id,
         attempt,
@@ -2002,7 +2251,14 @@ def _save_and_analyze_visual_fast(
     captured = False
     frame_paths: list[Path] = []
     capture_started = time.perf_counter()
-    frame_paths = _capture_visual_canvas_sequence(port, folder)
+    capture_frame_count = int(classification["frame_count"])
+    capture_interval_ms = int(classification["interval_ms"])
+    frame_paths = _capture_visual_canvas_sequence(
+        port,
+        folder,
+        frame_count=capture_frame_count,
+        interval_ms=capture_interval_ms,
+    )
     if frame_paths:
         captured = True
     elif _capture_visual_canvas_clean(port, folder):
@@ -2011,11 +2267,42 @@ def _save_and_analyze_visual_fast(
         frame_paths = [folder / "desafio.png"]
         captured = True
     if captured:
-        full_frame_paths = [
-            path.with_name(path.stem + "-completo.jpg")
-            for path in frame_paths
-        ]
-        _build_motion_sequence(folder, full_frame_paths)
+        scene_attempt = _register_scene_attempt(
+            request_id,
+            classification,
+            folder / "desafio.png",
+        )
+        classification.update(scene_attempt)
+        rotate_scene = (
+            int(scene_attempt["same_scene_attempt"])
+            > int(classification["max_same_scene_attempts"])
+        )
+        classification["action"] = "refresh_challenge" if rotate_scene else "analyze"
+        (folder / "classificacao-desafio.json").write_text(
+            json.dumps(classification, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(
+            "[Classificador] "
+            f"categoria={classification['category']} dificuldade={classification['difficulty']} "
+            f"cena_tentativa={scene_attempt['same_scene_attempt']} acao={classification['action']}"
+        )
+        if rotate_scene:
+            _restore_visual_animation(port)
+            refreshed = legacy.refresh_hcaptcha_and_wait(port, wait_seconds=0.8)
+            classification["refresh_clicked"] = refreshed
+            (folder / "classificacao-desafio.json").write_text(
+                json.dumps(classification, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            legacy.set_solver_error(
+                "visual_challenge_rotated",
+                "Cena repetida excedeu o limite da classe; solicitado outro desafio.",
+            )
+            return None
+        # A montagem temporal usa somente a area clicavel. O canvas completo
+        # inclui uma faixa superior vazia/referencia e desperdicava resolucao.
+        _build_motion_sequence(folder, frame_paths)
         _build_motion_overlay(folder, frame_paths)
     capture_seconds = time.perf_counter() - capture_started
     (folder / "timing.json").write_text(
@@ -2024,6 +2311,10 @@ def _save_and_analyze_visual_fast(
                 "capture_seconds": round(capture_seconds, 4),
                 "captured": captured,
                 "temporal_frames": len(frame_paths),
+                "requested_temporal_frames": capture_frame_count,
+                "temporal_interval_ms": capture_interval_ms,
+                "temporal_span_ms": max(0, len(frame_paths) - 1) * capture_interval_ms,
+                "full_temporal_sequence": _question_needs_full_temporal_sequence(prompt_text),
                 "sequence_created": any(
                     (folder / name).is_file()
                     for name in ("sequencia-temporal.jpg", "sequencia-temporal.png")
