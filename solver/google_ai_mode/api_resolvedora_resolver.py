@@ -953,14 +953,9 @@ def _challenge_dom_snapshot(client: CdpClient) -> dict | None:
     document.querySelector('h2, h3, .challenge-text');
   const prompt = promptEl ? promptEl.innerText.trim().replace(/\\s+/g, ' ') : '';
   const checkmark = [...document.querySelectorAll('img[alt]')]
-    .some((img) => (img.getAttribute('alt') || '').toLowerCase().includes('marca de verificação'));
-  const imageCanvasEl = [...document.querySelectorAll('canvas[role="img"]')]
-    .find((canvas) => {
-      const label = canvas.getAttribute('aria-label') || '';
-      return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-        canvas.width >= 900 &&
-        canvas.height >= 900;
-    });
+    .some((img) => /marca de verificação|checkmark|check mark/.test((img.getAttribute('alt') || '').toLowerCase()));
+  const imageCanvasEl = [...document.querySelectorAll('canvas')]
+    .find((canvas) => canvas.width >= 900 && canvas.height >= 900);
   let imageCanvasClip = null;
   if (imageCanvasEl) {
     const r = imageCanvasEl.getBoundingClientRect();
@@ -1303,13 +1298,8 @@ def draw_non_9_grid_overlay(port: int, top_cut: int = 150) -> bool:
 (() => {
   const old = document.getElementById('codex-non9-grid-overlay');
   if (old) old.remove();
-  const canvas = [...document.querySelectorAll('canvas[role="img"]')]
-    .find((el) => {
-      const label = el.getAttribute('aria-label') || '';
-      return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-        el.width >= 900 &&
-        el.height >= 900;
-    });
+  const canvas = [...document.querySelectorAll('canvas')]
+    .find((el) => el.width >= 900 && el.height >= 900);
   if (!canvas) return false;
   const parent = canvas.parentElement || document.body;
   const cr = canvas.getBoundingClientRect();
@@ -1381,13 +1371,8 @@ def capture_non_9_canvas_artifacts(port: int, folder: Path) -> bool:
             data = client.eval(
                 """
 (() => {
-  const src = [...document.querySelectorAll('canvas[role="img"]')]
-    .find((canvas) => {
-      const label = canvas.getAttribute('aria-label') || '';
-      return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-        canvas.width >= 900 &&
-        canvas.height >= 900;
-    });
+  const src = [...document.querySelectorAll('canvas')]
+    .find((canvas) => canvas.width >= 900 && canvas.height >= 900);
   if (!src) return null;
   const cols = 5;
   const rows = 3;
@@ -1857,13 +1842,8 @@ def click_non_9_choice(port: int, escolha: dict) -> bool:
             point = client.eval(
                 f"""
 (() => {{
-  const canvas = [...document.querySelectorAll('canvas[role="img"]')]
-    .find((el) => {{
-      const label = el.getAttribute('aria-label') || '';
-      return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-        el.width >= 900 &&
-        el.height >= 900;
-    }});
+  const canvas = [...document.querySelectorAll('canvas')]
+    .find((el) => el.width >= 900 && el.height >= 900);
   if (!canvas) return null;
   const r = canvas.getBoundingClientRect();
   const topCut = Math.min(150, Math.max(0, r.height - 20));

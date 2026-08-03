@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v30-explicit-widget"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v31-locale-neutral-canvas"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -249,12 +249,8 @@ new Promise((resolve) => {
             data = client.eval(
                 """
 (() => {
-  const src = [...document.querySelectorAll('canvas[role="img"]')]
-    .find((canvas) => {
-      const label = canvas.getAttribute('aria-label') || '';
-      return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-        canvas.width >= 900 && canvas.height >= 900;
-    });
+  const src = [...document.querySelectorAll('canvas')]
+    .find((canvas) => canvas.width >= 900 && canvas.height >= 900);
   if (!src) return null;
   const r = src.getBoundingClientRect();
   return {
@@ -665,11 +661,8 @@ new Promise(async (resolve) => {{
   document.getElementById('google-ai-debug-panel')?.remove();
   document.getElementById('codex-non9-grid-overlay')?.remove();
   await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
-  const src = [...document.querySelectorAll('canvas[role="img"]')].find((canvas) => {{
-    const label = canvas.getAttribute('aria-label') || '';
-    return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-      canvas.width >= 900 && canvas.height >= 900;
-  }});
+  const src = [...document.querySelectorAll('canvas')].find((canvas) =>
+    canvas.width >= 900 && canvas.height >= 900);
   if (!src) return resolve(null);
   const rect = src.getBoundingClientRect();
   const topCutCss = Math.min(150, Math.max(0, rect.height - 20));
@@ -906,11 +899,8 @@ def _capture_live_canvas_for_click(port: int, output_path: Path) -> dict[str, An
 (() => {
   document.getElementById('google-ai-vision-overlay')?.remove();
   document.getElementById('google-ai-debug-panel')?.remove();
-  const src = [...document.querySelectorAll('canvas[role="img"]')].find((canvas) => {
-    const label = canvas.getAttribute('aria-label') || '';
-    return label.includes('Desafio de CAPTCHA baseado em imagem') &&
-      canvas.width >= 900 && canvas.height >= 900;
-  });
+  const src = [...document.querySelectorAll('canvas')].find((canvas) =>
+    canvas.width >= 900 && canvas.height >= 900);
   if (!src) return null;
   const rect = src.getBoundingClientRect();
   const topCutCss = Math.min(150, Math.max(0, rect.height - 20));
@@ -1118,8 +1108,8 @@ def _save_browser_dom_debug(port: int, folder: Path, stage: str) -> dict[str, An
     const r = el.getBoundingClientRect();
     return {index: i + 1, left: r.left, top: r.top, width: r.width, height: r.height, visible: visible(el)};
   });
-  const canvas = [...document.querySelectorAll('canvas[role="img"]')].find((el) =>
-    (el.getAttribute('aria-label') || '').includes('Desafio de CAPTCHA baseado em imagem'));
+  const canvas = [...document.querySelectorAll('canvas')].find((el) =>
+    el.width >= 900 && el.height >= 900);
   const canvasRect = canvas ? canvas.getBoundingClientRect() : null;
   const submit = document.querySelector('.button-submit, [data-testid="submit-button"], button[type="submit"]');
   const error = document.querySelector('.error-text');
@@ -1196,8 +1186,8 @@ def _inject_green_browser_overlay(
   const data = {json.dumps(payload, ensure_ascii=False)};
   document.getElementById('google-ai-vision-overlay')?.remove();
   document.getElementById('google-ai-debug-panel')?.remove();
-  const canvas = [...document.querySelectorAll('canvas[role="img"]')].find((el) =>
-    (el.getAttribute('aria-label') || '').includes('Desafio de CAPTCHA baseado em imagem'));
+  const canvas = [...document.querySelectorAll('canvas')].find((el) =>
+    el.width >= 900 && el.height >= 900);
   if (!canvas) return {{ok: false, reason: 'canvas_not_found'}};
   const r = canvas.getBoundingClientRect();
   const topCut = Math.min(150, Math.max(0, r.height - 20));
@@ -2538,8 +2528,8 @@ def _challenge_wait_state(port: int) -> dict[str, Any] | None:
   const button =
     document.querySelector('.button-submit.button') ||
     document.querySelector('[aria-label="Verificar respostas"]');
-  const canvas = [...document.querySelectorAll('canvas[role="img"]')].find((el) =>
-    (el.getAttribute('aria-label') || '').includes('Desafio de CAPTCHA baseado em imagem'));
+  const canvas = [...document.querySelectorAll('canvas')].find((el) =>
+    el.width >= 900 && el.height >= 900);
   const tasks = [...document.querySelectorAll('.task[role="button"], .task')];
   const visible = (el) => {
     if (!el) return false;
