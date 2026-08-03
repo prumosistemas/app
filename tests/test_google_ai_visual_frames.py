@@ -146,3 +146,22 @@ def test_solver_accepts_token_without_opening_visual_challenge(monkeypatch) -> N
     )
 
     assert SOLVER.legacy.auto_solve_grid(9222, 0, 1, max_refreshes=1) == "token-direto"
+
+
+def test_stuck_widget_renews_browser_after_three_click_cycles(monkeypatch) -> None:
+    monkeypatch.setattr(SOLVER.legacy, "extract_token_from_page", lambda _port: None)
+    monkeypatch.setattr(SOLVER.legacy, "solver_browser_alive", lambda *_args: True)
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "fatal_circuit_state",
+        lambda: {"open": False, "reason": None, "error": None},
+    )
+    monkeypatch.setattr(SOLVER.legacy, "ensure_challenge_open", lambda _port: False)
+    monkeypatch.setattr(SOLVER.legacy, "click_hcaptcha_checkbox", lambda _port: False)
+    monkeypatch.setattr(SOLVER.legacy, "challenge_grid_visible", lambda _port: False)
+    monkeypatch.setattr(SOLVER.legacy.time, "sleep", lambda _seconds: None)
+
+    assert SOLVER.legacy.auto_solve_grid(9222, 0, 1, max_refreshes=10) is None
+    error = SOLVER.legacy.get_solver_error()
+    assert error["reason"] == "visual_challenge_not_opened"
+    assert "renovando navegador" in error["detail"]

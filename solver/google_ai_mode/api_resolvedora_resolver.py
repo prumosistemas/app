@@ -2318,6 +2318,7 @@ def auto_solve_grid(
     grid_seen = False
     legacy_provider_failed = False
     challenge_open_failures = 0
+    challenge_state_failures = 0
     challenge_opened = False
     
     for i in range(max_refreshes):
@@ -2353,11 +2354,16 @@ def auto_solve_grid(
                     return token
                 time.sleep(0.2)
             if not challenge_grid_visible(port):
-                # Um widget preso nao melhora com dezenas de cliques no mesmo
-                # DOM. A cada duas falhas, recrie-o e preserve um backoff curto.
-                if challenge_open_failures % 2 == 0:
-                    reload_solver_page(port)
-                    time.sleep(min(0.5 * challenge_open_failures, 2.0))
+                # Uma identidade que nao abriu em tres acionamentos tende a
+                # continuar presa. Devolva cedo para o nivel externo recriar o
+                # perfil/navegador, ainda dentro da mesma chamada do solver.
+                if challenge_open_failures >= 3:
+                    set_solver_error(
+                        "desafio_nao_abriu",
+                        "Widget hCaptcha nao abriu apos 3 acionamentos; renovando navegador.",
+                    )
+                    print("[Auto] Widget preso; renovando navegador imediatamente.")
+                    return None
                 continue
         challenge_opened = True
 
@@ -2365,7 +2371,17 @@ def auto_solve_grid(
         challenge, state = wait_for_stable_9_tile_challenge(port)
         if not challenge or not state:
             print("[Auto] Grade de 9 tiles nao estabilizou.")
+            if not state:
+                challenge_state_failures += 1
+                if challenge_state_failures >= 2:
+                    set_solver_error(
+                        "desafio_nao_pronto",
+                        "Iframe do desafio abriu sem conteudo utilizavel; renovando navegador.",
+                    )
+                    print("[Auto] Desafio vazio por duas leituras; renovando navegador.")
+                    return None
             if state:
+                challenge_state_failures = 0
                 if state.get("checkmark") and not state.get("imageCanvas"):
                     token = wait_token_or_retry_after_submit(port, timeout=12, browser_proc=browser_proc)
                     if token:
