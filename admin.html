@@ -994,9 +994,9 @@
           </div>
           <div class="card-body stack">
             <input id="accountId" type="hidden" />
-            <div><label>Alias / Nome</label><input id="accountAlias" placeholder="Ex: Conta Matriz" /></div>
-            <div><label>Login</label><input id="accountUsuario" placeholder="Usuário do portal ISS" /></div>
-            <div><label>Senha</label><input id="accountSenha" type="password" placeholder="Senha do portal" /></div>
+            <div><label>Alias / Nome</label><input id="accountAlias" placeholder="Ex: Conta Matriz" autocomplete="off" /></div>
+            <div><label>Login</label><input id="accountUsuario" placeholder="Usuário do portal ISS" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other" /></div>
+            <div><label>Senha</label><input id="accountSenha" type="password" placeholder="Senha do portal" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other" /></div>
             <button id="btnSaveAccount" type="button" class="success" style="width:fit-content;">Salvar conta</button>
             <div id="accountMsg" class="notice hidden"></div>
             <div>
@@ -1334,6 +1334,28 @@ function showBox(el,type,text){ if(!el)return; el.className="notice "+type; el.t
 function hideBox(el){ if(!el)return; el.classList.add("hidden"); el.textContent="" }
 function onlyDigits(v){ return String(v??"").replace(/\D/g,"") }
 function cnpjDigits(v){ return onlyDigits(v).padStart(14,"0") }
+function disableOperationalAutofill(root=document){
+  const forms=root.matches?.("form")?[root]:[...root.querySelectorAll?.("form")||[]];
+  forms.forEach(form=>form.setAttribute("autocomplete","off"));
+  const inputs=root.matches?.("input")?[root]:[...root.querySelectorAll?.("input")||[]];
+  inputs.forEach(input=>{
+    if(["hidden","file","checkbox","radio","submit","button"].includes(String(input.type||"").toLowerCase()))return;
+    input.setAttribute("autocomplete","off");
+    input.setAttribute("aria-autocomplete","none");
+    input.setAttribute("data-lpignore","true");
+    input.setAttribute("data-1p-ignore","");
+    input.setAttribute("data-form-type","other");
+  });
+}
+function guardOperationalCredentials(...ids){
+  ids.forEach(id=>{
+    const input=$(id); if(!input)return;
+    const unlock=()=>{ input.readOnly=false };
+    input.addEventListener("pointerdown",unlock,{once:true});
+    input.addEventListener("focus",unlock,{once:true});
+    input.addEventListener("keydown",unlock,{once:true});
+  });
+}
 function normalizeText(v){ return String(v??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim().replace(/\s+/g," ") }
 function isActiveStatus(s){ return ["running","queued"].includes(String(s||"")) }
 function notasModeLabel(run){ return run?.usar_codigo_dominio===false?"Notas: CNPJ+Empresa":"Notas: Código Domínio" }
@@ -1345,13 +1367,38 @@ function fmtBytes(bytes){ const n=Number(bytes||0); if(n<1024)return n+" B"; if(
 function columnLabel(index){ let n=index+1,out=""; while(n>0){const r=(n-1)%26;out=String.fromCharCode(65+r)+out;n=Math.floor((n-1)/26)} return out }
 function formatCnpjFromDigits(v){ const d=cnpjDigits(v); return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12,14)}` }
 
+function spreadsheetCellText(value){
+  if(typeof value==="number"&&Number.isFinite(value))return Number.isInteger(value)?value.toFixed(0):String(value);
+  const raw=String(value??"").trim();
+  if(!/^[+-]?\d+(?:[.,]\d+)?e[+-]?\d+$/i.test(raw))return raw;
+  const parsed=Number(raw.replace(",","."));
+  return Number.isSafeInteger(parsed)?parsed.toFixed(0):raw;
+}
+
+function worksheetRowsForImport(ws){
+  const options={header:1,defval:"",blankrows:false};
+  const formatted=XLSX.utils.sheet_to_json(ws,{...options,raw:false});
+  const raw=XLSX.utils.sheet_to_json(ws,{...options,raw:true});
+  return formatted.map((row,rowIndex)=>row.map((value,columnIndex)=>{
+    const rawValue=raw[rowIndex]?.[columnIndex];
+    return /e[+-]?\d+$/i.test(String(value??"").trim())&&typeof rawValue==="number"&&Number.isFinite(rawValue)
+      ? rawValue
+      : value;
+  }));
+}
+
 function normalizeImportedCnpj(rawValue, rowNumber, warnings){
-  const raw=String(rawValue??"").trim();
+  const original=String(rawValue??"").trim();
+  const raw=spreadsheetCellText(rawValue);
   const digits=onlyDigits(raw);
   if(!digits)return raw;
+  if(raw!==original)warnings.push(`Linha ${rowNumber}: CNPJ "${original}" convertido para "${raw}".`);
   if(digits.length===13){ const fixed="0"+digits; warnings.push(`Linha ${rowNumber}: CNPJ "${raw}" ajustado para "${fixed}".`); return fixed }
   return raw;
 }
+
+disableOperationalAutofill();
+guardOperationalCredentials("accountUsuario","accountSenha");
 
 function isAuthPath(path){
   return path === "/api/me" || path === "/api/logout" || path.startsWith("/api/auth/");
@@ -2725,13 +2772,14 @@ function renderDatasetRows(validation){
     tr.className=item.valid?"":"invalid";
     tr.innerHTML=`
       <td style="color:var(--text3);font-size:11px;">${item.linha||index+1}</td>
-      <td><input data-field="cnpj" value="${escapeHtml(item.cnpj||"")}" style="font-family:var(--mono);font-size:11px;" /></td>
-      <td><input data-field="codigo_dominio" value="${escapeHtml(item.codigo_dominio||"")}" /></td>
-      <td><input data-field="nome_empresa" value="${escapeHtml(item.nome_empresa||"")}" /></td>
+      <td><input data-field="cnpj" value="${escapeHtml(item.cnpj||"")}" autocomplete="off" style="font-family:var(--mono);font-size:11px;" /></td>
+      <td><input data-field="codigo_dominio" value="${escapeHtml(item.codigo_dominio||"")}" autocomplete="off" /></td>
+      <td><input data-field="nome_empresa" value="${escapeHtml(item.nome_empresa||"")}" autocomplete="off" /></td>
       <td><select data-field="account_id"><option value="">Selecione</option>${accounts.map(acc=>`<option value="${escapeHtml(acc.id)}">${escapeHtml(acc.alias)}</option>`).join("")}</select></td>
       <td data-status-cell>${item.valid?tag("ok"):tag("erro")}</td>
       <td><button type="button" class="danger sm" data-remove-row="${index}">−</button></td>`;
     $("datasetRows").appendChild(tr);
+    disableOperationalAutofill(tr);
     tr.querySelector("[data-field='account_id']").value=item.account_id||"";
   });
   $("datasetRows").querySelectorAll("[data-remove-row]").forEach(btn=>btn.addEventListener("click",()=>{
@@ -2955,7 +3003,7 @@ function readAdvancedSheet(){
   if(!advancedXlsxWorkbook)return;
   const sheetName=$("xlsxSheetSelect").value||advancedXlsxWorkbook.SheetNames[0];
   const ws=advancedXlsxWorkbook.Sheets[sheetName];
-  advancedXlsxRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:false,blankrows:false});
+  advancedXlsxRows=worksheetRowsForImport(ws);
   const maxCols=Math.max(0,...advancedXlsxRows.map(r=>r.length));
   const headerRow=Number($("xlsxHeaderRow").value||0);
   const headerIndex=headerRow>0?headerRow-1:-1;
@@ -3019,7 +3067,7 @@ async function buildItemsFromRows(rows,{idxCnpj,idxCodigo="",idxEmpresa="",idxCo
   let ignored=0;
   dataRows.forEach((row,idx)=>{
     const absoluteRow=Math.max(1,Number(dataStart||1))+idx;
-    const cnpj=normalizeImportedCnpj(String(row[Number(idxCnpj)]??"").trim(),absoluteRow,cnpjWarnings);
+    const cnpj=normalizeImportedCnpj(row[Number(idxCnpj)]??"",absoluteRow,cnpjWarnings);
     const codigo=idxCodigo===""?"":String(row[Number(idxCodigo)]??"").trim();
     const empresa=idxEmpresa===""?"":String(row[Number(idxEmpresa)]??"").trim();
     let account_id=contaTodosAccountId||"";
@@ -3040,7 +3088,7 @@ async function autoLoadXlsxFile(file){
   try{
     const workbook=await readWorkbookFromFile(file);
     const sheet=workbook.Sheets[workbook.SheetNames[0]];
-    const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:"",blankrows:false,raw:false});
+    const rows=worksheetRowsForImport(sheet);
     const dataStart=rowLooksLikeHeader(rows[0])?2:1;
     const result=await buildItemsFromRows(rows,{idxCnpj:0,idxCodigo:1,idxEmpresa:2,idxConta:3,dataStart,msgEl:$("datasetMsg")});
     localValidateDatasetRows(result.items);

@@ -32,6 +32,12 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A troca obrigatória de senha conserva somente o aviso fixo `Sua conta exige troca de senha antes de continuar.`; os dois avisos dinâmicos redundantes foram removidos.
 - Worker publicado sem alterar bindings, segredos, rotas ou cron. API e container 1.0.58 permaneceram saudáveis. Validação local: 102 testes Pytest e 52 testes Unittest.
 
+### Importação XLSX e autofill em 2026-08-03
+
+- Campos operacionais do ISS não aceitam mais preenchimento automático de navegador ou gerenciadores de senha. Os campos de credencial de conta ISS nas telas `iss-fortaleza.html` e `admin.html` começam somente-leitura e são liberados apenas na interação real do usuário; o login da Prumo continua com autofill normal.
+- A importação XLS/XLSX lê simultaneamente a apresentação formatada e o valor bruto da célula. Quando o Excel apresenta um CNPJ em notação científica, como `1.45915E+13`, o importador usa o inteiro completo armazenado no arquivo, sem alterar campos textuais formatados como código `0012`.
+- A proteção vale no carregamento automático, no editor avançado e nas linhas dinâmicas do conjunto. Worker publicado preservando bindings e rotas. Validação local: 106 testes Pytest e 52 testes Unittest.
+
 - API alvo: 1.0.58, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - Portal Nacional: o período é dividido por mês em janelas inclusivas de até 30 dias, cada janela é validada contra o total informado pelo Portal e os IDs são unidos sem duplicação. O período não filtra a competência: notas retroativas continuam incluídas. Para a SIM7, o Portal informou 169 emitidas em 01/06-30/06 e 205 em 01/07-17/07.
 - Portal Alan/SIM7: a prova completa de 01/06 a 17/07 finalizou 374/374, com janelas 169/169 e 205/205, zero duplicata e zero erro final. Foram removidos 62 XMLs órfãos de tentativas antigas depois de validar fisicamente os 374 XMLs e 374 PDFs referenciados; nenhum arquivo válido foi removido.
