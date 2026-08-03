@@ -117,6 +117,12 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
     document_call = next(params for method, params in calls if method == "Page.setDocumentContent")
     assert document_call["frameId"] == "top-frame"
     assert "Desafio hCaptcha" in document_call["html"]
+    runtime_expressions = [
+        params["expression"]
+        for method, params in calls
+        if method == "Runtime.evaluate" and params and "expression" in params
+    ]
+    assert any("hcaptcha.execute" in expression for expression in runtime_expressions)
 
 
 def test_visual_canvas_detection_does_not_depend_on_portuguese_label() -> None:

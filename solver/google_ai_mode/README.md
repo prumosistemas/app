@@ -23,7 +23,7 @@ O iframe do hCaptcha permanece com animação e temporizadores nativos durante
 toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
 relocalizado no quadro atual imediatamente antes do clique.
 
-Na v34, o documento mínimo do widget é injetado por CDP mantendo a origem
+Na v35, o documento mínimo do widget é injetado por CDP mantendo a origem
 oficial `https://www.nfse.gov.br`. Isso evita que uma resposta visual correta
 seja recusada por ter sido emitida numa página `127.0.0.1`. O script é carregado
 explicitamente depois da troca do documento, com CSP liberada somente nessa
@@ -37,6 +37,8 @@ Quando o hCaptcha aprova o checkbox sem exibir grade, o token é recolhido e
 devolvido imediatamente, sem recarregar o widget nem consumir uma análise visual.
 Se o clique no iframe pai não abrir a grade, o solver tenta imediatamente um
 clique CDP dentro do iframe do checkbox, sem esperar o timeout antigo de 30 s.
+O desafio é iniciado primeiro pela API oficial `hcaptcha.execute`; os cliques
+ficam como recuperação para widgets que não aceitem execução programática.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume

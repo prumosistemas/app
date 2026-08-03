@@ -668,13 +668,28 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
   window.captchaExpirou = () => {{}};
   const render = () => {{
     if (!window.hcaptcha || !document.getElementById('hcaptcha-root')) return;
-    window.hcaptcha.render('hcaptcha-root', {{
+    window.__hcaptchaWidgetId = window.hcaptcha.render('hcaptcha-root', {{
       sitekey,
       callback: window.captchaOk,
       'error-callback': window.captchaErro,
       'expired-callback': window.captchaExpirou
     }});
     window.__hcaptchaWidgetReady = true;
+    window.__hcaptchaExecuteCalled = false;
+    setTimeout(() => {{
+      try {{
+        const pending = window.hcaptcha.execute(window.__hcaptchaWidgetId, {{async: true}});
+        window.__hcaptchaExecuteCalled = true;
+        if (pending && typeof pending.then === 'function') {{
+          pending.then((result) => {{
+            const token = typeof result === 'string' ? result : result?.response;
+            if (token) window.captchaOk(token);
+          }}).catch((error) => {{ window.__hcaptchaExecuteError = String(error || 'execute_failed'); }});
+        }}
+      }} catch (error) {{
+        window.__hcaptchaExecuteError = String(error || 'execute_failed');
+      }}
+    }}, 100);
   }};
   const script = document.createElement('script');
   script.src = 'https://js.hcaptcha.com/1/api.js?hl=pt&render=explicit';
@@ -699,6 +714,8 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
   ready: Boolean(window.__hcaptchaWidgetReady),
   scriptError: Boolean(window.__hcaptchaScriptError),
   hcaptchaLoaded: typeof window.hcaptcha !== 'undefined',
+  executeCalled: Boolean(window.__hcaptchaExecuteCalled),
+  executeError: window.__hcaptchaExecuteError || null,
   checkboxFrames: [...document.querySelectorAll('iframe')]
     .filter((frame) => (frame.src || '').includes('frame=checkbox')).length
 }))()
