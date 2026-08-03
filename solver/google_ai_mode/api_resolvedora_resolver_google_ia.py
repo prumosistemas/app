@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v27-full-temporal-cycle"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v28-live-animation"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -771,21 +771,10 @@ new Promise(async (resolve) => {{
         await new Promise((done) => setTimeout(done, {max(40, interval_ms)}));
       }}
     }}
-    // Congele o loop visual depois de observar a sequencia. O Modo IA pode
-    // levar alguns segundos; sem isso o alvo muda de lugar antes do clique.
-    if (!window.__prumoOriginalRequestAnimationFrame) {{
-      window.__prumoOriginalRequestAnimationFrame = window.requestAnimationFrame.bind(window);
-    }}
-    window.__prumoAnimationFrozen = true;
-    window.requestAnimationFrame = () => 0;
-    await new Promise((done) => setTimeout(done, 60));
+    // Nao altere requestAnimationFrame nem temporizadores do hCaptcha. A
+    // evidência enviada à IA já foi salva e os alvos clicáveis são estáticos;
+    // congelar o iframe pode invalidar o estado temporal do desafio.
     frames[frames.length - 1] = src.toDataURL('image/jpeg', 0.88);
-    window.setTimeout(() => {{
-      if (window.__prumoAnimationFrozen && window.__prumoOriginalRequestAnimationFrame) {{
-        window.requestAnimationFrame = window.__prumoOriginalRequestAnimationFrame;
-        window.__prumoAnimationFrozen = false;
-      }}
-    }}, 60000);
   }} catch (error) {{
     return resolve({{error: String(error)}});
   }}
@@ -895,13 +884,9 @@ _legacy_click_non_9_choice = legacy.click_non_9_choice
 
 
 def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
-    # O congelamento existe apenas para a IA analisar um quadro estável. O
-    # próprio hCaptcha usa requestAnimationFrame para tratar interação; clicar
-    # antes de restaurá-lo pode desenhar nosso overlay no alvo sem registrar a
-    # escolha internamente. Retome o loop e entregue ao menos um frame antes do
-    # evento de mouse. Os alvos estáticos preservam suas coordenadas.
+    # Compatibilidade defensiva para páginas que tenham sobrevivido a um
+    # rollover antigo. A v28 não congela a animação em momento algum.
     _restore_visual_animation(port)
-    time.sleep(0.08)
     return _legacy_click_non_9_choice(port, escolha)
 
 

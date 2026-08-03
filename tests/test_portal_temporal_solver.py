@@ -148,7 +148,7 @@ def test_repeated_complex_scene_is_marked_for_rotation(tmp_path):
     assert second["same_scene_attempt"] > classification["max_same_scene_attempts"]
 
 
-def test_visual_loop_is_restored_before_click(monkeypatch):
+def test_click_does_not_wait_after_legacy_visual_cleanup(monkeypatch):
     solver = _solver()
     events = []
     monkeypatch.setattr(
@@ -161,7 +161,11 @@ def test_visual_loop_is_restored_before_click(monkeypatch):
         "_legacy_click_non_9_choice",
         lambda port, choice: events.append(("click", port, choice)) or True,
     )
-    monkeypatch.setattr(solver.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        solver.time,
+        "sleep",
+        lambda _seconds: pytest.fail("click wrapper must not pause the live animation"),
+    )
 
     choice = {"x_percent_na_imagem": 20, "y_percent_na_imagem": 80}
     assert solver._click_non_9_choice_frozen(9222, choice)

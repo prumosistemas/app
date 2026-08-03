@@ -19,8 +19,9 @@ geometria do clique (passagem fraca, permanência forte), enquanto os quadros
 extras são processados no próprio container; a montagem cronológica continua
 salva para depuração. Uma cena
 complexa repetida além do limite é trocada pelo botão de atualizar do hCaptcha.
-O loop visual é restaurado antes do clique para que o próprio widget processe
-a interação; o congelamento existe somente durante a análise do Modo IA.
+O iframe do hCaptcha permanece com animação e temporizadores nativos durante
+toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
+relocalizado no quadro atual imediatamente antes do clique.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume
