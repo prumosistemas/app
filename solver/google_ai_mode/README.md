@@ -12,7 +12,8 @@ Arquivos:
 
 O fluxo visual classifica cada cena como estática, temporal completa,
 trajetória ou desconhecida. Perguntas que dependem do ciclo inteiro (por exemplo,
-"nunca"/"sempre") usam 16 quadros em uma montagem cronológica; uma cena
+"nunca"/"sempre") observam até 28 quadros/~5,9 s, encerram antes quando o
+canvas completa o ciclo e enviam uma montagem cronológica; uma cena
 complexa repetida além do limite é trocada pelo botão de atualizar do hCaptcha.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.

@@ -40,7 +40,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v22-temporal-classifier"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v23-cycle-detection"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -354,8 +354,9 @@ def _question_wants_trajectory_destination(question: str) -> bool:
 def _temporal_capture_plan(question: str) -> tuple[int, int]:
     """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
     if _question_needs_full_temporal_sequence(question):
-        # 16 quadros cobrem 2,7 s: mais de um ciclo dos desafios de pouso atuais.
-        return 16, 180
+        # Teto de 28 quadros/~5,9 s. A captura pode encerrar antes quando o
+        # canvas volta ao primeiro estado depois de pelo menos quatro segundos.
+        return 28, 220
     return 4, 180
 
 
@@ -390,7 +391,8 @@ def _scene_fingerprint(path: Path) -> str | None:
     try:
         with legacy.Image.open(path) as image:
             small = image.convert("L").resize((16, 16))
-            pixels = list(small.getdata())
+            get_pixels = getattr(small, "get_flattened_data", small.getdata)
+            pixels = list(get_pixels())
         mean = sum(pixels) / max(1, len(pixels))
         bits = "".join("1" if pixel >= mean else "0" for pixel in pixels)
         return f"{int(bits, 2):064x}"
@@ -450,12 +452,18 @@ def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
         return None
     opened = []
     try:
-        for path in usable[:16]:
+        for path in usable[:32]:
             opened.append(legacy.Image.open(path).convert("RGB"))
         source_width, source_height = opened[0].size
-        columns = 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
+        columns = 6 if len(opened) > 16 else 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
         rows = math.ceil(len(opened) / columns)
-        frame_width = min(source_width, 500)
+        gap = 6
+        max_canvas_width = 2100
+        max_canvas_height = 1800
+        width_by_canvas = (max_canvas_width - gap * (columns - 1)) // columns
+        height_by_canvas = (max_canvas_height - gap * (rows - 1)) // rows
+        width_by_height = round(height_by_canvas * source_width / source_height)
+        frame_width = max(160, min(source_width, 500, width_by_canvas, width_by_height))
         frame_height = max(1, round(source_height * frame_width / source_width))
         opened = [
             image.resize((frame_width, frame_height))
@@ -463,7 +471,6 @@ def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
             else image
             for image in opened
         ]
-        gap = 6
         canvas_width = frame_width * columns + gap * (columns - 1)
         canvas_height = frame_height * rows + gap * (rows - 1)
         canvas = legacy.Image.new("RGB", (canvas_width, canvas_height), "white")
@@ -546,10 +553,10 @@ def _capture_visual_canvas_sequence(
         return []
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
-        # A coleta longa dura ~2,7 s depois da estabilizacao do canvas. O teto
-        # anterior de 6 s podia abortar justamente quando o desafio demorava a
-        # desenhar os primeiros quadros.
-        client.ws.settimeout(10 if frame_count > 4 else 6)
+        # A coleta adaptativa observa ate ~5,9 s depois da estabilizacao do
+        # canvas, mas encerra cedo quando a cena retorna ao primeiro estado.
+        # O teto maior inclui o tempo em que o desafio desenha os quadros.
+        client.ws.settimeout(13 if frame_count > 16 else 10 if frame_count > 4 else 6)
         try:
             data = client.eval(
                 f"""
@@ -600,9 +607,52 @@ new Promise(async (resolve) => {{
   }}
   if (stableReady < 2) return resolve({{loading: true, visual_score: score}});
   const frames = [];
+  const motionProbe = document.createElement('canvas');
+  motionProbe.width = 200;
+  motionProbe.height = 128;
+  const motionContext = motionProbe.getContext('2d', {{willReadFrequently: true}});
+  const motionSignature = () => {{
+    motionContext.clearRect(0, 0, motionProbe.width, motionProbe.height);
+    motionContext.drawImage(
+      src, 0, topCutNative, src.width, Math.max(1, src.height - topCutNative),
+      0, 0, motionProbe.width, motionProbe.height
+    );
+    return motionContext.getImageData(0, 0, motionProbe.width, motionProbe.height).data;
+  }};
+  const signatureDifference = (left, right) => {{
+    let changed = 0;
+    let totalDelta = 0;
+    for (let p = 0; p < left.length; p += 4) {{
+      const delta = Math.max(
+        Math.abs(left[p] - right[p]),
+        Math.abs(left[p + 1] - right[p + 1]),
+        Math.abs(left[p + 2] - right[p + 2])
+      );
+      if (delta >= 24) changed += 1;
+      totalDelta += delta;
+    }}
+    const pixels = left.length / 4;
+    return {{changed_ratio: changed / pixels, mean_delta: totalDelta / pixels}};
+  }};
+  let initialSignature = null;
+  let cycleDetected = false;
+  let cycleDifference = null;
   try {{
     for (let i = 0; i < {max(2, frame_count)}; i++) {{
       frames.push(src.toDataURL('image/jpeg', 0.86));
+      const signature = motionSignature();
+      if (!initialSignature) {{
+        initialSignature = new Uint8ClampedArray(signature);
+      }} else if (
+        {max(2, frame_count)} > 16 &&
+        i * {max(40, interval_ms)} >= 4000
+      ) {{
+        cycleDifference = signatureDifference(initialSignature, signature);
+        if (cycleDifference.changed_ratio <= 0.006 && cycleDifference.mean_delta <= 1.8) {{
+          cycleDetected = true;
+          break;
+        }}
+      }}
       if (i + 1 < {max(2, frame_count)}) {{
         await new Promise((done) => setTimeout(done, {max(40, interval_ms)}));
       }}
@@ -632,6 +682,8 @@ new Promise(async (resolve) => {{
     interval_ms: {max(40, interval_ms)},
     ready_wait_ms: Date.now() - readyStarted,
     visual_score: score,
+    cycle_detected: cycleDetected,
+    cycle_difference: cycleDifference,
     frames
   }});
 }})
@@ -685,6 +737,8 @@ new Promise(async (resolve) => {{
                     "interval_ms": data.get("interval_ms"),
                     "ready_wait_ms": data.get("ready_wait_ms"),
                     "visual_score": data.get("visual_score"),
+                    "cycle_detected": bool(data.get("cycle_detected")),
+                    "cycle_difference": data.get("cycle_difference"),
                     "capture_method": "canvas_to_data_url_sequence",
                 },
                 ensure_ascii=False,
