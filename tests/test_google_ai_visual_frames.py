@@ -73,7 +73,9 @@ def test_solver_origin_is_restricted_to_official_nfse_hosts() -> None:
 def test_official_origin_document_keeps_token_in_page() -> None:
     page = SOLVER.legacy.solver_page_html('sitekey"segura', local_callback=False)
 
-    assert 'data-sitekey="sitekey&quot;segura"' in page
+    assert 'id="hcaptcha-root"' in page
+    assert 'data-sitekey=' not in page
+    assert "js.hcaptcha.com" not in page
     assert "window.__lastHcaptchaToken" in page
     assert "fetch('/token" not in page
 
@@ -96,6 +98,14 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
             if method == "Page.getFrameTree":
                 return {"frameTree": {"frame": {"id": "top-frame"}}}
             return {}
+
+        def eval(self, _expression: str):
+            return {
+                "ready": True,
+                "scriptError": False,
+                "hcaptchaLoaded": True,
+                "checkboxFrames": 1,
+            }
 
         def close(self) -> None:
             calls.append(("close", None))

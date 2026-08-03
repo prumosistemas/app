@@ -23,10 +23,12 @@ O iframe do hCaptcha permanece com animação e temporizadores nativos durante
 toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
 relocalizado no quadro atual imediatamente antes do clique.
 
-Na v29, o documento mínimo do widget é injetado por CDP mantendo a origem
+Na v30, o documento mínimo do widget é injetado por CDP mantendo a origem
 oficial `https://www.nfse.gov.br`. Isso evita que uma resposta visual correta
-seja recusada por ter sido emitida numa página `127.0.0.1`. A URL recebida pelo
-solver é limitada aos hosts oficiais; `PORTAL_SOLVER_PRESERVE_ORIGIN=0` existe
+seja recusada por ter sido emitida numa página `127.0.0.1`. O script é carregado
+explicitamente depois da troca do documento, com CSP liberada somente nessa
+página isolada do solver; resets reinjetam o mesmo widget sem perder a origem.
+A URL recebida pelo solver é limitada aos hosts oficiais; `PORTAL_SOLVER_PRESERVE_ORIGIN=0` existe
 somente como compatibilidade de rollback para o documento local antigo.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.

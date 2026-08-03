@@ -88,6 +88,8 @@ SOLVER_LOCK = threading.Lock()
 SOLVER_ABORT_FILE = API_DIR / "solver-circuit-open.json"
 MAX_SOLVE_SECONDS = 180
 SERVER_INSTANCE = None
+SOLVER_WIDGET_SITEKEYS: dict[int, str] = {}
+SOLVER_WIDGET_LOCK = threading.Lock()
 
 LEGACY_PROVIDER_API_KEYS = (
     LEGACY_PROVIDER_API_KEY_1.strip(),
@@ -572,15 +574,22 @@ def solver_page_html(sitekey: str, local_callback: bool = False) -> str:
     """Documento minimo do widget, reutilizavel em origem local ou real."""
     escaped_sitekey = html.escape(sitekey, quote=True)
     callback = "fetch('/token?t=' + encodeURIComponent(token)).catch(() => {});" if local_callback else ""
+    script = '<script src="https://js.hcaptcha.com/1/api.js?hl=pt" async defer></script>' if local_callback else ""
+    widget = (
+        f'<div class="h-captcha" data-sitekey="{escaped_sitekey}" data-callback="captchaOk" '
+        'data-error-callback="captchaErro" data-expired-callback="captchaExpirou"></div>'
+        if local_callback
+        else '<div id="hcaptcha-root"></div>'
+    )
     return f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Desafio hCaptcha</title>
-  <script src="https://js.hcaptcha.com/1/api.js?hl=pt" async defer></script>
+  {script}
 </head>
 <body>
-  <div class="h-captcha" data-sitekey="{escaped_sitekey}" data-callback="captchaOk" data-error-callback="captchaErro" data-expired-callback="captchaExpirou"></div>
+  {widget}
   <script>
     function captchaOk(token) {{
       window.__lastHcaptchaToken = token || '';
@@ -634,6 +643,7 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
             client = CdpClient(parent["webSocketDebuggerUrl"])
             try:
                 client.call("Page.enable")
+                client.call("Page.setBypassCSP", {"enabled": True})
                 try:
                     client.call("Page.stopLoading")
                 except Exception:
@@ -644,9 +654,64 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
                     "Page.setDocumentContent",
                     {"frameId": frame_id, "html": solver_page_html(sitekey)},
                 )
+                sitekey_json = json.dumps(sitekey)
+                client.call(
+                    "Runtime.evaluate",
+                    {
+                        "expression": f"""
+(() => {{
+  const sitekey = {sitekey_json};
+  window.__lastHcaptchaToken = '';
+  window.__hcaptchaWidgetReady = false;
+  window.captchaOk = (token) => {{ window.__lastHcaptchaToken = token || ''; }};
+  window.captchaErro = () => {{}};
+  window.captchaExpirou = () => {{}};
+  const render = () => {{
+    if (!window.hcaptcha || !document.getElementById('hcaptcha-root')) return;
+    window.hcaptcha.render('hcaptcha-root', {{
+      sitekey,
+      callback: window.captchaOk,
+      'error-callback': window.captchaErro,
+      'expired-callback': window.captchaExpirou
+    }});
+    window.__hcaptchaWidgetReady = true;
+  }};
+  const script = document.createElement('script');
+  script.src = 'https://js.hcaptcha.com/1/api.js?hl=pt&render=explicit';
+  script.async = true;
+  script.onload = render;
+  script.onerror = () => {{ window.__hcaptchaScriptError = true; }};
+  document.head.appendChild(script);
+  return true;
+}})()
+""",
+                        "awaitPromise": True,
+                        "returnByValue": True,
+                    },
+                )
+
+                widget_end = time.time() + min(15.0, timeout)
+                widget_state = None
+                while time.time() < widget_end:
+                    widget_state = client.eval(
+                        """
+(() => ({
+  ready: Boolean(window.__hcaptchaWidgetReady),
+  scriptError: Boolean(window.__hcaptchaScriptError),
+  hcaptchaLoaded: typeof window.hcaptcha !== 'undefined',
+  checkboxFrames: [...document.querySelectorAll('iframe')]
+    .filter((frame) => (frame.src || '').includes('frame=checkbox')).length
+}))()
+"""
+                    )
+                    if widget_state and widget_state.get("checkboxFrames"):
+                        with SOLVER_WIDGET_LOCK:
+                            SOLVER_WIDGET_SITEKEYS[port] = sitekey
+                        return parent
+                    time.sleep(0.25)
+                raise RuntimeError(f"Widget oficial nao iniciou: {widget_state}")
             finally:
                 client.close()
-            return parent
         except Exception as exc:
             last_error = exc
             time.sleep(0.25)
@@ -689,6 +754,8 @@ def start_solver_page(sitekey: str) -> tuple[ThreadingHTTPServer, int, TokenStat
 
 
 def close_solver_browser(port: int, proc: subprocess.Popen | None, profile: Path | None = None) -> None:
+    with SOLVER_WIDGET_LOCK:
+        SOLVER_WIDGET_SITEKEYS.pop(port, None)
     try:
         version = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=1).json()
         ws_url = version.get("webSocketDebuggerUrl")
@@ -1489,6 +1556,15 @@ def click_hcaptcha_refresh(port: int) -> bool:
 
 def reload_solver_page(port: int) -> bool:
     """Recria o widget quando o checkbox fica preso sem abrir o desafio."""
+    with SOLVER_WIDGET_LOCK:
+        sitekey = SOLVER_WIDGET_SITEKEYS.get(port)
+    if sitekey:
+        try:
+            inject_solver_document(port, sitekey, timeout=20.0)
+            return True
+        except Exception as exc:
+            print(f"[Debug] Falha ao reinjetar widget oficial: {type(exc).__name__}")
+            return False
     try:
         page = wait_solver_page(port)
         client = CdpClient(page["webSocketDebuggerUrl"])
