@@ -134,7 +134,7 @@ def test_cold_health_timeout_keeps_primary_for_real_post(monkeypatch) -> None:
     assert automation.SOLVER_ENDPOINT_COOLDOWNS == {}
 
 
-def test_visual_failure_skips_second_modal_and_uses_local_solver(monkeypatch) -> None:
+def test_visual_failure_tries_second_modal_before_local_solver(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(
         automation,
@@ -148,15 +148,15 @@ def test_visual_failure_skips_second_modal_and_uses_local_solver(monkeypatch) ->
         if "primary" in url:
             raise RuntimeError("solver:visual_challenge_not_ready: grade movel")
         if "modal-2" in url:
-            raise AssertionError("a conta Modal reserva nao deve repetir falha visual")
+            return "token-modal-2"
         return "token-local"
 
     monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
 
     assert automation.solve_captcha_with_url(
         "https://primary.example/solve", "key", "run"
-    ) == "token-local"
-    assert calls == ["https://primary.example/solve", "http://127.0.0.1:8876/solve"]
+    ) == "token-modal-2"
+    assert calls == ["https://primary.example/solve", "https://modal-2.example/solve"]
 
 
 def test_solver_failure_message_redacts_url_queries(monkeypatch) -> None:
@@ -213,6 +213,35 @@ def test_solver_candidates_are_ordered_and_unique(monkeypatch) -> None:
         "https://modal-2.example/solve",
         "http://127.0.0.1:8876/solve",
     ]
+
+
+def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> None:
+    primary = "https://modal-1.example/solve"
+    fallback = "https://modal-2.example/solve"
+    residential = "http://127.0.0.1:8876/solve"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        automation,
+        "wait_for_solver_candidates",
+        lambda _primary: [primary, fallback, residential],
+    )
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    monkeypatch.setattr(automation, "mark_solver_endpoint_unavailable", lambda *args: 0)
+    monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
+
+    def fake_solve(url, _sitekey, _request_id):
+        calls.append(url)
+        if url == primary:
+            raise RuntimeError("solver:visual_challenge_not_opened")
+        if url == fallback:
+            return "token-modal-2"
+        raise AssertionError("ThinkPad nao deveria ser usado apos sucesso no segundo Modal")
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    assert automation.solve_captcha_with_url(primary, "sitekey", "nota") == "token-modal-2"
+    assert calls == [primary, fallback]
 
 
 def test_solver_telemetry_contains_no_url_query_or_exception_text(monkeypatch, tmp_path) -> None:

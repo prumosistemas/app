@@ -1491,11 +1491,7 @@ def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | 
 def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
     errors = []
     candidates = wait_for_solver_candidates(solver_url)
-    local_fallback_available = any(is_local_solver_url(url) for url in candidates)
-    skip_remote_visual_fallbacks = False
     for candidate in candidates:
-        if skip_remote_visual_fallbacks and not is_local_solver_url(candidate):
-            continue
         try:
             token = solve_captcha_once(candidate, sitekey, request_id)
             clear_solver_endpoint_cooldown(candidate)
@@ -1507,15 +1503,6 @@ def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> st
             safe_candidate = solver_endpoint_label(candidate)
             safe_error = sanitized_solver_error(exc)
             errors.append(f"{safe_candidate}: {safe_error}")
-            if (
-                candidate == solver_url
-                and local_fallback_available
-                and is_visual_solver_failure(exc)
-            ):
-                # A segunda conta Modal e reserva de quota/indisponibilidade.
-                # Repetir nela o mesmo desafio visual antes do fallback
-                # residencial duplica custo sem aumentar a diversidade de rota.
-                skip_remote_visual_fallbacks = True
             print(
                 f"[Solver] Falha em {safe_candidate}; tentando proximo endpoint: "
                 f"{safe_error}; cooldown={cooldown}s"
