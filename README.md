@@ -9,7 +9,7 @@ Versao: **1.0.68 - Portal isolado, retomavel e com Modo IA resiliente**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA v42 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad como ultimo fallback; sem Florence/Cohere.
+- Portal Nacional: Google Modo IA v43 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad como ultimo fallback; sem Florence/Cohere. Uma conta sem sessao valida abre o circuito apos tres falhas para nao consumir Modal em recuperacoes repetidas.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 

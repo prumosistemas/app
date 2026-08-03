@@ -68,6 +68,10 @@ ARTIFACT_RETENTION_DAYS = max(
 )
 MIN_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_MIN_CONTAINERS", "1")))
 BUFFER_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_BUFFER_CONTAINERS", "1")))
+PROVIDER_FAILURE_LIMIT = max(
+    2,
+    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "3"))),
+)
 
 google_state = modal.Volume.from_name(
     "prumo-portal-google-ai-state", create_if_missing=True
@@ -491,7 +495,7 @@ def solver_server() -> None:
             "--max-browsers",
             "1",
             "--max-provider-failures",
-            "30",
+            str(PROVIDER_FAILURE_LIMIT),
             "--max-solver-failures",
             "20",
             "--max-solve-seconds",

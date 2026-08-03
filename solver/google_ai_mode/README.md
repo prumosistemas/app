@@ -23,7 +23,7 @@ O iframe do hCaptcha permanece com animação e temporizadores nativos durante
 toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
 relocalizado no quadro atual imediatamente antes do clique.
 
-Na v42, a página oficial da NFS-e é mantida como contexto do widget visível.
+Na v43, a página oficial da NFS-e é mantida como contexto do widget visível.
 Isso evita que uma resposta visual correta seja recusada por ter sido emitida
 numa página `127.0.0.1`. O script é carregado explicitamente depois da troca do
 documento, com CSP liberada somente nessa página isolada do solver; resets
@@ -48,6 +48,11 @@ fallback por sequências corretas que foram interrompidas no meio.
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume
 privado do Modal; o código é carregado da imagem em `/app`.
+
+Containers que não conseguem formar uma sessão do Modo IA abrem o circuito
+após três falhas consecutivas. O servidor então aplica cooldown de cinco
+minutos àquela conta e segue para a próxima rota, evitando até 30 recuperações
+caras dentro da mesma nota.
 
 Teste mínimo antes do deploy:
 

@@ -451,7 +451,7 @@ Teste confirmado em 2026-07-06:
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
 - O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
 - Em 2026-07-16 o Modo IA v19 manteve o contrato visual unificado e adicionou recovery do widget com backoff. `ryangurgell20` e a rota normal; `fabriciofarofa5` fica reservada a quota/indisponibilidade; `127.0.0.1:8876` recebe falha visual especifica sem duplicar custo na conta Modal reserva.
-- Em 2026-08-03 o Modo IA v42 passou a renovar cedo estados sem grade/canvas/tarefas, preservar `solve_timeout`, permitir até oito etapas da abelha no mesmo cenário e usar 360 s no Modal e no fallback residencial. O circuito Modal se rearma em 300 s.
+- Em 2026-08-03 o Modo IA v43 passou a renovar cedo estados sem grade/canvas/tarefas, preservar `solve_timeout`, permitir até oito etapas da abelha no mesmo cenário e usar 360 s no Modal e no fallback residencial. Uma conta sem sessão válida abre o circuito após três falhas consecutivas; o circuito Modal se rearma em 300 s.
 - A prova pós-deploy no ThinkPad usou o sitekey real observado nos artefatos: a v18 não abriu o widget e terminou com causa genérica; a v19 recarregou o widget, capturou quatro etapas visuais em cerca de 1,4 s cada e devolveu token. O health terminou em `0/4` navegadores ativos.
 - O timeout do solver e configuravel por `PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS` e retries parciais reaproveitam tipos ja baixados.
 
