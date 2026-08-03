@@ -16,6 +16,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from PIL import ImageFilter
+
 
 BASE_DIR = Path(__file__).resolve().parent
 LEGACY_SOLVER_PATH = BASE_DIR / "api_resolvedora_resolver.py"
@@ -40,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v24-interaction-restore"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v25-temporal-occupancy"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -354,9 +356,9 @@ def _question_wants_trajectory_destination(question: str) -> bool:
 def _temporal_capture_plan(question: str) -> tuple[int, int]:
     """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
     if _question_needs_full_temporal_sequence(question):
-        # Teto de 28 quadros/~5,9 s. A captura pode encerrar antes quando o
+        # Teto de 40 quadros/~8,6 s. A captura pode encerrar antes quando o
         # canvas volta ao primeiro estado depois de pelo menos quatro segundos.
-        return 28, 220
+        return 40, 220
     return 4, 180
 
 
@@ -452,10 +454,10 @@ def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
         return None
     opened = []
     try:
-        for path in usable[:32]:
+        for path in usable[:48]:
             opened.append(legacy.Image.open(path).convert("RGB"))
         source_width, source_height = opened[0].size
-        columns = 6 if len(opened) > 16 else 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
+        columns = 8 if len(opened) > 32 else 6 if len(opened) > 16 else 4 if len(opened) > 9 else 3 if len(opened) > 4 else 2
         rows = math.ceil(len(opened) / columns)
         gap = 6
         max_canvas_width = 2100
@@ -541,6 +543,82 @@ def _build_motion_overlay(folder: Path, frames: list[Path]) -> Path | None:
             image.close()
 
 
+def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | None:
+    """Resume permanencia temporal sem perder a geometria dos alvos.
+
+    O painel esquerdo e a mediana temporal (fundo/alvos estaticos). O direito
+    sobrepoe calor amarelo/vermelho proporcional ao numero de quadros em que
+    houve mudanca naquele ponto. Passagens rapidas ficam fracas; permanencias
+    ficam fortes. Ambos usam exatamente a geometria clicavel original.
+    """
+    usable = [path for path in frames if path.is_file() and not legacy.png_seems_blank(path)]
+    if len(usable) < 4:
+        return None
+    try:
+        import numpy as np
+
+        arrays = []
+        target_size = None
+        for path in usable[:48]:
+            with legacy.Image.open(path) as image:
+                rgb = image.convert("RGB")
+                if target_size is None:
+                    target_size = rgb.size
+                elif rgb.size != target_size:
+                    rgb = rgb.resize(target_size)
+                arrays.append(np.asarray(rgb, dtype=np.uint8))
+        stack = np.stack(arrays, axis=0)
+        background = np.median(stack, axis=0).astype(np.uint8)
+        delta = np.max(np.abs(stack.astype(np.int16) - background.astype(np.int16)), axis=3)
+        occupancy = np.sum(delta >= 34, axis=0).astype(np.float32)
+        # Quatro quadros no mesmo ponto ja representam permanencia forte. Um
+        # unico quadro continua visivel, mas bem mais fraco (trajeto/voo).
+        strength = np.clip(occupancy / 4.0, 0.0, 1.0)
+        strength_image = legacy.Image.fromarray((strength * 255).astype(np.uint8), mode="L")
+        strength_image = strength_image.filter(ImageFilter.GaussianBlur(radius=4))
+        strength = np.asarray(strength_image, dtype=np.float32) / 255.0
+        heat = np.zeros_like(background)
+        heat[..., 0] = 255
+        heat[..., 1] = (210 * strength).astype(np.uint8)
+        alpha = (0.72 * strength)[..., None]
+        overlaid = (background * (1.0 - alpha) + heat * alpha).astype(np.uint8)
+
+        base_image = legacy.Image.fromarray(background, mode="RGB")
+        heat_image = legacy.Image.fromarray(overlaid, mode="RGB")
+        width, height = base_image.size
+        gap = 8
+        board = legacy.Image.new("RGB", (width * 2 + gap, height), "white")
+        board.paste(base_image, (0, 0))
+        board.paste(heat_image, (width + gap, 0))
+        board_path = folder / "evidencia-permanencia-temporal.jpg"
+        board.save(board_path, format="JPEG", quality=90, optimize=False)
+        (folder / "evidencia-permanencia-temporal-info.json").write_text(
+            json.dumps(
+                {
+                    "frame_count": len(arrays),
+                    "columns": 2,
+                    "rows": 1,
+                    "frame_width": width,
+                    "frame_height": height,
+                    "gap_px": gap,
+                    "montage_width": width * 2 + gap,
+                    "montage_height": height,
+                    "source_width": width,
+                    "source_height": height,
+                    "left_panel": "temporal_median_background",
+                    "right_panel": "occupancy_heatmap_weak_path_strong_dwell",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return board_path
+    except Exception as exc:
+        print(f"[Debug] Falha ao criar evidencia de permanencia: {type(exc).__name__}: {exc}")
+        return None
+
+
 def _capture_visual_canvas_sequence(
     port: int,
     folder: Path,
@@ -553,10 +631,10 @@ def _capture_visual_canvas_sequence(
         return []
     try:
         client = legacy.CdpClient(page["webSocketDebuggerUrl"])
-        # A coleta adaptativa observa ate ~5,9 s depois da estabilizacao do
+        # A coleta adaptativa observa ate ~8,6 s depois da estabilizacao do
         # canvas, mas encerra cedo quando a cena retorna ao primeiro estado.
         # O teto maior inclui o tempo em que o desafio desenha os quadros.
-        client.ws.settimeout(13 if frame_count > 16 else 10 if frame_count > 4 else 6)
+        client.ws.settimeout(17 if frame_count > 32 else 13 if frame_count > 16 else 10 if frame_count > 4 else 6)
         try:
             data = client.eval(
                 f"""
@@ -1389,7 +1467,18 @@ def _unified_visual_prompt(
         else "Nao presuma referencia externa; use somente a imagem."
     )
     sequence_note = ""
-    if frame_count > 1 and temporal_layout == "montage":
+    if frame_count > 1 and temporal_layout == "occupancy":
+        sequence_note = f"""
+A imagem tem DOIS PAINEIS da mesma cena durante {temporal_span_ms / 1000.0:.1f}
+segundos. O painel esquerdo mostra o fundo/alvos estaticos em escala grande. O
+direito mostra os mesmos alvos com um mapa de permanencia: rastros fracos indicam
+passagem rapida e amarelo/vermelho forte indica que o objeto ficou naquele ponto
+por varios quadros. Em perguntas com "pousa", "visita", "nunca" ou "sempre",
+diferencie passagem de permanencia. Compare TODOS os alvos e escolha o ponto exato
+do unico alvo compatível em qualquer painel. As coordenadas continuam 0..1000 da
+imagem inteira e depois serao convertidas para a cena original.
+"""
+    elif frame_count > 1 and temporal_layout == "montage":
         sequence_note = f"""
 A imagem e uma MONTAGEM CRONOLOGICA de {frame_count} quadros da mesma cena, em ordem
 da esquerda para a direita e de cima para baixo, cobrindo aproximadamente
@@ -1988,6 +2077,7 @@ def analyze_visual_with_google_ai(
     sequence_path = challenge_dir / "sequencia-temporal.jpg"
     if not sequence_path.is_file():
         sequence_path = challenge_dir / "sequencia-temporal.png"
+    occupancy_path = challenge_dir / "evidencia-permanencia-temporal.jpg"
     overlay_path = challenge_dir / "desafio-temporal-sobreposto.jpg"
     if not overlay_path.is_file():
         overlay_path = _build_motion_overlay(
@@ -1998,6 +2088,8 @@ def analyze_visual_with_google_ai(
     if not frame_paths:
         frame_paths = sorted(challenge_dir.glob("quadro-[0-9][0-9].png"))
     frame_count = len(frame_paths)
+    if not occupancy_path.is_file() and frame_paths:
+        occupancy_path = _build_temporal_occupancy_board(challenge_dir, frame_paths) or occupancy_path
     temporal_span_ms = 0
     try:
         capture_info = json.loads((challenge_dir / "canvas-info.json").read_text(encoding="utf-8"))
@@ -2027,7 +2119,9 @@ def analyze_visual_with_google_ai(
         pass
     moving_sequence = has_temporal_artifacts and overlay_path.is_file() and displacement >= 4.5
     query_path = (
-        sequence_path
+        occupancy_path
+        if full_temporal_sequence and occupancy_path.is_file()
+        else sequence_path
         if full_temporal_sequence
         else overlay_path
         if moving_sequence
@@ -2067,17 +2161,26 @@ def analyze_visual_with_google_ai(
                 query_height,
                 frame_count=analyzed_frame_count,
                 reference_present=(reference_present and query_path == full_path),
-                temporal_layout="montage" if full_temporal_sequence else "overlay",
+                temporal_layout=(
+                    "occupancy"
+                    if full_temporal_sequence and query_path == occupancy_path
+                    else "montage"
+                    if full_temporal_sequence
+                    else "overlay"
+                ),
                 temporal_span_ms=temporal_span_ms,
             ),
         )
         raw_answer = result.answer
         parsed = _parse_json_answer(raw_answer)
         parsed_original = json.loads(json.dumps(parsed, ensure_ascii=False))
-        if full_temporal_sequence and query_path == sequence_path:
-            montage_info = json.loads(
-                (challenge_dir / "sequencia-temporal-info.json").read_text(encoding="utf-8")
+        if full_temporal_sequence and query_path in (sequence_path, occupancy_path):
+            info_name = (
+                "evidencia-permanencia-temporal-info.json"
+                if query_path == occupancy_path
+                else "sequencia-temporal-info.json"
             )
+            montage_info = json.loads((challenge_dir / info_name).read_text(encoding="utf-8"))
             parsed = _sequence_coordinates_to_frame(
                 parsed,
                 frame_width=int(montage_info["frame_width"]),
@@ -2360,6 +2463,7 @@ def _save_and_analyze_visual_fast(
         # inclui uma faixa superior vazia/referencia e desperdicava resolucao.
         _build_motion_sequence(folder, frame_paths)
         _build_motion_overlay(folder, frame_paths)
+        _build_temporal_occupancy_board(folder, frame_paths)
     capture_seconds = time.perf_counter() - capture_started
     (folder / "timing.json").write_text(
         json.dumps(
@@ -2376,6 +2480,7 @@ def _save_and_analyze_visual_fast(
                     for name in ("sequencia-temporal.jpg", "sequencia-temporal.png")
                 ),
                 "overlay_created": (folder / "desafio-temporal-sobreposto.jpg").is_file(),
+                "occupancy_created": (folder / "evidencia-permanencia-temporal.jpg").is_file(),
             },
             ensure_ascii=False,
             indent=2,
