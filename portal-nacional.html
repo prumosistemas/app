@@ -305,12 +305,14 @@
       selectedRunId = run?.run_id || "";
       document.querySelectorAll("#runsTable [data-run]").forEach(row => row.classList.toggle("selected", row.dataset.run===selectedRunId));
       const s = run?.summary || {};
+      const issue = s.problema_operacional;
+      const issueLine = issue ? `\nSituação: ${issue.message}${issue.status_code ? ` (HTTP ${issue.status_code})` : ""}${issue.retry_in_seconds ? ` Nova tentativa em ${issue.retry_in_seconds}s.` : ""}` : "";
       $("detailBox").innerHTML = run ? `
-        <div class="notice ${/erro|parado|interrompida/.test(run.status||"") ? "warn" : "ok"}">
+        <div class="notice ${issue || /erro|parado|interrompida/.test(run.status||"") ? "warn" : "ok"}">
 ${esc(run.run_id)}
 Status: ${esc(run.status || "-")}
 Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Pendentes: ${Number(s.pendentes || 0)}
-Último evento: ${esc(s.ultimo_evento?.event || "-")}</div>` : "Selecione uma run.";
+Último evento: ${esc(s.ultimo_evento?.event || "-")}${esc(issueLine)}</div>` : "Selecione uma run.";
       renderCompetenceSelector(run);
       $("btnDeleteRun").disabled = !run || run.run_id === activeRunId;
     }

@@ -334,6 +334,24 @@ def _summarize_index(index_path: Path) -> Dict[str, Any]:
     data = _load_json(index_path, {})
     items = list((data.get("items") or {}).values())
     totals = data.get("totals") or {}
+    last_event = (data.get("events") or [{}])[-1]
+    event_name = str(last_event.get("event") or "")
+    operational_issue = None
+    if event_name == "requests_index_retry_wait":
+        operational_issue = {
+            "code": "portal_indisponivel_temporario",
+            "message": "Portal Nacional temporariamente indisponível.",
+            "status_code": last_event.get("status_code"),
+            "retry_in_seconds": last_event.get("delay_seconds"),
+            "attempt": last_event.get("attempt"),
+        }
+    elif event_name == "requests_index_unavailable":
+        operational_issue = {
+            "code": "portal_indisponivel",
+            "message": "Portal Nacional permaneceu indisponível após as tentativas automáticas.",
+            "status_code": last_event.get("status_code"),
+            "attempt": last_event.get("attempts"),
+        }
     return {
         "status": data.get("status"),
         "portal_registros": totals.get("portal_registros") or len(items),
@@ -343,7 +361,8 @@ def _summarize_index(index_path: Path) -> Dict[str, Any]:
         "executando": sum(1 for item in items if item.get("status") == "executando"),
         "baixados": totals.get("baixados", sum(1 for item in items if item.get("status") == "baixado")),
         "erros": totals.get("erros", sum(1 for item in items if item.get("status") == "erro")),
-        "ultimo_evento": (data.get("events") or [{}])[-1],
+        "ultimo_evento": last_event,
+        "problema_operacional": operational_issue,
         "competencias": summarize_competencias(items),
     }
 

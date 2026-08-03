@@ -87,6 +87,24 @@ def test_invalid_competencia_filter_is_rejected() -> None:
         portal_nacional._selected_competencias(["../../segredo"])
 
 
+def test_portal_503_is_reported_as_operational_outage(tmp_path: Path) -> None:
+    index_path = tmp_path / "indice.json"
+    index_path.write_text(
+        '{"items":{},"totals":{},"events":[{"event":"requests_index_retry_wait","status_code":503,"delay_seconds":60,"attempt":2}]}',
+        encoding="utf-8",
+    )
+
+    summary = portal_nacional._summarize_index(index_path)
+
+    assert summary["problema_operacional"] == {
+        "code": "portal_indisponivel_temporario",
+        "message": "Portal Nacional temporariamente indisponível.",
+        "status_code": 503,
+        "retry_in_seconds": 60,
+        "attempt": 2,
+    }
+
+
 def test_portal_frontend_uses_competence_selector_without_files_box() -> None:
     source = (Path(__file__).resolve().parents[1] / "portal-nacional.html").read_text(encoding="utf-8")
     assert 'id="filesBox"' not in source

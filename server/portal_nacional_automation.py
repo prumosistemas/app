@@ -774,6 +774,16 @@ def requests_session_from_data(session_data: dict) -> requests.Session:
     return session
 
 
+PORTAL_INDEX_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
+def portal_index_backoff_seconds(attempt: int, response: requests.Response | None = None) -> int:
+    retry_after = str(response.headers.get("Retry-After") or "").strip() if response is not None else ""
+    if retry_after.isdigit():
+        return max(1, min(300, int(retry_after)))
+    return min(15 * (2 ** max(0, attempt - 1)), 300)
+
+
 def response_is_login(response: requests.Response) -> bool:
     text = response.text if response.content else ""
     return (
@@ -996,16 +1006,42 @@ def run_requests_index(
     def get_page(page: int, window_start: str | None, window_end: str | None) -> requests.Response:
         nonlocal session, session_data
         page_url = requests_page_url(target_url, page, window_start, window_end)
-        response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
-        if response_is_login(response):
-            save_index(index_path, index, "renovando_sessao", "requests_index_login_failed", page=page, url=response.url)
-            session_data = regenerate_session(index, index_path, session_path, page_url, cert_index, pfx_file, pfx_password_file)
-            session = requests_session_from_data(session_data)
-            response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
-        if response_is_login(response):
-            raise RuntimeError(f"Sessao nao entrou no portal por requests; URL atual: {response.url}")
-        response.raise_for_status()
-        return response
+        max_attempts = max(2, min(12, int(os.environ.get("PORTAL_INDEX_HTTP_MAX_ATTEMPTS", "8"))))
+        last_error: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= max_attempts:
+                    save_index(index_path, index, "portal_indisponivel", "requests_index_unavailable", page=page, attempts=attempt, reason=type(exc).__name__)
+                    raise
+                delay = portal_index_backoff_seconds(attempt)
+                save_index(index_path, index, "indexando_requests", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, reason=type(exc).__name__)
+                print(f"[Indice] Falha de rede na pagina {page}; tentativa {attempt + 1}/{max_attempts} em {delay}s.")
+                time.sleep(delay)
+                continue
+            if response_is_login(response):
+                save_index(index_path, index, "renovando_sessao", "requests_index_login_failed", page=page, url=response.url)
+                session_data = regenerate_session(index, index_path, session_path, page_url, cert_index, pfx_file, pfx_password_file)
+                session = requests_session_from_data(session_data)
+                if attempt >= max_attempts:
+                    raise RuntimeError(f"Sessao nao entrou no portal por requests; URL atual: {response.url}")
+                continue
+            if response.status_code in PORTAL_INDEX_TRANSIENT_STATUS:
+                if attempt >= max_attempts:
+                    save_index(index_path, index, "portal_indisponivel", "requests_index_unavailable", page=page, attempts=attempt, status_code=response.status_code)
+                    response.raise_for_status()
+                delay = portal_index_backoff_seconds(attempt, response)
+                save_index(index_path, index, "indexando_requests", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, status_code=response.status_code)
+                print(f"[Indice] Portal respondeu HTTP {response.status_code} na pagina {page}; tentativa {attempt + 1}/{max_attempts} em {delay}s.")
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            return response
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"Portal indisponivel apos {max_attempts} tentativas na pagina {page}.")
 
     date_windows = build_portal_date_windows(data_inicial, data_final)
     save_index(

@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 
 import requests
@@ -39,6 +40,43 @@ def test_nfse_session_retries_only_safe_methods() -> None:
     assert retry.connect == 4
     assert "GET" in retry.allowed_methods
     assert "POST" not in retry.allowed_methods
+
+
+def test_portal_index_retries_503_with_growing_backoff(monkeypatch, tmp_path: Path) -> None:
+    responses = []
+    for status, body in ((503, "temporariamente indisponivel"), (200, "Total de 0 registros")):
+        response = requests.Response()
+        response.status_code = status
+        response.url = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
+        response._content = body.encode()
+        responses.append(response)
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            return responses.pop(0)
+
+    sleeps = []
+    monkeypatch.setattr(automation, "requests_session_from_data", lambda data: FakeSession())
+    monkeypatch.setattr(automation.time, "sleep", sleeps.append)
+    session_path = tmp_path / "session.json"
+    index_path = tmp_path / "indice.json"
+    session_path.write_text(json.dumps({"cookies": []}), encoding="utf-8")
+    index = automation.load_index(index_path, "recebidas")
+
+    automation.run_requests_index(
+        index,
+        index_path,
+        session_path,
+        "recebidas",
+        automation.MODE_URLS["recebidas"],
+        "01/07/2026",
+        "30/07/2026",
+        None,
+    )
+
+    assert sleeps == [15]
+    assert index["status"] == "indice_pronto"
+    assert any(event["event"] == "requests_index_retry_wait" for event in index["events"])
 
 
 def test_async_solver_poll_survives_transient_timeout(monkeypatch) -> None:
