@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v31-locale-neutral-canvas"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v32-multilingual-temporal"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -322,6 +322,16 @@ _LONG_TEMPORAL_TERMS = (
     "passou por",
     "durante o movimento",
     "ao longo",
+    "never",
+    "always",
+    "lands on",
+    "landed on",
+    "visits",
+    "visited",
+    "passes through",
+    "passed through",
+    "during the movement",
+    "over time",
 )
 
 _TRAJECTORY_DESTINATION_TERMS = (
@@ -334,6 +344,12 @@ _TRAJECTORY_DESTINATION_TERMS = (
     "direção",
     "trajetoria",
     "trajetória",
+    "destination",
+    "will arrive",
+    "will reach",
+    "where will",
+    "direction",
+    "trajectory",
 )
 
 
@@ -344,7 +360,7 @@ def _question_needs_full_temporal_sequence(question: str) -> bool:
 
 def _question_wants_trajectory_destination(question: str) -> bool:
     normalized = (question or "").casefold()
-    if "nunca" in normalized:
+    if "nunca" in normalized or "never" in normalized:
         return False
     return any(term in normalized for term in _TRAJECTORY_DESTINATION_TERMS)
 
@@ -368,7 +384,10 @@ def _classify_visual_challenge(question: str) -> dict[str, Any]:
         category, difficulty, max_same_scene_attempts = "temporal_trajectory", "media", 2
     elif any(
         term in normalized
-        for term in ("move", "movimento", "mudanca", "mudança", "animado", "animação")
+        for term in (
+            "move", "moves", "movement", "moving", "mudanca", "mudança",
+            "movimento", "animado", "animação", "animated", "animation",
+        )
     ):
         category, difficulty, max_same_scene_attempts = "temporal_dynamic", "alta", 1
     elif normalized:
@@ -1488,7 +1507,8 @@ A imagem e uma SOBREPOSICAO DE PERMANENCIA da mesma cena durante
 {temporal_span_ms / 1000.0:.1f} segundos, mantendo exatamente as coordenadas do
 canvas original. O fundo mostra os alvos estaticos; rastros fracos indicam passagem
 rapida e amarelo/vermelho forte indica que o objeto ficou naquele ponto por varios
-quadros. Em perguntas com "pousa", "visita", "nunca" ou "sempre", diferencie
+quadros. Em perguntas com "pousa"/"lands", "visita"/"visits",
+"nunca"/"never" ou "sempre"/"always", diferencie
 passagem de permanencia. Compare TODOS os alvos e escolha o centro exato do unico
 alvo compativel nas coordenadas 0..1000 da imagem.
 """
@@ -1497,7 +1517,7 @@ alvo compativel nas coordenadas 0..1000 da imagem.
 A imagem e uma MONTAGEM CRONOLOGICA de {frame_count} quadros da mesma cena, em ordem
 da esquerda para a direita e de cima para baixo, cobrindo aproximadamente
 {temporal_span_ms / 1000.0:.1f} segundos. Examine TODOS os paineis antes de responder.
-Para perguntas com "nunca", escolha somente o alvo que nao recebeu o objeto em nenhum
+Para perguntas com "nunca"/"never", escolha somente o alvo que nao recebeu o objeto em nenhum
 quadro; nao extrapole apenas a direcao do ultimo movimento. Indique a caixa e o ponto
 do alvo em qualquer um dos paineis, nas coordenadas 0..1000 da montagem inteira.
 """

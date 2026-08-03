@@ -34,6 +34,22 @@ def test_never_lands_uses_full_sequence_without_trajectory_override():
     assert solver._classify_visual_challenge(question)["category"] == "temporal_full"
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Click the flower the bee never lands on",
+        "Click the flower the bee always visits",
+        "Clique na flor onde a abelha nunca pousa",
+    ],
+)
+def test_full_temporal_semantics_are_multilingual(question):
+    solver = _solver()
+
+    assert solver._question_needs_full_temporal_sequence(question)
+    assert solver._temporal_capture_plan(question) == (80, 220)
+    assert solver._classify_visual_challenge(question)["category"] == "temporal_full"
+
+
 def test_destination_question_keeps_trajectory_override():
     solver = _solver()
 
