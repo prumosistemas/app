@@ -1470,6 +1470,8 @@ let selectedRunPagination = { page: 1, totalPages: 1, total: 0 };
 let currentDatasetRows = [];
 
 let advancedXlsxWorkbook=null, advancedXlsxRows=[], advancedXlsxHeaders=[];
+const ADVANCED_EDITOR_STATE_PREFIX="prumo:iss-editor:v1:";
+const advancedEditorStateMemory=new Map();
 
 const $ = id => document.getElementById(id);
 
@@ -3521,6 +3523,7 @@ $("btnSaveDataset").addEventListener("click",async()=>{
     toast("Este conjunto está em uso em uma run ativa. Aguarde terminar.","warn"); return;
   }
   try{
+    const editorState=captureAdvancedEditorState();
     const id=editingId;
     const path=id?"/py/api/datasets/"+encodeURIComponent(id):"/py/api/datasets";
     const method=id?"PUT":"POST";
@@ -3535,6 +3538,7 @@ $("btnSaveDataset").addEventListener("click",async()=>{
     }
     invalidateDatasetCaches(payload.dataset.id);
     $("datasetId").value=payload.dataset.id; selectedDatasetId=payload.dataset.id;
+    persistAdvancedEditorState(payload.dataset.id,editorState);
     $("btnDeleteDataset").classList.remove("hidden");
     await loadStateOnce();
     toast("Conjunto salvo.","ok");
@@ -3549,6 +3553,7 @@ $("btnDeleteDataset").addEventListener("click",async()=>{
   try{
     await apiFetch("/py/api/datasets/"+encodeURIComponent(id),{method:"DELETE"});
     invalidateDatasetCaches(id);
+    removeAdvancedEditorState(id);
     newDataset();
     await loadStateOnce();
     toast("Conjunto excluído.","ok");
@@ -3658,6 +3663,69 @@ function refreshAdvancedEditorAccountSelect(){
   accounts.forEach(acc=>{ const o=document.createElement("option"); o.value=acc.id; o.textContent=acc.alias; sel.appendChild(o); });
   if(current&&accounts.some(a=>a.id===current)) sel.value=current;
 }
+
+function advancedEditorStateKey(datasetId=""){
+  const user=currentUser();
+  const scope=encodeURIComponent(String(user?.id||user?.email||"session"));
+  const id=String(datasetId||$("datasetId")?.value||selectedDatasetId||"").trim();
+  const file=$("xlsxFile")?.files?.[0];
+  const target=id||`draft:${file?`${file.size}:${file.lastModified}`:"current"}`;
+  return `${ADVANCED_EDITOR_STATE_PREFIX}${scope}:${target}`;
+}
+
+function captureAdvancedEditorState(){
+  return {
+    sheet_name:$("xlsxSheetSelect")?.value||"",
+    header_row:$("xlsxHeaderRow")?.value||"1",
+    data_start_row:$("xlsxDataStartRow")?.value||"2",
+    max_rows:$("xlsxMaxRows")?.value||"0",
+    map_cnpj:$("mapCnpj")?.value||"",
+    map_codigo:$("mapCodigo")?.value||"",
+    map_empresa:$("mapEmpresa")?.value||"",
+    map_conta:$("mapConta")?.value||"",
+    account_all_id:$("mapContaTodos")?.value||"",
+  };
+}
+
+function persistAdvancedEditorState(datasetId="",state=captureAdvancedEditorState()){
+  const key=advancedEditorStateKey(datasetId);
+  advancedEditorStateMemory.set(key,state);
+  try{ localStorage.setItem(key,JSON.stringify(state)); }catch(_err){}
+  return state;
+}
+
+function loadAdvancedEditorState(datasetId=""){
+  const key=advancedEditorStateKey(datasetId);
+  if(advancedEditorStateMemory.has(key))return advancedEditorStateMemory.get(key);
+  try{
+    const state=JSON.parse(localStorage.getItem(key)||"null");
+    if(state&&typeof state==="object"){ advancedEditorStateMemory.set(key,state); return state; }
+  }catch(_err){}
+  return null;
+}
+
+function removeAdvancedEditorState(datasetId){
+  const key=advancedEditorStateKey(datasetId);
+  advancedEditorStateMemory.delete(key);
+  try{ localStorage.removeItem(key); }catch(_err){}
+}
+
+function restoreAdvancedEditorControls(state){
+  if(!state)return false;
+  $("xlsxHeaderRow").value=String(state.header_row||"1");
+  $("xlsxDataStartRow").value=String(state.data_start_row||"2");
+  $("xlsxMaxRows").value=String(state.max_rows||"0");
+  const values={mapCnpj:state.map_cnpj,mapCodigo:state.map_codigo,mapEmpresa:state.map_empresa,mapConta:state.map_conta};
+  Object.entries(values).forEach(([id,value])=>{
+    const select=$(id); const wanted=String(value??"");
+    if([...select.options].some(option=>option.value===wanted))select.value=wanted;
+  });
+  const accountId=String(state.account_all_id||"");
+  if([...$("mapContaTodos").options].some(option=>option.value===accountId))$("mapContaTodos").value=accountId;
+  renderAdvancedPreview();
+  return $("mapCnpj").value!=="";
+}
+
 
 function rowLooksLikeHeader(row){
   const text=normalizeText((row||[]).slice(0,8).join(" "));
@@ -3782,9 +3850,11 @@ function setSelectedFile(file){ if(!file)return; try{ const dt=new DataTransfer(
 async function openAdvancedXlsx(){
   try{
     const file=$("xlsxFile").files[0];
+    const savedState=loadAdvancedEditorState();
     if(file){
       advancedXlsxWorkbook=await readWorkbookFromFile(file);
       $("xlsxSheetSelect").innerHTML=advancedXlsxWorkbook.SheetNames.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+      if(savedState?.sheet_name&&advancedXlsxWorkbook.SheetNames.includes(savedState.sheet_name))$("xlsxSheetSelect").value=savedState.sheet_name;
     } else {
       const rows = getDatasetItemsFromTable();
       if(!rows.length){ showBox($("datasetMsg"),"err","Selecione um XLSX ou abra um conjunto com itens antes de usar o Editor de conjunto."); return }
@@ -3799,13 +3869,14 @@ async function openAdvancedXlsx(){
       advancedXlsxHeaders=["A · CNPJ","B · Código Domínio","C · Empresa","D · Conta"];
       $("xlsxSheetSelect").innerHTML=`<option value="current">Conjunto atual</option>`;
     }
-    $("xlsxHeaderRow").value="1"; $("xlsxDataStartRow").value="2"; $("xlsxMaxRows").value="0";
+    $("xlsxHeaderRow").value=String(savedState?.header_row||"1"); $("xlsxDataStartRow").value=String(savedState?.data_start_row||"2"); $("xlsxMaxRows").value=String(savedState?.max_rows||"0");
     refreshAdvancedEditorAccountSelect();
     $("mapContaTodos").value="";
     $("xlsxAdvancedModal").classList.add("open");
     showBox($("advancedXlsxMsg"),"ok",file ? `Arquivo: ${file.name}\nMapeie as colunas e clique em Aplicar.` : "Editando o conjunto atual.\nMapeie as colunas e clique em Aplicar.");
+    [$("mapCnpj"),$("mapCodigo"),$("mapEmpresa"),$("mapConta")].forEach(select=>select.value="");
     if(advancedXlsxWorkbook) readAdvancedSheet(); else { renderColumnMappingOptions(); renderAdvancedPreview(); }
-    detectAdvancedColumns();
+    if(!restoreAdvancedEditorControls(savedState))detectAdvancedColumns();
   } catch(err){ showBox($("datasetMsg"),"err","Erro ao abrir Editor de conjunto: "+err.message) }
 }
 
@@ -3819,6 +3890,7 @@ async function applyAdvancedXlsx(){
       dataStart:$("xlsxDataStartRow").value, maxRows:$("xlsxMaxRows").value,
       msgEl:$("advancedXlsxMsg")
     });
+    persistAdvancedEditorState();
     localValidateDatasetRows(result.items);
     $("xlsxAdvancedModal").classList.remove("open");
     const missing=result.missingAccounts.length?`\nContas pendentes: ${result.missingAccounts.join(", ")}`:"";
@@ -3832,6 +3904,7 @@ async function applyAdvancedXlsx(){
 }
 
 function clearAdvancedXlsx(){
+  removeAdvancedEditorState($("datasetId").value||selectedDatasetId||"");
   advancedXlsxWorkbook=null;
   advancedXlsxRows=[];
   advancedXlsxHeaders=[];
@@ -3844,17 +3917,18 @@ function clearAdvancedXlsx(){
 }
 
 $("btnOpenAdvancedXlsx").addEventListener("click",openAdvancedXlsx);
-$("btnCloseAdvancedXlsx").addEventListener("click",()=>$("xlsxAdvancedModal").classList.remove("open"));
-$("xlsxAdvancedModal").addEventListener("click",event=>{ if(event.target===$("xlsxAdvancedModal"))$("xlsxAdvancedModal").classList.remove("open") });
-$("xlsxSheetSelect").addEventListener("change",readAdvancedSheet);
-$("xlsxHeaderRow").addEventListener("change",readAdvancedSheet);
-$("xlsxDataStartRow").addEventListener("change",renderAdvancedPreview);
-$("xlsxMaxRows").addEventListener("change",renderAdvancedPreview);
+$("btnCloseAdvancedXlsx").addEventListener("click",()=>{ persistAdvancedEditorState(); $("xlsxAdvancedModal").classList.remove("open"); });
+$("xlsxAdvancedModal").addEventListener("click",event=>{ if(event.target===$("xlsxAdvancedModal")){ persistAdvancedEditorState(); $("xlsxAdvancedModal").classList.remove("open") } });
+$("xlsxSheetSelect").addEventListener("change",()=>{ readAdvancedSheet(); persistAdvancedEditorState(); });
+$("xlsxHeaderRow").addEventListener("change",()=>{ readAdvancedSheet(); persistAdvancedEditorState(); });
+$("xlsxDataStartRow").addEventListener("change",()=>{ renderAdvancedPreview(); persistAdvancedEditorState(); });
+$("xlsxMaxRows").addEventListener("change",()=>{ renderAdvancedPreview(); persistAdvancedEditorState(); });
 $("btnReloadAdvancedPreview").addEventListener("click",readAdvancedSheet);
 $("btnAutoDetectColumns").addEventListener("click",detectAdvancedColumns);
 $("btnClearAdvancedXlsx").addEventListener("click",clearAdvancedXlsx);
 $("btnApplyAdvancedXlsx").addEventListener("click",applyAdvancedXlsx);
-[$("mapCnpj"),$("mapCodigo"),$("mapEmpresa"),$("mapConta")].forEach(sel=>sel.addEventListener("change",renderAdvancedPreview));
+[$("mapCnpj"),$("mapCodigo"),$("mapEmpresa"),$("mapConta")].forEach(sel=>sel.addEventListener("change",()=>{ renderAdvancedPreview(); persistAdvancedEditorState(); }));
+$("mapContaTodos").addEventListener("change",()=>persistAdvancedEditorState());
 $("xlsxFile").addEventListener("change",()=>autoLoadXlsxFile($("xlsxFile").files[0]));
 
 $("xlsxDropZone").addEventListener("dragover",event=>{ event.preventDefault(); $("xlsxDropZone").classList.add("dragover") });

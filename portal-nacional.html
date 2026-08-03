@@ -86,7 +86,7 @@
           <div class="card">
             <div class="card-head"><h3>Novo certificado</h3></div>
             <div class="card-body">
-              <form id="certForm" class="stack">
+              <form id="certForm" class="stack" autocomplete="off">
                 <label class="dropzone" id="certDropzone">
                   <input id="certFile" name="file" type="file" accept=".pfx,.p12">
                   <strong id="certFileName">Selecionar arquivo .pfx</strong>
@@ -94,11 +94,11 @@
                 </label>
                 <div>
                   <label>Alias</label>
-                  <input id="certAlias" name="alias" placeholder="Nome curto para identificar">
+                  <input id="certAlias" name="alias" placeholder="Nome curto para identificar" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other">
                 </div>
                 <div>
                   <label>Senha</label>
-                  <input id="certPassword" name="password" type="password" autocomplete="off">
+                  <input id="certPassword" name="password" type="password" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other">
                 </div>
                 <div class="actions"><button id="btnUploadCert" type="submit">Salvar certificado</button></div>
               </form>
@@ -219,6 +219,17 @@
       if(loading){ btn.dataset.label = btn.textContent; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${esc(label || "Aguarde")}`; }
       else { btn.disabled = false; btn.textContent = btn.dataset.label || label || btn.textContent; }
     }
+    function guardOperationalCredentials(...ids){
+      ids.forEach(id => {
+        const input = $(id);
+        if(!input) return;
+        input.setAttribute("aria-autocomplete", "none");
+        const unlock = () => { input.readOnly = false; };
+        input.addEventListener("pointerdown", unlock, {once:true});
+        input.addEventListener("focus", unlock, {once:true});
+        input.addEventListener("keydown", unlock, {once:true});
+      });
+    }
     function switchSection(sectionId){
       document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === sectionId));
       document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.classList.toggle("active", btn.dataset.section === sectionId));
@@ -264,7 +275,7 @@
       if(!certs.length){ $("certList").innerHTML = `<div class="small">Nenhum certificado cadastrado.</div>`; return; }
       $("certList").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Alias</th><th>Validade</th><th>Origem</th><th></th></tr></thead><tbody>${certs.map(cert => `
         <tr>
-          <td><strong>${esc(cert.alias || cert.subject || "Certificado")}</strong><br><span class="small">${esc(cert.filename || cert.subject || "")}</span></td>
+          <td><strong>${esc(cert.alias || cert.subject || "Certificado")}</strong></td>
           <td>${esc((cert.not_after || "").slice(0,10) || "-")}</td>
           <td>${esc(cert.source === "runtime" ? "Runtime" : "Upload")}</td>
           <td>${cert.source === "upload" ? `<button class="danger" data-delete-cert="${esc(cert.id)}" type="button">Excluir</button>` : ""}</td>
@@ -361,6 +372,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       try{
         await api("/py/api/portal-nacional/certificates", {method:"POST", body:fd});
         $("certForm").reset(); $("certFileName").textContent = "Selecionar arquivo .pfx";
+        $("certAlias").readOnly = true; $("certPassword").readOnly = true;
+        guardOperationalCredentials("certAlias", "certPassword");
         await loadState(); setMsg("ok", "Certificado salvo.");
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnUploadCert"), false, "Salvar certificado"); }
@@ -411,7 +424,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
     $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
     document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
     $("certFile").addEventListener("change", () => {
-      $("certFileName").textContent = $("certFile").files[0]?.name || "Selecionar arquivo .pfx";
+      $("certFileName").textContent = $("certFile").files[0] ? "Arquivo selecionado" : "Selecionar arquivo .pfx";
     });
     ["dragenter","dragover"].forEach(type => $("certDropzone").addEventListener(type, ev => { ev.preventDefault(); $("certDropzone").classList.add("dragover"); }));
     ["dragleave","drop"].forEach(type => $("certDropzone").addEventListener(type, ev => { ev.preventDefault(); $("certDropzone").classList.remove("dragover"); }));
@@ -421,8 +434,9 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const dt = new DataTransfer();
       dt.items.add(file);
       $("certFile").files = dt.files;
-      $("certFileName").textContent = file.name;
+      $("certFileName").textContent = "Arquivo selecionado";
     });
+    guardOperationalCredentials("certAlias", "certPassword");
     (() => {
       const now = new Date();
       const first = new Date(now.getFullYear(), now.getMonth(), 1);

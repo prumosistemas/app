@@ -38,6 +38,13 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A importação XLS/XLSX lê simultaneamente a apresentação formatada e o valor bruto da célula. Quando o Excel apresenta um CNPJ em notação científica, como `1.45915E+13`, o importador usa o inteiro completo armazenado no arquivo, sem alterar campos textuais formatados como código `0012`.
 - A proteção vale no carregamento automático, no editor avançado e nas linhas dinâmicas do conjunto. Worker publicado preservando bindings e rotas. Validação local: 106 testes Pytest e 52 testes Unittest.
 
+### Privacidade do Portal e estado do editor em 2026-08-03
+
+- Os campos de alias e senha do certificado no Portal Nacional usam a mesma proteção contra autofill dos campos operacionais do ISS: começam somente-leitura e são liberados pela interação do usuário. O formulário e os campos também sinalizam aos navegadores e gerenciadores de senha que não são credenciais de login.
+- A interface do Portal não exibe o nome original do arquivo `.pfx`, nem na seleção/arraste nem na lista de certificados. Depois da escolha, mostra apenas `Arquivo selecionado`; depois do upload, mostra somente o alias cadastrado.
+- O editor avançado de conjuntos persiste por usuário e por conjunto a aba da planilha, linhas de cabeçalho/início/limite, mapeamentos de colunas e conta aplicada a todos. Salvar, aplicar, fechar pelo botão ou pelo fundo preserva o estado; `Limpar` remove-o intencionalmente. Um arquivo local precisa ser selecionado novamente após recarregar a página por restrição de segurança do navegador, e então as configurações salvas são reaplicadas.
+- Validação local desta atualização: 110 testes Pytest, verificação sintática do Worker e montagem de deploy sem mudança de rotas ou bindings.
+
 - API alvo: 1.0.58, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - Portal Nacional: o período é dividido por mês em janelas inclusivas de até 30 dias, cada janela é validada contra o total informado pelo Portal e os IDs são unidos sem duplicação. O período não filtra a competência: notas retroativas continuam incluídas. Para a SIM7, o Portal informou 169 emitidas em 01/06-30/06 e 205 em 01/07-17/07.
 - Portal Alan/SIM7: a prova completa de 01/06 a 17/07 finalizou 374/374, com janelas 169/169 e 205/205, zero duplicata e zero erro final. Foram removidos 62 XMLs órfãos de tentativas antigas depois de validar fisicamente os 374 XMLs e 374 PDFs referenciados; nenhum arquivo válido foi removido.
