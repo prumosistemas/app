@@ -568,6 +568,91 @@ def open_solver_browser(browser: str, url: str) -> tuple[int, Path, subprocess.P
     return port, profile, proc
 
 
+def solver_page_html(sitekey: str, local_callback: bool = False) -> str:
+    """Documento minimo do widget, reutilizavel em origem local ou real."""
+    escaped_sitekey = html.escape(sitekey, quote=True)
+    callback = "fetch('/token?t=' + encodeURIComponent(token)).catch(() => {});" if local_callback else ""
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Desafio hCaptcha</title>
+  <script src="https://js.hcaptcha.com/1/api.js?hl=pt" async defer></script>
+</head>
+<body>
+  <div class="h-captcha" data-sitekey="{escaped_sitekey}" data-callback="captchaOk" data-error-callback="captchaErro" data-expired-callback="captchaExpirou"></div>
+  <script>
+    function captchaOk(token) {{
+      window.__lastHcaptchaToken = token || '';
+      {callback}
+    }}
+    function captchaErro() {{}}
+    function captchaExpirou() {{}}
+  </script>
+</body>
+</html>"""
+
+
+def normalized_solver_origin_url(url: str) -> str:
+    """Aceita somente a origem oficial; nunca transforma o solver em navegador arbitrario."""
+    try:
+        parsed = urlparse(str(url or ""))
+    except Exception:
+        parsed = urlparse("")
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https" and host in {"nfse.gov.br", "www.nfse.gov.br"}:
+        return parsed.geturl()
+    return "https://www.nfse.gov.br/"
+
+
+def is_solver_parent_page(page: dict) -> bool:
+    if page.get("type") != "page" or not page.get("webSocketDebuggerUrl"):
+        return False
+    title = str(page.get("title") or "")
+    try:
+        host = (urlparse(str(page.get("url") or "")).hostname or "").lower()
+    except Exception:
+        host = ""
+    return title == "Desafio hCaptcha" or host in {
+        "127.0.0.1",
+        "localhost",
+        "nfse.gov.br",
+        "www.nfse.gov.br",
+    }
+
+
+def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> dict:
+    """Mantem a origem nfse.gov.br e substitui apenas o documento visual."""
+    end = time.time() + timeout
+    last_error: Exception | None = None
+    while time.time() < end:
+        try:
+            parent = next((page for page in list_pages(port) if is_solver_parent_page(page)), None)
+            if not parent:
+                time.sleep(0.25)
+                continue
+            client = CdpClient(parent["webSocketDebuggerUrl"])
+            try:
+                client.call("Page.enable")
+                try:
+                    client.call("Page.stopLoading")
+                except Exception:
+                    pass
+                frame_tree = client.call("Page.getFrameTree")
+                frame_id = frame_tree["frameTree"]["frame"]["id"]
+                client.call(
+                    "Page.setDocumentContent",
+                    {"frameId": frame_id, "html": solver_page_html(sitekey)},
+                )
+            finally:
+                client.close()
+            return parent
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.25)
+    raise RuntimeError(f"Nao consegui preparar hCaptcha na origem oficial: {last_error}")
+
+
 def start_solver_page(sitekey: str) -> tuple[ThreadingHTTPServer, int, TokenState]:
     token_state = TokenState()
     port = free_port()
@@ -590,26 +675,7 @@ def start_solver_page(sitekey: str) -> tuple[ThreadingHTTPServer, int, TokenStat
                 self.wfile.write(body)
                 return
 
-            escaped_sitekey = html.escape(sitekey, quote=True)
-            page = f"""<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Desafio hCaptcha</title>
-  <script src="https://js.hcaptcha.com/1/api.js?hl=pt" async defer></script>
-</head>
-<body>
-  <div class="h-captcha" data-sitekey="{escaped_sitekey}" data-callback="captchaOk" data-error-callback="captchaErro" data-expired-callback="captchaExpirou"></div>
-  <script>
-    function captchaOk(token) {{
-      window.__lastHcaptchaToken = token || '';
-      fetch('/token?t=' + encodeURIComponent(token)).catch(() => {{}});
-    }}
-    function captchaErro() {{}}
-    function captchaExpirou() {{}}
-  </script>
-</body>
-</html>"""
+            page = solver_page_html(sitekey, local_callback=True)
             body = page.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -665,7 +731,7 @@ def wait_solver_page(port: int) -> dict:
         try:
             pages = list_pages(port)
             for page in pages:
-                if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
+                if is_solver_parent_page(page):
                     return page
         except Exception:
             pass
@@ -693,9 +759,7 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
                 (
                     page
                     for page in pages
-                    if page.get("type") == "page"
-                    and "127.0.0.1" in page.get("url", "")
-                    and page.get("webSocketDebuggerUrl")
+                    if is_solver_parent_page(page)
                 ),
                 None,
             )
@@ -774,7 +838,7 @@ def challenge_grid_visible(port: int) -> bool:
             (
                 page
                 for page in pages
-                if page.get("type") == "page" and "127.0.0.1" in page.get("url", "") and page.get("webSocketDebuggerUrl")
+                if is_solver_parent_page(page)
             ),
             None,
         )
@@ -958,7 +1022,7 @@ def screenshot_solver(port: int, note_index: int, attempt: int, label: str = "gr
         target = None
         clip = None
         for page in pages:
-            if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
+            if is_solver_parent_page(page):
                 target = page
                 try:
                     client = CdpClient(page["webSocketDebuggerUrl"])
@@ -993,7 +1057,7 @@ def screenshot_solver(port: int, note_index: int, attempt: int, label: str = "gr
                 break
         if not target:
             for page in pages:
-                if page.get("type") == "page" and "127.0.0.1" in page.get("url", ""):
+                if is_solver_parent_page(page):
                     target = page
                     break
         if not target:
@@ -1031,9 +1095,7 @@ def top_level_solver_page(port: int) -> dict | None:
             (
                 page
                 for page in list_pages(port)
-                if page.get("type") == "page"
-                and "127.0.0.1" in page.get("url", "")
-                and page.get("webSocketDebuggerUrl")
+                if is_solver_parent_page(page)
             ),
             None,
         )
@@ -2301,7 +2363,7 @@ def extract_token_from_page(port: int) -> str | None:
             (
                 page
                 for page in pages
-                if page.get("type") == "page" and "127.0.0.1" in page.get("url", "") and page.get("webSocketDebuggerUrl")
+                if is_solver_parent_page(page)
             ),
             None,
         )
@@ -2471,10 +2533,15 @@ def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request
     browser = find_browser(BROWSER_OVERRIDE)
     server = None
     solve_deadline = time.time() + MAX_SOLVE_SECONDS
+    preserve_origin = os.environ.get("PORTAL_SOLVER_PRESERVE_ORIGIN", "1").strip() != "0"
 
     try:
-        server, server_port, token_state = start_solver_page(sitekey)
-        solver_url = f"http://127.0.0.1:{server_port}/"
+        token_state = TokenState()
+        if preserve_origin:
+            solver_url = normalized_solver_origin_url(url)
+        else:
+            server, server_port, token_state = start_solver_page(sitekey)
+            solver_url = f"http://127.0.0.1:{server_port}/"
 
         for browser_attempt in range(1, BROWSER_RESTART_LIMIT + 1):
             if time.time() >= solve_deadline:
@@ -2490,6 +2557,8 @@ def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request
                     f"[Solver API] Navegador aberto na porta {solver_port} "
                     f"(janela {browser_attempt}/{BROWSER_RESTART_LIMIT})"
                 )
+                if preserve_origin:
+                    inject_solver_document(solver_port, sitekey)
                 wait_solver_page(solver_port)
 
                 token = auto_solve_grid(

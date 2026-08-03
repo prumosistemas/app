@@ -57,3 +57,53 @@ def test_provider_circuit_records_open_time_and_rearms() -> None:
         SOLVER.legacy.PROVIDER_FAILURE_LIMIT = original_limit
         SOLVER.legacy.PROVIDER_CIRCUIT_COOLDOWN_SECONDS = original_cooldown
         SOLVER.reset_provider_circuit()
+
+
+def test_solver_origin_is_restricted_to_official_nfse_hosts() -> None:
+    normalize = SOLVER.legacy.normalized_solver_origin_url
+
+    assert normalize("https://www.nfse.gov.br/EmissorNacional/Dashboard") == (
+        "https://www.nfse.gov.br/EmissorNacional/Dashboard"
+    )
+    assert normalize("https://nfse.gov.br/") == "https://nfse.gov.br/"
+    assert normalize("http://www.nfse.gov.br/") == "https://www.nfse.gov.br/"
+    assert normalize("https://www.nfse.gov.br.evil.example/") == "https://www.nfse.gov.br/"
+
+
+def test_official_origin_document_keeps_token_in_page() -> None:
+    page = SOLVER.legacy.solver_page_html('sitekey"segura', local_callback=False)
+
+    assert 'data-sitekey="sitekey&quot;segura"' in page
+    assert "window.__lastHcaptchaToken" in page
+    assert "fetch('/token" not in page
+
+
+def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
+    calls: list[tuple[str, dict | None]] = []
+    page = {
+        "type": "page",
+        "title": "Portal Nacional",
+        "url": "https://www.nfse.gov.br/",
+        "webSocketDebuggerUrl": "ws://solver",
+    }
+
+    class FakeClient:
+        def __init__(self, websocket_url: str):
+            assert websocket_url == "ws://solver"
+
+        def call(self, method: str, params: dict | None = None):
+            calls.append((method, params))
+            if method == "Page.getFrameTree":
+                return {"frameTree": {"frame": {"id": "top-frame"}}}
+            return {}
+
+        def close(self) -> None:
+            calls.append(("close", None))
+
+    monkeypatch.setattr(SOLVER.legacy, "list_pages", lambda _port: [page])
+    monkeypatch.setattr(SOLVER.legacy, "CdpClient", FakeClient)
+
+    assert SOLVER.legacy.inject_solver_document(9222, "sitekey") == page
+    document_call = next(params for method, params in calls if method == "Page.setDocumentContent")
+    assert document_call["frameId"] == "top-frame"
+    assert "Desafio hCaptcha" in document_call["html"]
