@@ -820,6 +820,7 @@ def hcaptcha_targets(port: int) -> list[dict]:
 def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
     end = time.time() + timeout
     while time.time() < end:
+        parent_dispatched = False
         try:
             pages = list_pages(port)
             parent = next(
@@ -854,11 +855,17 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
                             "Input.dispatchMouseEvent",
                             {"type": "mouseReleased", "x": rect["x"], "y": rect["y"], "button": "left", "clickCount": 1},
                         )
-                        return True
+                        parent_dispatched = True
                 finally:
                     client.close()
         except Exception:
             pass
+        if parent_dispatched:
+            time.sleep(0.35)
+            if extract_token_from_page(port) or challenge_grid_visible(port):
+                return True
+            print("[Auto] Clique no iframe pai nao abriu o desafio; tentando iframe interno.")
+            break
         time.sleep(0.5)
 
     for page in hcaptcha_targets(port):
@@ -888,11 +895,20 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
                         "Input.dispatchMouseEvent",
                         {"type": "mouseReleased", "x": rect["x"], "y": rect["y"], "button": "left", "clickCount": 1},
                     )
+                    print("[Auto] Checkbox acionado dentro do iframe.")
                     return True
-                return bool(client.eval("document.querySelector('#checkbox')?.click(); true"))
+                return bool(client.eval(
+                    """
+(() => {
+  const el = document.querySelector('#checkbox') || document.querySelector('[role="checkbox"]');
+  if (!el) return false;
+  el.click();
+  return true;
+})()
+"""
+                ))
             finally:
                 client.close()
-            return True
         except Exception:
             pass
     return False
