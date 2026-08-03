@@ -15,6 +15,8 @@ trajetória ou desconhecida. Perguntas que dependem do ciclo inteiro (por exempl
 "nunca"/"sempre") observam até 28 quadros/~5,9 s, encerram antes quando o
 canvas completa o ciclo e enviam uma montagem cronológica; uma cena
 complexa repetida além do limite é trocada pelo botão de atualizar do hCaptcha.
+O loop visual é restaurado antes do clique para que o próprio widget processe
+a interação; o congelamento existe somente durante a análise do Modo IA.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume

@@ -121,3 +121,23 @@ def test_repeated_complex_scene_is_marked_for_rotation(tmp_path):
     assert second["same_scene"]
     assert second["same_scene_attempt"] == 2
     assert second["same_scene_attempt"] > classification["max_same_scene_attempts"]
+
+
+def test_visual_loop_is_restored_before_click(monkeypatch):
+    solver = _solver()
+    events = []
+    monkeypatch.setattr(
+        solver,
+        "_restore_visual_animation",
+        lambda port: events.append(("restore", port)),
+    )
+    monkeypatch.setattr(
+        solver,
+        "_legacy_click_non_9_choice",
+        lambda port, choice: events.append(("click", port, choice)) or True,
+    )
+    monkeypatch.setattr(solver.time, "sleep", lambda _seconds: None)
+
+    choice = {"x_percent_na_imagem": 20, "y_percent_na_imagem": 80}
+    assert solver._click_non_9_choice_frozen(9222, choice)
+    assert events == [("restore", 9222), ("click", 9222, choice)]

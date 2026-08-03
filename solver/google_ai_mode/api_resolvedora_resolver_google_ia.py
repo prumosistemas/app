@@ -40,7 +40,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v23-cycle-detection"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v24-interaction-restore"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -777,12 +777,14 @@ _legacy_click_non_9_choice = legacy.click_non_9_choice
 
 
 def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
-    try:
-        return _legacy_click_non_9_choice(port, escolha)
-    finally:
-        # Deixe o handler do clique ler o quadro congelado antes de retomar o loop.
-        time.sleep(0.25)
-        _restore_visual_animation(port)
+    # O congelamento existe apenas para a IA analisar um quadro estável. O
+    # próprio hCaptcha usa requestAnimationFrame para tratar interação; clicar
+    # antes de restaurá-lo pode desenhar nosso overlay no alvo sem registrar a
+    # escolha internamente. Retome o loop e entregue ao menos um frame antes do
+    # evento de mouse. Os alvos estáticos preservam suas coordenadas.
+    _restore_visual_animation(port)
+    time.sleep(0.08)
+    return _legacy_click_non_9_choice(port, escolha)
 
 
 legacy.click_non_9_choice = _click_non_9_choice_frozen
