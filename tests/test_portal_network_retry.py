@@ -110,7 +110,7 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "https://fallback.example/solve")
 
-    def fake_solve(url, sitekey, request_id):
+    def fake_solve(url, sitekey, request_id, page_url=None):
         calls.append(url)
         if "primary" in url:
             raise requests.ConnectionError("offline")
@@ -143,7 +143,7 @@ def test_visual_failure_tries_second_modal_before_local_solver(monkeypatch) -> N
     )
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "https://modal-2.example/solve")
 
-    def fake_solve(url, sitekey, request_id):
+    def fake_solve(url, sitekey, request_id, page_url=None):
         calls.append(url)
         if "primary" in url:
             raise RuntimeError("solver:visual_challenge_not_ready: grade movel")
@@ -163,7 +163,7 @@ def test_solver_failure_message_redacts_url_queries(monkeypatch) -> None:
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URLS", [])
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "")
 
-    def fake_solve(url, sitekey, request_id):
+    def fake_solve(url, sitekey, request_id, page_url=None):
         raise RuntimeError(
             "solver:failed: https://solver.example/solve?token=segredo&attempt=abc"
         )
@@ -230,7 +230,7 @@ def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> No
     monkeypatch.setattr(automation, "mark_solver_endpoint_unavailable", lambda *args: 0)
     monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
 
-    def fake_solve(url, _sitekey, _request_id):
+    def fake_solve(url, _sitekey, _request_id, _page_url=None):
         calls.append(url)
         if url == primary:
             raise RuntimeError("solver:visual_challenge_not_opened")
@@ -257,6 +257,22 @@ def test_solver_telemetry_contains_no_url_query_or_exception_text(monkeypatch, t
     assert "modal.example" in payload
     assert "nao-pode-vazar" not in payload
     assert "segredo no erro" not in payload
+
+
+def test_solver_receives_real_nfse_page_context(monkeypatch) -> None:
+    captured = {}
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs["json"])
+        return FakeResponse(200, {"success": True, "token": "token-ok"})
+
+    monkeypatch.setattr(automation.requests, "post", fake_post)
+    page_url = "https://www.nfse.gov.br/EmissorNacional/DPS/ModalCaptcha/Abrir/"
+
+    assert automation.solve_captcha_once(
+        "https://solver.example/solve", "key", "nota", page_url
+    ) == "token-ok"
+    assert captured["url"] == page_url
 
 
 def test_solver_async_urls_preserve_access_token() -> None:

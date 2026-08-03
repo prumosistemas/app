@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v37-visible-widget"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v38-real-page-context"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()

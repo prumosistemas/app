@@ -1451,10 +1451,18 @@ def solver_response_json(response: requests.Response) -> dict:
     return data
 
 
-def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | None:
+def solve_captcha_once(
+    solver_url: str,
+    sitekey: str,
+    request_id: str,
+    page_url: str | None = None,
+) -> str | None:
+    payload = {"sitekey": sitekey, "request_id": request_id}
+    if page_url:
+        payload["url"] = page_url
     response = requests.post(
         solver_url,
-        json={"sitekey": sitekey, "request_id": request_id},
+        json=payload,
         timeout=SOLVER_REQUEST_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
@@ -1488,12 +1496,17 @@ def solve_captcha_once(solver_url: str, sitekey: str, request_id: str) -> str | 
     return None
 
 
-def solve_captcha_with_url(solver_url: str, sitekey: str, request_id: str) -> str | None:
+def solve_captcha_with_url(
+    solver_url: str,
+    sitekey: str,
+    request_id: str,
+    page_url: str | None = None,
+) -> str | None:
     errors = []
     candidates = wait_for_solver_candidates(solver_url)
     for candidate in candidates:
         try:
-            token = solve_captcha_once(candidate, sitekey, request_id)
+            token = solve_captcha_once(candidate, sitekey, request_id, page_url)
             clear_solver_endpoint_cooldown(candidate)
             record_solver_endpoint_event(candidate, "success", request_id)
             return token
@@ -1627,7 +1640,12 @@ def download_item_tipo_requests(session: requests.Session, item: dict, solver_ur
         return {"ok": False, "reason": "sitekey_not_found", "tipo": tipo, "url": response.url, "html": str(snippet_path)}
 
     # Regra intencional: um captcha por arquivo. XML e PDF nao reaproveitam token.
-    token = solve_captcha_with_url(solver_url, modal["sitekey"], f"{item['id']}-{tipo}")
+    token = solve_captcha_with_url(
+        solver_url,
+        modal["sitekey"],
+        f"{item['id']}-{tipo}",
+        modal.get("modal_url") or response.url,
+    )
     if not token:
         return {"ok": False, "reason": "solver_no_token", "tipo": tipo}
 

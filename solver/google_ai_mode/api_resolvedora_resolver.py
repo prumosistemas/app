@@ -875,6 +875,11 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
 """
                     )
                     if rect:
+                        print(
+                            "[Auto] Checkbox pai: "
+                            f"{round(float(rect.get('w') or 0), 1)}x"
+                            f"{round(float(rect.get('h') or 0), 1)}"
+                        )
                         client.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": rect["x"], "y": rect["y"]})
                         client.call(
                             "Input.dispatchMouseEvent",
@@ -893,6 +898,41 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
             time.sleep(0.35)
             if extract_token_from_page(port) or challenge_grid_visible(port):
                 return True
+            try:
+                if parent:
+                    client = CdpClient(parent["webSocketDebuggerUrl"])
+                    try:
+                        execute_result = client.eval(
+                            """
+(() => {
+  if (!window.hcaptcha || window.__hcaptchaWidgetId === undefined) return 'unavailable';
+  try {
+    const pending = window.hcaptcha.execute(window.__hcaptchaWidgetId, {async: true});
+    window.__hcaptchaExecuteCalled = true;
+    if (pending && typeof pending.then === 'function') {
+      pending.then((result) => {
+        const token = typeof result === 'string' ? result : result?.response;
+        if (token) window.captchaOk(token);
+      }).catch((error) => {
+        window.__hcaptchaExecuteError = String(error || 'execute_failed');
+      });
+    }
+    return 'called';
+  } catch (error) {
+    window.__hcaptchaExecuteError = String(error || 'execute_failed');
+    return window.__hcaptchaExecuteError;
+  }
+})()
+"""
+                        )
+                        print(f"[Auto] Execute apos clique: {str(execute_result)[:120]}")
+                    finally:
+                        client.close()
+                    time.sleep(0.5)
+                    if extract_token_from_page(port) or challenge_grid_visible(port):
+                        return True
+            except Exception as exc:
+                print(f"[Auto] Execute apos clique falhou: {type(exc).__name__}")
             print("[Auto] Clique no iframe pai nao abriu o desafio; tentando iframe interno.")
             break
         time.sleep(0.5)
