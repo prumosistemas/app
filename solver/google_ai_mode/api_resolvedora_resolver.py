@@ -664,33 +664,21 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
   window.__lastHcaptchaToken = '';
   window.__hcaptchaWidgetReady = false;
   window.captchaOk = (token) => {{ window.__lastHcaptchaToken = token || ''; }};
-  window.captchaErro = () => {{}};
+  window.captchaErro = (code) => {{
+    window.__hcaptchaWidgetError = String(code || 'hcaptcha_error');
+  }};
   window.captchaExpirou = () => {{}};
   const render = () => {{
     if (!window.hcaptcha || !document.getElementById('hcaptcha-root')) return;
     window.__hcaptchaWidgetId = window.hcaptcha.render('hcaptcha-root', {{
       sitekey,
-      size: 'invisible',
+      size: 'normal',
       callback: window.captchaOk,
       'error-callback': window.captchaErro,
       'expired-callback': window.captchaExpirou
     }});
     window.__hcaptchaWidgetReady = true;
     window.__hcaptchaExecuteCalled = false;
-    setTimeout(() => {{
-      try {{
-        const pending = window.hcaptcha.execute(window.__hcaptchaWidgetId, {{async: true}});
-        window.__hcaptchaExecuteCalled = true;
-        if (pending && typeof pending.then === 'function') {{
-          pending.then((result) => {{
-            const token = typeof result === 'string' ? result : result?.response;
-            if (token) window.captchaOk(token);
-          }}).catch((error) => {{ window.__hcaptchaExecuteError = String(error || 'execute_failed'); }});
-        }}
-      }} catch (error) {{
-        window.__hcaptchaExecuteError = String(error || 'execute_failed');
-      }}
-    }}, 100);
   }};
   const script = document.createElement('script');
   script.src = 'https://js.hcaptcha.com/1/api.js?hl=pt&render=explicit';
@@ -717,6 +705,7 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
   hcaptchaLoaded: typeof window.hcaptcha !== 'undefined',
   executeCalled: Boolean(window.__hcaptchaExecuteCalled),
   executeError: window.__hcaptchaExecuteError || null,
+  widgetError: window.__hcaptchaWidgetError || null,
   checkboxFrames: [...document.querySelectorAll('iframe')]
     .filter((frame) => (frame.src || '').includes('frame=checkbox')).length
 }))()
@@ -729,14 +718,20 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
 (() => ({
   executeCalled: Boolean(window.__hcaptchaExecuteCalled),
   executeError: window.__hcaptchaExecuteError || null,
+  widgetError: window.__hcaptchaWidgetError || null,
   tokenReady: Boolean(window.__lastHcaptchaToken)
 }))()
 """
                         ) or {}
+                        widget_error = str(
+                            execute_state.get("widgetError")
+                            or execute_state.get("executeError")
+                            or ""
+                        ).replace("\n", " ")[:160]
                         print(
                             "[Solver API] Widget oficial pronto: "
                             f"execute={bool(execute_state.get('executeCalled'))} "
-                            f"erro={bool(execute_state.get('executeError'))} "
+                            f"erro={widget_error or 'nenhum'} "
                             f"token={bool(execute_state.get('tokenReady'))}"
                         )
                         with SOLVER_WIDGET_LOCK:

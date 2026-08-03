@@ -122,8 +122,9 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
         for method, params in calls
         if method == "Runtime.evaluate" and params and "expression" in params
     ]
-    assert any("hcaptcha.execute" in expression for expression in runtime_expressions)
-    assert any("size: 'invisible'" in expression for expression in runtime_expressions)
+    assert all("hcaptcha.execute" not in expression for expression in runtime_expressions)
+    assert any("size: 'normal'" in expression for expression in runtime_expressions)
+    assert any("__hcaptchaWidgetError" in expression for expression in runtime_expressions)
 
 
 def test_visual_canvas_detection_does_not_depend_on_portuguese_label() -> None:
