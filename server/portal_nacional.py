@@ -26,6 +26,12 @@ from domain import (
     unprotect_secret,
 )
 from portal_nacional_session import list_certificates, load_pfx_identity
+from portal_nacional_competencia import (
+    UNKNOWN_COMPETENCIA,
+    competencia_from_item,
+    normalize_competencia,
+    summarize_competencias,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -338,6 +344,7 @@ def _summarize_index(index_path: Path) -> Dict[str, Any]:
         "baixados": totals.get("baixados", sum(1 for item in items if item.get("status") == "baixado")),
         "erros": totals.get("erros", sum(1 for item in items if item.get("status") == "erro")),
         "ultimo_evento": (data.get("events") or [{}])[-1],
+        "competencias": summarize_competencias(items),
     }
 
 
@@ -412,6 +419,72 @@ def _list_files(run_dir: Path) -> List[Dict[str, Any]]:
             files.append({"name": extra.name, "relative_path": extra.relative_to(run_dir).as_posix(), "size": extra.stat().st_size})
     files.sort(key=lambda item: item["relative_path"].lower())
     return files
+
+
+def _selected_competencias(values: List[str]) -> set[str]:
+    selected: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip().lower()
+        if not value or value in {"todas", "todos", "all"}:
+            continue
+        if value == UNKNOWN_COMPETENCIA:
+            selected.add(value)
+            continue
+        normalized = normalize_competencia(value)
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Competência inválida.")
+        selected.add(normalized)
+    return selected
+
+
+def _competencia_folder(value: str) -> str:
+    if value == UNKNOWN_COMPETENCIA:
+        return "nao-identificada"
+    year, month = value.split("-", 1)
+    return f"{month}-{year}"
+
+
+def _portal_download_entries(
+    run_dir: Path,
+    index: Dict[str, Any],
+    selected: set[str],
+) -> List[Dict[str, Any]]:
+    downloads_root = (run_dir / "downloads").resolve()
+    entries: List[Dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for item in (index.get("items") or {}).values():
+        competence = competencia_from_item(item) or UNKNOWN_COMPETENCIA
+        if selected and competence not in selected:
+            continue
+        file_paths: List[str] = []
+        by_type = item.get("files_by_tipo") or {}
+        if isinstance(by_type, dict):
+            file_paths.extend(str(path) for path in by_type.values() if path)
+        file_paths.extend(str(path) for path in (item.get("files") or []) if path)
+        for raw_path in file_paths:
+            try:
+                full = Path(raw_path).resolve()
+                if downloads_root != full and downloads_root not in full.parents:
+                    continue
+                if not full.is_file() or full.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+            path_key = str(full)
+            if path_key in seen_paths:
+                continue
+            seen_paths.add(path_key)
+            kind = "XML" if full.suffix.lower() == ".xml" else "PDF" if full.suffix.lower() == ".pdf" else "OUTROS"
+            entries.append({"path": full, "competencia": competence, "kind": kind})
+    return entries
+
+
+def _zip_arcname(entry: Dict[str, Any], separate_competencias: bool) -> str:
+    parts = []
+    if separate_competencias:
+        parts.append(_competencia_folder(entry["competencia"]))
+    parts.extend([entry["kind"], entry["path"].name])
+    return "/".join(parts)
 
 
 def _runtime_key(ctx: WorkerContext) -> str:
@@ -781,16 +854,37 @@ async def delete_portal_run(run_id: str, ctx: WorkerContext = Depends(get_worker
 
 
 @router.get("/runs/{run_id}/download")
-async def download_portal_run(run_id: str, ctx: WorkerContext = Depends(get_worker_context)):
+async def download_portal_run(
+    run_id: str,
+    competencia: List[str] = Query(default=[]),
+    ctx: WorkerContext = Depends(get_worker_context),
+):
     run_dir = _safe_run_dir(ctx, run_id)
     paths = _run_paths(run_dir)
+    selected = _selected_competencias(competencia)
+    index = _load_json(paths["index"], {})
+    entries = _portal_download_entries(run_dir, index, selected)
+    if not entries:
+        raise HTTPException(status_code=404, detail="Nenhum arquivo disponível para a competência selecionada.")
+    present_competencias = {entry["competencia"] for entry in entries}
+    separate_competencias = len(present_competencias) > 1
     paths["zip"].mkdir(parents=True, exist_ok=True)
-    zip_path = paths["zip"] / f"{run_dir.name}.zip"
+    selection_slug = "-".join(sorted(selected)) if selected else "todas"
+    zip_path = paths["zip"] / f"{run_dir.name}-{safe_slug(selection_slug, 'todas')}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for file in _list_files(run_dir):
-            full = safe_path_inside(str(run_dir), str(run_dir / file["relative_path"]))
-            zf.write(full, arcname=file["relative_path"])
-    return FileResponse(zip_path, filename=f"{run_dir.name}.zip", media_type="application/zip")
+        used_names: set[str] = set()
+        for entry in entries:
+            arcname = _zip_arcname(entry, separate_competencias)
+            if arcname in used_names:
+                stem = Path(arcname).stem
+                suffix = Path(arcname).suffix
+                counter = 2
+                while f"{Path(arcname).parent.as_posix()}/{stem}-{counter}{suffix}" in used_names:
+                    counter += 1
+                arcname = f"{Path(arcname).parent.as_posix()}/{stem}-{counter}{suffix}"
+            used_names.add(arcname)
+            zf.write(entry["path"], arcname=arcname)
+    return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
 
 
 @router.get("/runs/{run_id}/file")

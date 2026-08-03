@@ -45,6 +45,7 @@
     .notice{border:1px solid var(--border2);background:var(--panel2);border-radius:8px;padding:10px 12px;color:var(--text2);font-size:12.5px;white-space:pre-line}.notice.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.notice.err{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.notice.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
     .metric{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:12px;display:grid;gap:4px}.metric span{color:var(--text3);font-size:11px;font-weight:800;text-transform:uppercase}.metric b{font-size:18px}
     .pill{display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:800;white-space:nowrap}.pill.ok{color:var(--green);background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.22)}.pill.bad{color:var(--red);background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.22)}.pill.warn{color:var(--amber);background:rgba(217,119,6,.08);border-color:rgba(217,119,6,.22)}
+    .competence-box{display:grid;gap:9px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}.competence-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.competence-head strong{font-size:12px}.competence-options{display:flex;flex-wrap:wrap;gap:7px}.competence-option{height:auto;min-height:34px;padding:7px 10px;background:#fff;color:var(--text2);border-color:var(--border2);justify-content:flex-start}.competence-option[aria-pressed="true"]{background:#eef2ff;color:var(--accent);border-color:rgba(79,70,229,.38);box-shadow:0 0 0 2px rgba(79,70,229,.09)}.competence-option span{color:var(--text3);font-size:10px;font-weight:700}.competence-option[aria-pressed="true"] span{color:var(--accent)}
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}tbody tr{transition:background .15s}tbody tr:hover{background:#fafbff}tbody tr.selected{background:#eef2ff;box-shadow:inset 3px 0 var(--accent)}
     .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
     .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
@@ -145,7 +146,7 @@
               <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnRetry" type="button">Retry</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
               <div class="card-body stack">
                 <div id="detailBox" class="small">Selecione uma run.</div>
-                <div id="filesBox"></div>
+                <div id="competenceBox"></div>
               </div>
             </div>
           </div>
@@ -170,6 +171,7 @@
     let latestState = null;
     let selectedRunSnapshot = null;
     let selectedRunLoadedAt = 0;
+    const selectedCompetencesByRun = new Map();
 
     const $ = id => document.getElementById(id);
     const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -208,7 +210,11 @@
     }
     function dateIso(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
     function formatTs(value){ if(!value) return "-"; const d=new Date(value); return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
-    function bytes(n){ n=Number(n||0); if(n<1024) return `${n} B`; if(n<1048576) return `${(n/1024).toFixed(1)} KB`; return `${(n/1048576).toFixed(1)} MB`; }
+    function competenceLabel(value){
+      if(value === "nao-identificada") return "Não identificada";
+      const [year,month] = String(value||"").split("-");
+      return year && month ? `${month}/${year}` : String(value||"");
+    }
     function statusPill(status){
       const s=String(status||"-");
       const cls = /finalizado/.test(s) ? "ok" : /erro|interrompida|parado|falha/.test(s) ? "bad" : /rodando|criada/.test(s) ? "warn" : "";
@@ -305,10 +311,40 @@ ${esc(run.run_id)}
 Status: ${esc(run.status || "-")}
 Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Pendentes: ${Number(s.pendentes || 0)}
 Último evento: ${esc(s.ultimo_evento?.event || "-")}</div>` : "Selecione uma run.";
-      const files = run?.files || [];
-      $("filesBox").innerHTML = files.length ? `<div class="table-wrap"><table><thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead><tbody>${files.map(file => `<tr><td>${esc(file.relative_path)}</td><td>${bytes(file.size)}</td><td><button class="secondary" data-file="${esc(file.relative_path)}" type="button">Baixar</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="small">Nenhum arquivo disponível.</div>`;
-      $("filesBox").querySelectorAll("[data-file]").forEach(btn => btn.onclick = () => downloadFile(run.run_id, btn.dataset.file, btn));
+      renderCompetenceSelector(run);
       $("btnDeleteRun").disabled = !run || run.run_id === activeRunId;
+    }
+    function renderCompetenceSelector(run){
+      const box = $("competenceBox");
+      const groups = Object.values(run?.summary?.competencias || {});
+      if(!run || !groups.length){
+        box.innerHTML = `<div class="small">As competências e quantidades aparecerão conforme as notas forem identificadas.</div>`;
+        $("btnDownloadRun").disabled = true;
+        $("btnDownloadRun").textContent = "Baixar ZIP";
+        return;
+      }
+      const available = new Set(groups.map(group => group.competencia));
+      const selected = selectedCompetencesByRun.get(run.run_id) || new Set();
+      [...selected].forEach(value => { if(!available.has(value)) selected.delete(value); });
+      selectedCompetencesByRun.set(run.run_id, selected);
+      const total = groups.reduce((sum, group) => sum + Number(group.total || 0), 0);
+      const allPressed = selected.size === 0;
+      box.innerHTML = `<div class="competence-box">
+        <div class="competence-head"><strong>Competências para baixar</strong><span class="small">Selecione uma, várias ou todas</span></div>
+        <div class="competence-options" role="group" aria-label="Competências para baixar">
+          <button class="competence-option" type="button" data-competence="todas" aria-pressed="${allPressed}">Todas <span>${total} nota(s)</span></button>
+          ${groups.map(group => `<button class="competence-option" type="button" data-competence="${esc(group.competencia)}" aria-pressed="${selected.has(group.competencia)}">${esc(competenceLabel(group.competencia))} <span>${Number(group.total || 0)} nota(s) · ${Number(group.baixados || 0)} pronta(s)</span></button>`).join("")}
+        </div>
+      </div>`;
+      box.querySelectorAll("[data-competence]").forEach(btn => btn.onclick = () => {
+        const value = btn.dataset.competence;
+        if(value === "todas") selected.clear();
+        else if(selected.has(value)) selected.delete(value);
+        else selected.add(value);
+        renderCompetenceSelector(run);
+      });
+      $("btnDownloadRun").disabled = groups.every(group => Number(group.baixados || 0) === 0);
+      $("btnDownloadRun").textContent = allPressed ? "Baixar todas" : selected.size === 1 ? `Baixar ${competenceLabel([...selected][0])}` : `Baixar ${selected.size} competências`;
     }
     async function downloadBlob(path, fallbackName){
       const headers = new Headers();
@@ -325,12 +361,6 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const a = document.createElement("a");
       a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 3000);
-    }
-    async function downloadFile(runId, filePath, btn){
-      buttonLoading(btn, true, "Baixando");
-      try{ await downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}/file?path=${encodeURIComponent(filePath)}`, filePath.split("/").pop() || "arquivo"); }
-      catch(err){ setMsg("err", err.message); }
-      finally{ buttonLoading(btn, false, "Baixar"); }
     }
     async function loadState(forceDetail=false){
       const state = await api("/py/api/portal-nacional/state");
@@ -404,8 +434,12 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
     };
     $("btnDownloadRun").onclick = () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
+      const selected = selectedCompetencesByRun.get(selectedRunId) || new Set();
+      const query = new URLSearchParams();
+      selected.forEach(value => query.append("competencia", value));
+      const suffix = query.toString() ? `?${query}` : "";
       buttonLoading($("btnDownloadRun"), true, "Preparando");
-      downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/download`, `${selectedRunId}.zip`)
+      downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/download${suffix}`, `${selectedRunId}.zip`)
         .catch(err => setMsg("err", err.message))
         .finally(() => buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"));
     };

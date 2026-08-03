@@ -19,6 +19,8 @@ import websocket
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from portal_nacional_competencia import competencia_from_xml_path
+
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_FILE = BASE_DIR / "sessao_nfse.txt"
 PROFILE_BASE_DIR = BASE_DIR / "chrome-profiles"
@@ -1699,6 +1701,10 @@ def reconcile_existing_downloads(index: dict, download_dir: Path, tipos: list[st
             item["files_by_tipo"] = files_by_tipo
             item["files"] = files
             reconciled += 1
+        competence = item.get("competencia") or competencia_from_xml_path(files_by_tipo.get("xml"))
+        if competence and item.get("competencia") != competence:
+            item["competencia"] = competence
+            reconciled += 1
         required = item_required_tipos(item, tipos)
         if all(files_by_tipo.get(tipo) and Path(str(files_by_tipo[tipo])).is_file() for tipo in required):
             item["status"] = "baixado"
@@ -1737,6 +1743,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
             errors.append(result)
             break
 
+    competence = item.get("competencia") or competencia_from_xml_path(files_by_tipo.get("xml"))
     if errors:
         return {
             "ok": False,
@@ -1744,6 +1751,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
             "errors": errors,
             "files_by_tipo": files_by_tipo,
             "methods_by_tipo": methods_by_tipo,
+            "competencia": competence,
         }
 
     files = [files_by_tipo[tipo] for tipo in tipos if files_by_tipo.get(tipo)]
@@ -1754,6 +1762,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
         "methods_by_tipo": methods_by_tipo,
         "method": "+".join(methods_by_tipo.get(tipo, tipo) for tipo in tipos),
         "tipo_download": tipo_download,
+        "competencia": competence,
     }
 
 
@@ -1894,6 +1903,8 @@ def run_requests_downloads(
                     index["items"][key]["tipo_download"] = tipo_download
                     index["items"][key]["downloaded_at"] = now_iso()
                     index["items"][key]["download_method"] = result.get("method")
+                    if result.get("competencia"):
+                        index["items"][key]["competencia"] = result["competencia"]
                     index["items"][key].pop("last_error", None)
                     save_index(index_path, index, "baixando_requests", "item_downloaded", id=key, method=result.get("method"), active=len(futures), queue=len(queue))
                     print(f"Baixado via requests: {key}")
@@ -1912,6 +1923,8 @@ def run_requests_downloads(
                     index["items"][key]["files"] = existing_files
                 if result.get("methods_by_tipo"):
                     index["items"][key]["methods_by_tipo"] = result.get("methods_by_tipo", {})
+                if result.get("competencia"):
+                    index["items"][key]["competencia"] = result["competencia"]
 
                 if reason in {"login", "login_modal", "login_after_captcha"}:
                     index["items"][key]["status"] = "pendente"

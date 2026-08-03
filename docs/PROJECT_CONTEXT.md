@@ -45,7 +45,14 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - O editor avançado de conjuntos persiste por usuário e por conjunto a aba da planilha, linhas de cabeçalho/início/limite, mapeamentos de colunas e conta aplicada a todos. Salvar, aplicar, fechar pelo botão ou pelo fundo preserva o estado; `Limpar` remove-o intencionalmente. Um arquivo local precisa ser selecionado novamente após recarregar a página por restrição de segurança do navegador, e então as configurações salvas são reaplicadas.
 - Validação local desta atualização: 110 testes Pytest, verificação sintática do Worker e montagem de deploy sem mudança de rotas ou bindings.
 
-- API alvo: 1.0.58, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
+### Competências do Portal Nacional em 2026-08-03
+
+- A API 1.0.59 extrai `dCompet` do XML de cada NFS-e e agrega as quantidades por competência sem alterar o filtro de emissão do Portal. Assim, notas retroativas ou futuras encontradas no período continuam no índice e ficam visíveis separadamente.
+- O detalhe da run não exibe mais a lista extensa de arquivos. Em seu lugar, mostra seletores com `MM/AAAA`, total de notas e quantidade pronta; é possível baixar uma, várias ou todas as competências.
+- O ZIP contém somente XML/PDF das notas selecionadas. Quando existem várias competências, cria pastas `MM-AAAA/XML` e `MM-AAAA/PDF`; logs, `run.json` e `indice.json` não entram no pacote de notas.
+- Validação local: 115 testes Pytest, compilação dos módulos Python, validação sintática do HTML e dry-run do Worker sem mudança de rotas ou bindings.
+
+- API alvo: 1.0.59, com autenticação mTLS direta no ThinkPad, Modal principal, segunda conta Modal e fallback residencial do solver.
 - Portal Nacional: o período é dividido por mês em janelas inclusivas de até 30 dias, cada janela é validada contra o total informado pelo Portal e os IDs são unidos sem duplicação. O período não filtra a competência: notas retroativas continuam incluídas. Para a SIM7, o Portal informou 169 emitidas em 01/06-30/06 e 205 em 01/07-17/07.
 - Portal Alan/SIM7: a prova completa de 01/06 a 17/07 finalizou 374/374, com janelas 169/169 e 205/205, zero duplicata e zero erro final. Foram removidos 62 XMLs órfãos de tentativas antigas depois de validar fisicamente os 374 XMLs e 374 PDFs referenciados; nenhum arquivo válido foi removido.
 - Solver Portal: Google Modo IA v21 unificado. A conta `ryangurgell20` mantém um container e um buffer; `fabriciofarofa5` escala a zero e e usada em quota/indisponibilidade. Falha visual especifica segue ao ThinkPad sem colocar as outras notas em cooldown. Quadros animados sem alvo são recapturados sem penalizar o provedor; Modal mantém 90 s por solve e o fallback residencial usa até 240 s para preservar desafios longos. O circuito Modal se rearma após 300 s. Não há Florence, Cohere nem resolvedor separado para grade de nove imagens.
@@ -57,7 +64,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Login/Worker: o incidente `1101` de 2026-07-17 revelou rejeições assíncronas escapando do `try/catch` porque os handlers eram retornados sem `await`. Todas as rotas assíncronas agora são aguardadas dentro da barreira de erro; respostas HTML de infraestrutura são reduzidas a uma mensagem segura com código de suporte, sem inserir o documento da Cloudflare no formulário.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
-- Imagem alvo do servidor: `ryang20/prumo-api:1.0.58`; manter a 1.0.57 como rollback local.
+- Imagem alvo do servidor: `ryang20/prumo-api:1.0.59`; manter a 1.0.58 como rollback local.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.
@@ -81,5 +88,5 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 - O deploy automático Netlify pode ser ignorado por limite de créditos da conta. As telas críticas atualizadas continuam ao vivo pelas rotas do Worker Cloudflare, sem deploy manual obrigatório.
 - Debug visual fica por sete dias. Após 15 minutos, conteúdo textual é gzipado e PNG vira WebP lossless; o compose limita logs Docker a 3 x 10 MiB.
-- O registro Docker externo não é necessário no caminho normal: a imagem 1.0.58 pode ser construída diretamente no ThinkPad após `git pull`. Manter a 1.0.57 como rollback local.
+- O registro Docker externo não é necessário no caminho normal: a imagem 1.0.59 pode ser construída diretamente no ThinkPad após `git pull`. Manter a 1.0.58 como rollback local.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.
