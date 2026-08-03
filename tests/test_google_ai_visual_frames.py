@@ -127,3 +127,14 @@ def test_visual_canvas_detection_does_not_depend_on_portuguese_label() -> None:
         source = (SOLVER_DIR / name).read_text(encoding="utf-8")
         assert "Desafio de CAPTCHA baseado em imagem" not in source
         assert "querySelectorAll('canvas')" in source
+
+
+def test_solver_accepts_token_without_opening_visual_challenge(monkeypatch) -> None:
+    monkeypatch.setattr(SOLVER.legacy, "extract_token_from_page", lambda _port: "token-direto")
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "ensure_challenge_open",
+        lambda _port: (_ for _ in ()).throw(AssertionError("nao deveria abrir grade")),
+    )
+
+    assert SOLVER.legacy.auto_solve_grid(9222, 0, 1, max_refreshes=1) == "token-direto"

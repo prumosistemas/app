@@ -2236,6 +2236,10 @@ def auto_solve_grid(
     challenge_opened = False
     
     for i in range(max_refreshes):
+        token = extract_token_from_page(port)
+        if token:
+            print("[Auto] Token obtido sem desafio visual.")
+            return token
         if not solver_browser_alive(port, browser_proc):
             set_solver_error("browser_closed", "Navegador do solve foi fechado ou deixou de responder.")
             print("[Auto] Navegador do solve nao responde mais; vou reabrir outra janela.")
@@ -2253,12 +2257,16 @@ def auto_solve_grid(
             challenge_open_failures += 1
             print("[Auto] Falha ao abrir o desafio. Tentando clicar no checkbox...")
             click_hcaptcha_checkbox(port)
-            time.sleep(
-                min(
-                    OPEN_CHALLENGE_RETRY_DELAY_SECONDS * challenge_open_failures,
-                    2.0,
-                )
+            token_end = time.time() + min(
+                OPEN_CHALLENGE_RETRY_DELAY_SECONDS * challenge_open_failures,
+                2.0,
             )
+            while time.time() < token_end:
+                token = extract_token_from_page(port)
+                if token:
+                    print("[Auto] Checkbox aprovado diretamente; token preservado.")
+                    return token
+                time.sleep(0.2)
             if not challenge_grid_visible(port):
                 # Um widget preso nao melhora com dezenas de cliques no mesmo
                 # DOM. A cada duas falhas, recrie-o e preserve um backoff curto.
