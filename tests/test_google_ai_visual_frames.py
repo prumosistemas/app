@@ -165,3 +165,25 @@ def test_stuck_widget_renews_browser_after_three_click_cycles(monkeypatch) -> No
     error = SOLVER.legacy.get_solver_error()
     assert error["reason"] == "visual_challenge_not_opened"
     assert "renovando navegador" in error["detail"]
+
+
+def test_truthy_but_empty_challenge_state_renews_browser_early(monkeypatch) -> None:
+    monkeypatch.setattr(SOLVER.legacy, "extract_token_from_page", lambda _port: None)
+    monkeypatch.setattr(SOLVER.legacy, "solver_browser_alive", lambda *_args: True)
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "fatal_circuit_state",
+        lambda: {"open": False, "reason": None, "error": None},
+    )
+    monkeypatch.setattr(SOLVER.legacy, "ensure_challenge_open", lambda _port: True)
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "wait_for_stable_9_tile_challenge",
+        lambda _port: (None, {"prompt": "selecione a abelha", "tasks": []}),
+    )
+    monkeypatch.setattr(SOLVER.legacy.time, "sleep", lambda _seconds: None)
+
+    assert SOLVER.legacy.auto_solve_grid(9222, 0, 1, max_refreshes=10) is None
+    error = SOLVER.legacy.get_solver_error()
+    assert error["reason"] == "desafio_nao_pronto"
+    assert "sem grade, canvas ou tarefas" in error["detail"]

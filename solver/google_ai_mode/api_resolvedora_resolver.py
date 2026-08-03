@@ -2371,15 +2371,30 @@ def auto_solve_grid(
         challenge, state = wait_for_stable_9_tile_challenge(port)
         if not challenge or not state:
             print("[Auto] Grade de 9 tiles nao estabilizou.")
-            if not state:
+            # Alguns widgets devolvem um objeto de estado verdadeiro, mas sem
+            # grade, canvas, tarefas ou marca de conclusao. Esse estado vazio
+            # nao vai amadurecer no mesmo perfil e antes consumia todo o limite
+            # da chamada. Renove o navegador cedo, como ja fazemos quando o
+            # iframe nao devolve estado algum.
+            actionable_state = bool(
+                state
+                and (
+                    state.get("checkmark")
+                    or state.get("imageCanvas")
+                    or state.get("tasks")
+                )
+            )
+            if not actionable_state:
                 challenge_state_failures += 1
                 if challenge_state_failures >= 2:
                     set_solver_error(
                         "desafio_nao_pronto",
-                        "Iframe do desafio abriu sem conteudo utilizavel; renovando navegador.",
+                        "Iframe do desafio abriu sem grade, canvas ou tarefas; renovando navegador.",
                     )
                     print("[Auto] Desafio vazio por duas leituras; renovando navegador.")
                     return None
+                time.sleep(0.35)
+                continue
             if state:
                 challenge_state_failures = 0
                 if state.get("checkmark") and not state.get("imageCanvas"):
