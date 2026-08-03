@@ -468,14 +468,14 @@ def solver_server() -> None:
     ]
     try:
         configured_max_solve_seconds = int(
-            os.environ.get("PORTAL_MODAL_MAX_SOLVE_SECONDS", "240")
+            os.environ.get("PORTAL_MODAL_MAX_SOLVE_SECONDS", "360")
         )
     except (TypeError, ValueError):
-        configured_max_solve_seconds = 240
-    # Estados sem conteudo renovam o navegador cedo. Os 240 s evitam pagar uma
+        configured_max_solve_seconds = 360
+    # Estados sem conteudo renovam o navegador cedo. Os 360 s evitam pagar uma
     # tentativa incompleta em cada endpoint quando um hCaptcha valido exige
     # varias etapas temporais de captura, analise e confirmacao.
-    max_solve_seconds = str(max(30, min(240, configured_max_solve_seconds)))
+    max_solve_seconds = str(max(30, min(360, configured_max_solve_seconds)))
     solver_command = [
             "xvfb-run",
             "-a",

@@ -145,7 +145,7 @@ def test_temporal_occupancy_board_preserves_click_geometry(tmp_path):
     assert info["montage_height"] == 200
 
 
-def test_repeated_complex_scene_is_marked_for_rotation(tmp_path):
+def test_multistage_temporal_scene_is_not_rotated_on_second_cycle(tmp_path):
     solver = _solver()
     image = tmp_path / "scene.jpg"
     scene = solver.legacy.Image.new("L", (256, 256), 0)
@@ -155,13 +155,27 @@ def test_repeated_complex_scene_is_marked_for_rotation(tmp_path):
         "Clique na flor onde a abelha nunca pousa"
     )
 
-    first = solver._register_scene_attempt("request-rotate-test", classification, image)
-    second = solver._register_scene_attempt("request-rotate-test", classification, image)
+    attempts = [
+        solver._register_scene_attempt("request-multistage-test", classification, image)
+        for _ in range(9)
+    ]
 
-    assert first["same_scene_attempt"] == 1
-    assert second["same_scene"]
-    assert second["same_scene_attempt"] == 2
-    assert second["same_scene_attempt"] > classification["max_same_scene_attempts"]
+    assert attempts[0]["same_scene_attempt"] == 1
+    assert attempts[1]["same_scene"]
+    assert attempts[1]["same_scene_attempt"] == 2
+    assert all(
+        attempt["same_scene_attempt"] <= classification["max_same_scene_attempts"]
+        for attempt in attempts[:8]
+    )
+    assert attempts[8]["same_scene_attempt"] > classification["max_same_scene_attempts"]
+
+
+def test_unknown_repeated_scene_still_rotates_early():
+    solver = _solver()
+    classification = solver._classify_visual_challenge("")
+
+    assert classification["category"] == "unknown"
+    assert classification["max_same_scene_attempts"] == 1
 
 
 def test_click_does_not_wait_after_legacy_visual_cleanup(monkeypatch):

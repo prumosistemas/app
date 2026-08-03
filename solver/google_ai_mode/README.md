@@ -23,7 +23,7 @@ O iframe do hCaptcha permanece com animação e temporizadores nativos durante
 toda a análise. A evidência enviada à IA já está salva, e o alvo estático é
 relocalizado no quadro atual imediatamente antes do clique.
 
-Na v41, a página oficial da NFS-e é mantida como contexto do widget visível.
+Na v42, a página oficial da NFS-e é mantida como contexto do widget visível.
 Isso evita que uma resposta visual correta seja recusada por ter sido emitida
 numa página `127.0.0.1`. O script é carregado explicitamente depois da troca do
 documento, com CSP liberada somente nessa página isolada do solver; resets
@@ -40,8 +40,10 @@ clique CDP dentro do iframe do checkbox, sem esperar o timeout antigo de 30 s.
 O widget é renderizado em modo visível. O checkbox e a API oficial
 `hcaptcha.execute` são tentados, com cliques CDP como recuperação. Estados que
 existem, mas não contêm grade, canvas, tarefas nem conclusão, renovam o navegador
-após duas leituras; o teto de 240 s permite atravessar várias etapas temporais
-reais sem pagar principal, reserva e fallback por sequências incompletas.
+após duas leituras. A cena conhecida da abelha pode repetir o mesmo fundo por
+até oito etapas, pois a trajetória muda em cada ciclo; desafios desconhecidos
+continuam sendo trocados cedo. O teto de 360 s evita pagar principal, reserva e
+fallback por sequências corretas que foram interrompidas no meio.
 
 Cookies, perfis, respostas, imagens e circuit breakers não pertencem ao Git.
 Em produção, `GOOGLE_AI_STATE_DIR=/google-ai` aponta esse estado para um Volume

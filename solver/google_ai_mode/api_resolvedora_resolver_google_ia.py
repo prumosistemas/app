@@ -42,7 +42,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v41-temporal-sequence-budget"
+SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v42-multistage-temporal"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -379,7 +379,11 @@ def _temporal_capture_plan(question: str) -> tuple[int, int]:
 def _classify_visual_challenge(question: str) -> dict[str, Any]:
     normalized = (question or "").casefold().strip()
     if _question_needs_full_temporal_sequence(normalized):
-        category, difficulty, max_same_scene_attempts = "temporal_full", "alta", 1
+        # O desafio da abelha usa o mesmo fundo/floricultura em varias etapas
+        # legitimas, alterando a trajetoria. O fingerprint perceptual ignora o
+        # pequeno objeto em movimento; portanto a segunda etapa nao e prova de
+        # loop. Permita uma sequencia completa antes de solicitar outro desafio.
+        category, difficulty, max_same_scene_attempts = "temporal_full", "alta", 8
     elif _question_wants_trajectory_destination(normalized):
         category, difficulty, max_same_scene_attempts = "temporal_trajectory", "media", 2
     elif any(
