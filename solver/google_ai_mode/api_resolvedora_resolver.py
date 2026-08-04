@@ -902,44 +902,14 @@ def click_hcaptcha_checkbox(port: int, timeout: int = 30) -> bool:
         except Exception:
             pass
         if parent_dispatched:
-            time.sleep(0.35)
+            # O widget visivel deve ser aberto pelo clique. Chamar
+            # hcaptcha.execute() em um widget ``size: normal`` passou a
+            # invalidar o desafio com ``invalid-data`` antes da grade abrir.
+            # Aguarde a animacao do iframe e use o clique interno como
+            # fallback, sem misturar o fluxo invisivel com o checkbox.
+            time.sleep(1.0)
             if extract_token_from_page(port) or challenge_grid_visible(port):
                 return True
-            try:
-                if parent:
-                    client = CdpClient(parent["webSocketDebuggerUrl"])
-                    try:
-                        execute_result = client.eval(
-                            """
-(() => {
-  if (!window.hcaptcha || window.__hcaptchaWidgetId === undefined) return 'unavailable';
-  try {
-    const pending = window.hcaptcha.execute(window.__hcaptchaWidgetId, {async: true});
-    window.__hcaptchaExecuteCalled = true;
-    if (pending && typeof pending.then === 'function') {
-      pending.then((result) => {
-        const token = typeof result === 'string' ? result : result?.response;
-        if (token) window.captchaOk(token);
-      }).catch((error) => {
-        window.__hcaptchaExecuteError = String(error || 'execute_failed');
-      });
-    }
-    return 'called';
-  } catch (error) {
-    window.__hcaptchaExecuteError = String(error || 'execute_failed');
-    return window.__hcaptchaExecuteError;
-  }
-})()
-"""
-                        )
-                        print(f"[Auto] Execute apos clique: {str(execute_result)[:120]}")
-                    finally:
-                        client.close()
-                    time.sleep(0.5)
-                    if extract_token_from_page(port) or challenge_grid_visible(port):
-                        return True
-            except Exception as exc:
-                print(f"[Auto] Execute apos clique falhou: {type(exc).__name__}")
             print("[Auto] Clique no iframe pai nao abriu o desafio; tentando iframe interno.")
             break
         time.sleep(0.5)
