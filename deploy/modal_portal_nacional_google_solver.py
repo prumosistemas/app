@@ -69,8 +69,8 @@ ARTIFACT_RETENTION_DAYS = max(
 MIN_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_MIN_CONTAINERS", "1")))
 BUFFER_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_BUFFER_CONTAINERS", "1")))
 PROVIDER_FAILURE_LIMIT = max(
-    2,
-    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "5"))),
+    1,
+    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "1"))),
 )
 
 google_state = modal.Volume.from_name(
@@ -413,15 +413,14 @@ def proxy_probe() -> str:
     },
     min_containers=MIN_CONTAINERS,
     buffer_containers=0,
-    # Um container por conta evita sessoes anonimas concorrentes. Dois browsers
-    # por conta, balanceados pelo servidor, entregam quatro solves no total sem
-    # saturar CDP/memoria dentro de um unico container.
-    max_containers=1,
+    # Dois containers isolados por conta, um browser em cada um. O servidor
+    # distribui 2+2 e evita tanto sessao Google compartilhada quanto saturacao CDP.
+    max_containers=2,
     startup_timeout=240,
     timeout=86400,
     scaledown_window=180,
-    cpu=2.0,
-    memory=4096,
+    cpu=1.5,
+    memory=3072,
     env={
         "GOOGLE_AI_PROJECT": "/app/google-ai-client",
         "GOOGLE_AI_STATE_DIR": "/tmp/google-ai-state",
@@ -443,6 +442,7 @@ def proxy_probe() -> str:
         # Um container aquecido nao pode permanecer recusando solves pelo resto
         # da vida. O servidor ja evita esse endpoint durante o mesmo intervalo.
         "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "300",
+        "PORTAL_SOLVER_BROWSER_RESTART_LIMIT": "1",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
         "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
         "PRUMO_MODAL_PROXY_ENABLED": "1" if PROXY_ENABLED else "0",
@@ -453,7 +453,7 @@ def proxy_probe() -> str:
         "NO_PROXY": "127.0.0.1,localhost",
     },
 )
-@modal.concurrent(max_inputs=2, target_inputs=2)
+@modal.concurrent(max_inputs=1, target_inputs=1)
 @modal.web_server(PORT, startup_timeout=240)
 def solver_server() -> None:
     _start_proxy_tunnel()
@@ -492,7 +492,7 @@ def solver_server() -> None:
             "--browser",
             "/usr/local/bin/google-chrome-prumo",
             "--max-browsers",
-            "2",
+            "1",
             "--max-provider-failures",
             str(PROVIDER_FAILURE_LIMIT),
             "--max-solver-failures",

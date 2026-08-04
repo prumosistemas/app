@@ -1,6 +1,5 @@
 import argparse
 import concurrent.futures
-import hashlib
 import html as html_lib
 import json
 import os
@@ -75,6 +74,8 @@ SOLVER_FALLBACK_URLS = configured_solver_fallback_urls(
 SOLVER_FALLBACK_URL = SOLVER_FALLBACK_URLS[0]
 SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
 SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
+SOLVER_MODAL_ROTATION_LOCK = threading.Lock()
+SOLVER_MODAL_ROTATION_COUNTER = 0
 SOLVER_STATUS_LOCK = threading.Lock()
 SOLVER_STATUS_FILE = Path(
     os.environ.get(
@@ -1314,6 +1315,8 @@ def solver_url_candidates(primary: str) -> list[str]:
 
 def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> list[str]:
     """Distribui notas entre as contas Modal e preserva o ThinkPad por ultimo."""
+    del request_id  # A ordem exata 2+2 e mais util que um hash probabilistico.
+    global SOLVER_MODAL_ROTATION_COUNTER
     modal_urls = [
         url for url in candidates
         if (urlparse(url).hostname or "").lower().endswith(".modal.run")
@@ -1321,8 +1324,9 @@ def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> l
     if len(modal_urls) < 2:
         return candidates
     others = [url for url in candidates if url not in modal_urls]
-    digest = hashlib.sha256(str(request_id).encode("utf-8")).digest()
-    offset = digest[0] % len(modal_urls)
+    with SOLVER_MODAL_ROTATION_LOCK:
+        offset = SOLVER_MODAL_ROTATION_COUNTER % len(modal_urls)
+        SOLVER_MODAL_ROTATION_COUNTER += 1
     return modal_urls[offset:] + modal_urls[:offset] + others
 
 

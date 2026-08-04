@@ -16,9 +16,11 @@ import portal_nacional_automation as automation  # noqa: E402
 @pytest.fixture(autouse=True)
 def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_MODAL_ROTATION_COUNTER = 0
     monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_MODAL_ROTATION_COUNTER = 0
 
 
 class FakeResponse:
@@ -222,12 +224,7 @@ def test_modal_accounts_are_balanced_and_local_remains_last() -> None:
         "http://127.0.0.1:8876/solve",
     ]
     first = automation.balance_modal_solver_candidates(candidates, "nota-a")
-    second_id = next(
-        value
-        for value in (f"nota-{index}" for index in range(100))
-        if automation.balance_modal_solver_candidates(candidates, value)[0] != first[0]
-    )
-    second = automation.balance_modal_solver_candidates(candidates, second_id)
+    second = automation.balance_modal_solver_candidates(candidates, "nota-b")
 
     assert {first[0], second[0]} == set(candidates[:2])
     assert first[-1] == second[-1] == "http://127.0.0.1:8876/solve"
