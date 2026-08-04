@@ -486,6 +486,7 @@ class CdpClient:
     def __init__(self, ws_url: str):
         self.ws = websocket.create_connection(ws_url, timeout=10)
         self.next_id = 1
+        self.pending_events: list[dict] = []
 
     def call(self, method: str, params: dict | None = None) -> dict:
         msg_id = self.next_id
@@ -497,6 +498,8 @@ class CdpClient:
                 if "error" in msg:
                     raise RuntimeError(f"CDP {method}: {msg['error']}")
                 return msg.get("result", {})
+            if msg.get("method"):
+                self.pending_events.append(msg)
 
     def eval(self, expression: str, await_promise: bool = False):
         result = self.call(
@@ -509,6 +512,10 @@ class CdpClient:
         return value
 
     def wait_event(self, method: str, timeout: float = 10.0) -> dict:
+        for index, msg in enumerate(self.pending_events):
+            if msg.get("method") == method:
+                self.pending_events.pop(index)
+                return msg.get("params", {})
         previous_timeout = self.ws.gettimeout()
         self.ws.settimeout(timeout)
         try:
