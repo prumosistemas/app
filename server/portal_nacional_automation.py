@@ -1406,15 +1406,17 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
 
 def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
     cooldown = solver_endpoint_cooldown_seconds(exc)
-    if (
-        cooldown > 30
-        and is_local_solver_url(url)
-        and "google_ai_request_failed" in str(exc).lower()
-    ):
-        # No ThinkPad nao ha credito Modal a proteger e o IP residencial costuma
-        # formar uma nova sessao rapidamente. Cinco minutos aqui apenas deixa
-        # todas as threads esperando; 30 s ainda evita uma rajada de recovery.
-        cooldown = 30
+    hostname = (urlparse(str(url or "")).hostname or "").lower()
+    if is_local_solver_url(url) and "google_ai_request_failed" in str(exc).lower():
+        # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
+        # endpoint local removia o ultimo fallback das outras threads, que
+        # entao falhavam usando apenas os Modals em circuito.
+        cooldown = 0
+    elif hostname.endswith(".modal.run") and cooldown >= 90:
+        # O endpoint Modal balanceia containers independentes; um 503 nao
+        # prova que todos perderam a sessao. Um intervalo curto evita rajada
+        # sem esconder containers saudaveis por minutos.
+        cooldown = 15
     if cooldown <= 0:
         return 0
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:

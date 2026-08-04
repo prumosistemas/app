@@ -333,11 +333,20 @@ def test_google_session_failure_cools_only_that_endpoint() -> None:
     ) == 300
 
 
-def test_local_google_session_failure_has_short_cooldown() -> None:
+def test_local_google_session_failure_does_not_hide_residential_fallback() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "http://127.0.0.1:8876/solve",
         RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel"),
-    ) == 30
+    ) == 0
+
+
+def test_modal_container_outage_has_short_pool_cooldown() -> None:
+    response = requests.Response()
+    response.status_code = 503
+    error = requests.HTTPError("temporariamente indisponivel", response=response)
+    assert automation.mark_solver_endpoint_unavailable(
+        "https://conta--solver.modal.run/solve", error
+    ) == 15
 
 
 def test_endpoint_outages_still_open_cooldown() -> None:
