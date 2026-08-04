@@ -62,6 +62,7 @@ SEARCH_URL = "https://www.google.com/search"
 TEXT_ASYNC_URL = "https://www.google.com/async/folwr"
 IMAGE_ASYNC_URL = "https://www.google.com/async/folif"
 LENS_UPLOAD_URL = "https://lens.google.com/v3/upload"
+_SESSION_CACHE: tuple[Any, str, str] | None = None
 
 ANONYMOUS_COOKIE_NAMES = {
     "AEC",
@@ -1554,49 +1555,53 @@ def query_google_ai(
     attempts: int = 3,
     allow_browser_recovery: bool = True,
 ) -> QueryResult:
+    global _SESSION_CACHE
     if attempts < 1:
         raise ValueError("attempts deve ser pelo menos 1")
 
     user_agent = DEFAULT_USER_AGENT
     used_recovery_sources: set[str] = set()
-    try:
-        session, user_agent = load_session()
-        session_source = "json"
-    except GoogleAIModeError:
+    if _SESSION_CACHE is not None:
+        session, user_agent, session_source = _SESSION_CACHE
+    else:
         try:
-            session = load_firefox_seed_session(user_agent)
-            session_source = "seed"
-            used_recovery_sources.add("seed")
+            session, user_agent = load_session()
+            session_source = "json"
         except GoogleAIModeError:
             try:
-                session = try_http_only_recovery(
-                    user_agent,
-                    image_path is not None,
-                    timeout,
-                )
-                session_source = "http"
-                used_recovery_sources.add("http")
-            except SessionRecoveryError as recovery_exc:
-                if not allow_browser_recovery:
-                    raise
-                session = recover_session_with_browser(
-                    user_agent,
-                    image_path is not None,
-                    timeout,
-                )
-                session = _merge_session_metrics(recovery_exc.attempt, session)
-                session_source = "browser"
-                used_recovery_sources.add("browser")
+                session = load_firefox_seed_session(user_agent)
+                session_source = "seed"
+                used_recovery_sources.add("seed")
             except GoogleAIModeError:
-                if not allow_browser_recovery:
-                    raise
-                session = recover_session_with_browser(
-                    user_agent,
-                    image_path is not None,
-                    timeout,
-                )
-                session_source = "browser"
-                used_recovery_sources.add("browser")
+                try:
+                    session = try_http_only_recovery(
+                        user_agent,
+                        image_path is not None,
+                        timeout,
+                    )
+                    session_source = "http"
+                    used_recovery_sources.add("http")
+                except SessionRecoveryError as recovery_exc:
+                    if not allow_browser_recovery:
+                        raise
+                    session = recover_session_with_browser(
+                        user_agent,
+                        image_path is not None,
+                        timeout,
+                    )
+                    session = _merge_session_metrics(recovery_exc.attempt, session)
+                    session_source = "browser"
+                    used_recovery_sources.add("browser")
+                except GoogleAIModeError:
+                    if not allow_browser_recovery:
+                        raise
+                    session = recover_session_with_browser(
+                        user_agent,
+                        image_path is not None,
+                        timeout,
+                    )
+                    session_source = "browser"
+                    used_recovery_sources.add("browser")
 
     headers = initial_headers(user_agent)
     image = Path(image_path).expanduser().resolve() if image_path else None
@@ -1661,6 +1666,10 @@ def query_google_ai(
 
             answer = extract_answer(response.text)
             save_anonymous_session(session, user_agent)
+            # O folif passou a depender da afinidade da conexao alem dos
+            # cookies. Preserve o mesmo requests.Session entre etapas do
+            # hCaptcha; o lock do resolvedor garante acesso serializado.
+            _SESSION_CACHE = (session, user_agent, session_source)
             return QueryResult(
                 answer=answer,
                 http_requests=session.http_requests,
@@ -1731,10 +1740,16 @@ def query_google_ai(
 
             failures += 1
             if failures >= attempts:
+                _SESSION_CACHE = None
                 raise
             time.sleep(min(2.0, 0.6 * failures))
 
     raise GoogleAIModeError(str(last_error or "Falha desconhecida no Modo IA."))
+
+
+def clear_cached_session() -> None:
+    global _SESSION_CACHE
+    _SESSION_CACHE = None
 
 def ask_google_ai(question: str, timeout: float = 60.0) -> str:
     return query_google_ai(question, timeout=timeout).answer

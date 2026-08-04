@@ -1485,6 +1485,9 @@ def _query_image(image_path: Path, prompt: str) -> Any:
                 allow_browser_recovery=True,
             )
         except Exception as exc:
+            clear_cache = getattr(google_ai, "clear_cached_session", None)
+            if callable(clear_cache):
+                clear_cache()
             _record_google_failure(exc)
             raise
     _record_google_success(result)
