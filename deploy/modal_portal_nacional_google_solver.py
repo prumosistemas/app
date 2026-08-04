@@ -413,14 +413,15 @@ def proxy_probe() -> str:
     },
     min_containers=MIN_CONTAINERS,
     buffer_containers=0,
-    # Um container por conta evita quatro sessoes anonimas concorrentes do
-    # Google. A API interna continua aceitando quatro solves simultaneos.
+    # Um container por conta evita sessoes anonimas concorrentes. Dois browsers
+    # por conta, balanceados pelo servidor, entregam quatro solves no total sem
+    # saturar CDP/memoria dentro de um unico container.
     max_containers=1,
     startup_timeout=240,
     timeout=86400,
     scaledown_window=180,
-    cpu=4.0,
-    memory=6144,
+    cpu=2.0,
+    memory=4096,
     env={
         "GOOGLE_AI_PROJECT": "/app/google-ai-client",
         "GOOGLE_AI_STATE_DIR": "/tmp/google-ai-state",
@@ -452,7 +453,7 @@ def proxy_probe() -> str:
         "NO_PROXY": "127.0.0.1,localhost",
     },
 )
-@modal.concurrent(max_inputs=4, target_inputs=4)
+@modal.concurrent(max_inputs=2, target_inputs=2)
 @modal.web_server(PORT, startup_timeout=240)
 def solver_server() -> None:
     _start_proxy_tunnel()
@@ -491,7 +492,7 @@ def solver_server() -> None:
             "--browser",
             "/usr/local/bin/google-chrome-prumo",
             "--max-browsers",
-            "4",
+            "2",
             "--max-provider-failures",
             str(PROVIDER_FAILURE_LIMIT),
             "--max-solver-failures",

@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import hashlib
 import html as html_lib
 import json
 import os
@@ -1311,6 +1312,20 @@ def solver_url_candidates(primary: str) -> list[str]:
     )
 
 
+def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> list[str]:
+    """Distribui notas entre as contas Modal e preserva o ThinkPad por ultimo."""
+    modal_urls = [
+        url for url in candidates
+        if (urlparse(url).hostname or "").lower().endswith(".modal.run")
+    ]
+    if len(modal_urls) < 2:
+        return candidates
+    others = [url for url in candidates if url not in modal_urls]
+    digest = hashlib.sha256(str(request_id).encode("utf-8")).digest()
+    offset = digest[0] % len(modal_urls)
+    return modal_urls[offset:] + modal_urls[:offset] + others
+
+
 def solver_endpoint_label(url: str) -> str:
     """Identifica o endpoint sem persistir query strings ou fragmentos."""
     parsed = urlparse(str(url or ""))
@@ -1522,7 +1537,10 @@ def solve_captcha_with_url(
     page_url: str | None = None,
 ) -> str | None:
     errors = []
-    candidates = wait_for_solver_candidates(solver_url)
+    candidates = balance_modal_solver_candidates(
+        wait_for_solver_candidates(solver_url),
+        request_id,
+    )
     for candidate in candidates:
         try:
             token = solve_captcha_once(candidate, sitekey, request_id, page_url)

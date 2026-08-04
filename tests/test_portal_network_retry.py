@@ -215,6 +215,24 @@ def test_solver_candidates_are_ordered_and_unique(monkeypatch) -> None:
     ]
 
 
+def test_modal_accounts_are_balanced_and_local_remains_last() -> None:
+    candidates = [
+        "https://primary--solver.modal.run/solve",
+        "https://fallback--solver.modal.run/solve",
+        "http://127.0.0.1:8876/solve",
+    ]
+    first = automation.balance_modal_solver_candidates(candidates, "nota-a")
+    second_id = next(
+        value
+        for value in (f"nota-{index}" for index in range(100))
+        if automation.balance_modal_solver_candidates(candidates, value)[0] != first[0]
+    )
+    second = automation.balance_modal_solver_candidates(candidates, second_id)
+
+    assert {first[0], second[0]} == set(candidates[:2])
+    assert first[-1] == second[-1] == "http://127.0.0.1:8876/solve"
+
+
 def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> None:
     primary = "https://modal-1.example/solve"
     fallback = "https://modal-2.example/solve"
