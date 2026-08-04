@@ -59,7 +59,7 @@ EOF
     --port 8876 \
     --browser "$wrapper" \
     --max-browsers 4 \
-    --max-provider-failures "${PORTAL_LOCAL_PROVIDER_FAILURE_LIMIT:-3}" \
+    --max-provider-failures "${PORTAL_LOCAL_PROVIDER_FAILURE_LIMIT:-5}" \
     --max-solver-failures 20 \
     --max-solve-seconds "${PORTAL_LOCAL_MAX_SOLVE_SECONDS:-360}" \
     >> "$artifact_dir/service.log" 2>&1 &

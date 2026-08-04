@@ -942,6 +942,24 @@ def page_snapshot_html(html_text: str, url: str) -> dict:
     if total_match:
         total = int(total_match.group(1))
 
+    # O Portal omite o resumo "Total de ... registros" quando uma janela
+    # valida esta vazia. So interprete isso como zero quando a resposta ainda
+    # e inequivocamente a tela de consulta de notas; paginas de erro, login ou
+    # indisponibilidade continuam sem total e portanto falham de forma segura.
+    notes_path = "/EmissorNacional/Notas/" in url
+    normalized_html = html_text.lower()
+    empty_notes_page = bool(
+        total is None
+        and notes_path
+        and "datainicio" in normalized_html
+        and "datafim" in normalized_html
+        and "/notas/download/nfse/" not in normalized_html
+        and "service is unavailable" not in normalized_html
+        and "worker threw exception" not in normalized_html
+    )
+    if empty_notes_page:
+        total = 0
+
     numbers = []
     pagination_match = re.search(r'<ul\b[^>]*class=["\'][^"\']*\bpagination\b[^"\']*["\'][^>]*>.*?</ul>', html_text, flags=re.I | re.S)
     pagination_html = pagination_match.group(0) if pagination_match else ""
@@ -958,9 +976,10 @@ def page_snapshot_html(html_text: str, url: str) -> dict:
 
     return {
         "url": url,
-        "descricao": total_match.group(0) if total_match else "",
+        "descricao": total_match.group(0) if total_match else ("Total de 0 registros" if empty_notes_page else ""),
         "totalRegistros": total,
         "lastPage": last_page,
+        "empty_notes_page": empty_notes_page,
     }
 
 

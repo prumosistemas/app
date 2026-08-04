@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -42,7 +43,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-03-google-ai-mode-v42-multistage-temporal"
+SOLVER_API_VERSION = "2026-08-04-google-ai-mode-v43-shared-session"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -821,15 +822,15 @@ new Promise(async (resolve) => {{
 
     top_cut = max(0, int(data.get("top_cut_native") or 0))
     paths: list[Path] = []
+    last_full_frame: bytes | None = None
     for index, data_url in enumerate(data["frames"][:frame_count], 1):
-        full_path = folder / f"quadro-{index:02d}-completo.jpg"
         clean_path = folder / f"quadro-{index:02d}.jpg"
         try:
-            full_path.write_bytes(base64.b64decode(str(data_url).split(",", 1)[1]))
+            raw_frame = base64.b64decode(str(data_url).split(",", 1)[1])
         except Exception:
             continue
         try:
-            with legacy.Image.open(full_path) as image:
+            with legacy.Image.open(io.BytesIO(raw_frame)) as image:
                 cut = min(top_cut, image.height - 1)
                 image.crop((0, cut, image.width, image.height)).save(
                     clean_path,
@@ -842,12 +843,17 @@ new Promise(async (resolve) => {{
         if legacy.png_seems_blank(clean_path):
             continue
         paths.append(clean_path)
+        last_full_frame = raw_frame
     if paths:
         with legacy.Image.open(paths[-1]) as image:
             image.save(folder / "desafio.png")
-        full_last = paths[-1].with_name(paths[-1].stem + "-completo.jpg")
-        if full_last.is_file():
-            shutil.copy2(full_last, folder / "desafio-completo.jpg")
+        # Uma copia completa final basta para depurar a geometria do iframe;
+        # antes eram gravadas ate 80 copias completas redundantes por etapa.
+        try:
+            if last_full_frame:
+                (folder / "desafio-completo.jpg").write_bytes(last_full_frame)
+        except Exception:
+            pass
         (folder / "canvas-info.json").write_text(
             json.dumps(
                 {

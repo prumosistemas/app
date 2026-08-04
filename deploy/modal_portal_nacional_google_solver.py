@@ -70,7 +70,7 @@ MIN_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_MIN_CONTAINERS", "1")))
 BUFFER_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_BUFFER_CONTAINERS", "1")))
 PROVIDER_FAILURE_LIMIT = max(
     2,
-    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "3"))),
+    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "5"))),
 )
 
 google_state = modal.Volume.from_name(
@@ -170,11 +170,7 @@ def _start_proxy_tunnel() -> None:
 
 
 def _prepare_instance_state() -> None:
-    """Cria estado privado por container para permitir paralelismo real.
-
-    O Volume e somente uma semente. Cada container trabalha em /tmp, evitando
-    corrida entre quatro sessoes anonimas do Google Modo IA.
-    """
+    """Cria um estado privado por conta Modal, compartilhado pelos 4 browsers."""
     GOOGLE_STATE_ACTIVE.mkdir(parents=True, exist_ok=True)
     try:
         # Containers de uma mesma rajada podem nascer enquanto outro acabou de
@@ -416,13 +412,15 @@ def proxy_probe() -> str:
         "/solver-artifacts": debug_artifacts,
     },
     min_containers=MIN_CONTAINERS,
-    buffer_containers=BUFFER_CONTAINERS,
-    max_containers=4,
+    buffer_containers=0,
+    # Um container por conta evita quatro sessoes anonimas concorrentes do
+    # Google. A API interna continua aceitando quatro solves simultaneos.
+    max_containers=1,
     startup_timeout=240,
     timeout=86400,
     scaledown_window=180,
-    cpu=(1.5, 2.0),
-    memory=(2048, 3072),
+    cpu=4.0,
+    memory=6144,
     env={
         "GOOGLE_AI_PROJECT": "/app/google-ai-client",
         "GOOGLE_AI_STATE_DIR": "/tmp/google-ai-state",
@@ -454,7 +452,7 @@ def proxy_probe() -> str:
         "NO_PROXY": "127.0.0.1,localhost",
     },
 )
-@modal.concurrent(max_inputs=1, target_inputs=1)
+@modal.concurrent(max_inputs=4, target_inputs=4)
 @modal.web_server(PORT, startup_timeout=240)
 def solver_server() -> None:
     _start_proxy_tunnel()
@@ -493,7 +491,7 @@ def solver_server() -> None:
             "--browser",
             "/usr/local/bin/google-chrome-prumo",
             "--max-browsers",
-            "1",
+            "4",
             "--max-provider-failures",
             str(PROVIDER_FAILURE_LIMIT),
             "--max-solver-failures",

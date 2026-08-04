@@ -2,7 +2,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from server.portal_nacional_automation import build_portal_date_windows, requests_page_url
+from server.portal_nacional_automation import build_portal_date_windows, page_snapshot_html, requests_page_url
 
 
 def test_portal_index_url_sends_date_filter() -> None:
@@ -54,3 +54,22 @@ def test_portal_31_day_month_never_exceeds_30_days() -> None:
 def test_portal_period_requires_both_dates() -> None:
     with pytest.raises(ValueError, match="devem ser informadas juntas"):
         build_portal_date_windows("01/06/2026", None)
+
+
+def test_valid_empty_notes_window_is_zero_records() -> None:
+    html = '<form><input name="datainicio"><input name="datafim"></form>'
+    snapshot = page_snapshot_html(
+        html,
+        "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas?executar=1",
+    )
+    assert snapshot["totalRegistros"] == 0
+    assert snapshot["empty_notes_page"] is True
+
+
+def test_unavailable_page_is_not_mistaken_for_empty_window() -> None:
+    html = '<p>The service is unavailable.</p><input name="datainicio"><input name="datafim">'
+    snapshot = page_snapshot_html(
+        html,
+        "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas",
+    )
+    assert snapshot["totalRegistros"] is None
