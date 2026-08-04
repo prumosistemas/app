@@ -488,10 +488,14 @@ class CdpClient:
         self.next_id = 1
         self.pending_events: list[dict] = []
 
-    def call(self, method: str, params: dict | None = None) -> dict:
+    def send(self, method: str, params: dict | None = None) -> int:
         msg_id = self.next_id
         self.next_id += 1
         self.ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+        return msg_id
+
+    def call(self, method: str, params: dict | None = None) -> dict:
+        msg_id = self.send(method, params)
         while True:
             msg = json.loads(self.ws.recv())
             if msg.get("id") == msg_id:
@@ -686,7 +690,10 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
                         ]
                     },
                 )
-                client.call(
+                # Page.navigate fica aguardando enquanto Fetch pausa o request.
+                # Envie sem bloquear, atenda requestPaused e so entao o browser
+                # conclui a navegacao com o HTML local.
+                client.send(
                     "Page.navigate",
                     {"url": "https://www.nfse.gov.br/EmissorNacional/PrumoSolver"},
                 )

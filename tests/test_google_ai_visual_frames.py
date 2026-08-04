@@ -99,6 +99,10 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
                 return {"frameTree": {"frame": {"id": "top-frame"}}}
             return {}
 
+        def send(self, method: str, params: dict | None = None):
+            calls.append((method, params))
+            return 7
+
         def eval(self, _expression: str):
             return {
                 "ready": True,
