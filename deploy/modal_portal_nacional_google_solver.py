@@ -443,6 +443,7 @@ def proxy_probe() -> str:
         # da vida. O servidor ja evita esse endpoint durante o mesmo intervalo.
         "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "300",
         "PORTAL_SOLVER_BROWSER_RESTART_LIMIT": "1",
+        "PORTAL_SOLVER_OPEN_FAILURE_LIMIT": "1",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,
         "PRUMO_MODAL_PROXY_LISTENER": PROXY_LISTENER,
         "PRUMO_MODAL_PROXY_ENABLED": "1" if PROXY_ENABLED else "0",

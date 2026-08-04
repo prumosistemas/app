@@ -64,6 +64,10 @@ BROWSER_RESTART_LIMIT = max(
     1,
     min(3, int(os.environ.get("PORTAL_SOLVER_BROWSER_RESTART_LIMIT", "3"))),
 )
+OPEN_CHALLENGE_FAILURE_LIMIT = max(
+    1,
+    min(3, int(os.environ.get("PORTAL_SOLVER_OPEN_FAILURE_LIMIT", "1"))),
+)
 TILE_CLICK_INTERVAL_SECONDS = 0.1
 TILE_POST_SELECTION_DELAY_SECONDS = 1.0
 LAST_SOLVER_ERROR = threading.local()
@@ -1153,7 +1157,7 @@ def wait_for_stable_9_tile_challenge(port: int, timeout: int = 8) -> tuple[dict 
     return None, last_state
 
 
-def ensure_challenge_open(port: int, max_clicks: int = 8) -> bool:
+def ensure_challenge_open(port: int, max_clicks: int = 3) -> bool:
     for _ in range(max_clicks):
         if challenge_grid_visible(port):
             return True
@@ -2360,10 +2364,10 @@ def auto_solve_grid(
                 # Uma identidade que nao abriu em tres acionamentos tende a
                 # continuar presa. Devolva cedo para o nivel externo recriar o
                 # perfil/navegador, ainda dentro da mesma chamada do solver.
-                if challenge_open_failures >= 3:
+                if challenge_open_failures >= OPEN_CHALLENGE_FAILURE_LIMIT:
                     set_solver_error(
                         "desafio_nao_abriu",
-                        "Widget hCaptcha nao abriu apos 3 acionamentos; renovando navegador.",
+                        f"Widget hCaptcha nao abriu apos {OPEN_CHALLENGE_FAILURE_LIMIT} ciclo(s); renovando navegador.",
                     )
                     print("[Auto] Widget preso; renovando navegador imediatamente.")
                     return None

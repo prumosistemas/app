@@ -54,6 +54,8 @@ EOF
   export GOOGLE_AI_RECOVERY_POLICY=chrome
   export GOOGLE_AI_RECOVERY_VERBOSE=1
   export GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS=3
+  export PORTAL_SOLVER_BROWSER_RESTART_LIMIT=1
+  export PORTAL_SOLVER_OPEN_FAILURE_LIMIT=1
 
   xvfb-run -a python -u "$solver_dir/api_resolvedora_resolver_google_ia.py" \
     --port 8876 \
