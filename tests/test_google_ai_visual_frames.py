@@ -107,6 +107,11 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
                 "checkboxFrames": 1,
             }
 
+        def wait_event(self, method: str, timeout: float = 10.0):
+            assert method == "Fetch.requestPaused"
+            assert timeout > 0
+            return {"requestId": "request-1"}
+
         def close(self) -> None:
             calls.append(("close", None))
 
@@ -115,12 +120,16 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
 
     assert SOLVER.legacy.inject_solver_document(9222, "sitekey") == page
     assert all(method != "Page.setDocumentContent" for method, _params in calls)
+    navigate = next(params for method, params in calls if method == "Page.navigate")
+    assert navigate["url"].startswith("https://www.nfse.gov.br/")
+    fulfill = next(params for method, params in calls if method == "Fetch.fulfillRequest")
+    assert fulfill["requestId"] == "request-1"
+    assert "Desafio hCaptcha" in __import__("base64").b64decode(fulfill["body"]).decode("utf-8")
     runtime_expressions = [
         params["expression"]
         for method, params in calls
         if method == "Runtime.evaluate" and params and "expression" in params
     ]
-    assert any("document.write" in expression and "Desafio hCaptcha" in expression for expression in runtime_expressions)
     assert all("hcaptcha.execute" not in expression for expression in runtime_expressions)
     assert any("size: 'normal'" in expression for expression in runtime_expressions)
     assert any("__hcaptchaWidgetError" in expression for expression in runtime_expressions)

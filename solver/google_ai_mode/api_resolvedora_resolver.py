@@ -508,6 +508,17 @@ class CdpClient:
             return value["value"]
         return value
 
+    def wait_event(self, method: str, timeout: float = 10.0) -> dict:
+        previous_timeout = self.ws.gettimeout()
+        self.ws.settimeout(timeout)
+        try:
+            while True:
+                msg = json.loads(self.ws.recv())
+                if msg.get("method") == method:
+                    return msg.get("params", {})
+        finally:
+            self.ws.settimeout(previous_timeout)
+
     def close(self):
         self.ws.close()
 
@@ -643,7 +654,13 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
     last_error: Exception | None = None
     while time.time() < end:
         try:
-            parent = next((page for page in list_pages(port) if is_solver_parent_page(page)), None)
+            pages = list_pages(port)
+            parent = next((page for page in pages if is_solver_parent_page(page)), None)
+            if not parent:
+                parent = next(
+                    (page for page in pages if page.get("type") == "page" and page.get("webSocketDebuggerUrl")),
+                    None,
+                )
             if not parent:
                 time.sleep(0.25)
                 continue
@@ -651,29 +668,35 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
             try:
                 client.call("Page.enable")
                 client.call("Page.setBypassCSP", {"enabled": True})
-                try:
-                    client.call("Page.stopLoading")
-                except Exception:
-                    pass
-                document_json = json.dumps(solver_page_html(sitekey))
                 client.call(
-                    "Runtime.evaluate",
+                    "Fetch.enable",
                     {
-                        # Page.setDocumentContent passou a zerar a URL do alvo
-                        # neste fluxo (host= no iframe hCaptcha), produzindo
-                        # invalid-data. document.write preserva a origem NFSe.
-                        "expression": f"""
-(() => {{
-  document.open();
-  document.write({document_json});
-  document.close();
-  return location.origin;
-}})()
-""",
-                        "awaitPromise": True,
-                        "returnByValue": True,
+                        "patterns": [
+                            {
+                                "urlPattern": "https://www.nfse.gov.br/*",
+                                "requestStage": "Request",
+                            }
+                        ]
                     },
                 )
+                client.call(
+                    "Page.navigate",
+                    {"url": "https://www.nfse.gov.br/EmissorNacional/PrumoSolver"},
+                )
+                paused = client.wait_event("Fetch.requestPaused", timeout=min(10.0, timeout))
+                client.call(
+                    "Fetch.fulfillRequest",
+                    {
+                        "requestId": paused["requestId"],
+                        "responseCode": 200,
+                        "responseHeaders": [
+                            {"name": "Content-Type", "value": "text/html; charset=utf-8"},
+                            {"name": "Cache-Control", "value": "no-store"},
+                        ],
+                        "body": base64.b64encode(solver_page_html(sitekey).encode("utf-8")).decode("ascii"),
+                    },
+                )
+                client.call("Fetch.disable")
                 sitekey_json = json.dumps(sitekey)
                 client.call(
                     "Runtime.evaluate",
@@ -2713,7 +2736,9 @@ def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request
     try:
         token_state = TokenState()
         if preserve_origin:
-            solver_url = normalized_solver_origin_url(url)
+            # A origem oficial e criada por interceptacao em
+            # inject_solver_document, sem depender de redirect ou sessao web.
+            solver_url = "about:blank"
         else:
             server, server_port, token_state = start_solver_page(sitekey)
             solver_url = f"http://127.0.0.1:{server_port}/"
