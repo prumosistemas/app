@@ -221,19 +221,6 @@ def _persist_instance_state() -> bool:
     return copied
 
 
-def _start_state_sync_loop() -> None:
-    """Salva recuperacoes feitas durante solves longos sem reiniciar o app."""
-    def worker() -> None:
-        while True:
-            time.sleep(15)
-            try:
-                _persist_instance_state()
-            except Exception as exc:
-                print(f"[state] falha ao persistir sessao: {type(exc).__name__}", flush=True)
-
-    threading.Thread(target=worker, name="google-state-sync", daemon=True).start()
-
-
 def _prune_debug_artifacts() -> int:
     """Mantem sete dias e compacta evidencias que nao estao mais em uso."""
     completed = subprocess.run(
@@ -462,7 +449,9 @@ def solver_server() -> None:
     _start_artifact_retention_loop()
     _start_artifact_sync_loop()
     _prewarm_google_ai_session()
-    _start_state_sync_loop()
+    # A semente compartilhada so e publicada pelo prewarm validado. Cookies
+    # alterados durante uma consulta dependem da conexao viva do container e
+    # nao devem substituir a semente usada por containers frios.
     # O projeto organizado mantem o listener da API em 127.0.0.1. O relay
     # expoe somente a porta esperada pelo web_server do Modal.
     relay_command = [
