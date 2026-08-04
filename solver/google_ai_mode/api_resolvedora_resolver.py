@@ -655,11 +655,24 @@ def inject_solver_document(port: int, sitekey: str, timeout: float = 30.0) -> di
                     client.call("Page.stopLoading")
                 except Exception:
                     pass
-                frame_tree = client.call("Page.getFrameTree")
-                frame_id = frame_tree["frameTree"]["frame"]["id"]
+                document_json = json.dumps(solver_page_html(sitekey))
                 client.call(
-                    "Page.setDocumentContent",
-                    {"frameId": frame_id, "html": solver_page_html(sitekey)},
+                    "Runtime.evaluate",
+                    {
+                        # Page.setDocumentContent passou a zerar a URL do alvo
+                        # neste fluxo (host= no iframe hCaptcha), produzindo
+                        # invalid-data. document.write preserva a origem NFSe.
+                        "expression": f"""
+(() => {{
+  document.open();
+  document.write({document_json});
+  document.close();
+  return location.origin;
+}})()
+""",
+                        "awaitPromise": True,
+                        "returnByValue": True,
+                    },
                 )
                 sitekey_json = json.dumps(sitekey)
                 client.call(

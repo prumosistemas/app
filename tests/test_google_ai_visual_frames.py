@@ -114,14 +114,13 @@ def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
     monkeypatch.setattr(SOLVER.legacy, "CdpClient", FakeClient)
 
     assert SOLVER.legacy.inject_solver_document(9222, "sitekey") == page
-    document_call = next(params for method, params in calls if method == "Page.setDocumentContent")
-    assert document_call["frameId"] == "top-frame"
-    assert "Desafio hCaptcha" in document_call["html"]
+    assert all(method != "Page.setDocumentContent" for method, _params in calls)
     runtime_expressions = [
         params["expression"]
         for method, params in calls
         if method == "Runtime.evaluate" and params and "expression" in params
     ]
+    assert any("document.write" in expression and "Desafio hCaptcha" in expression for expression in runtime_expressions)
     assert all("hcaptcha.execute" not in expression for expression in runtime_expressions)
     assert any("size: 'normal'" in expression for expression in runtime_expressions)
     assert any("__hcaptchaWidgetError" in expression for expression in runtime_expressions)
