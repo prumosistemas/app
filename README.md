@@ -9,7 +9,7 @@ Versao: **1.0.70 - Portal com quatro browsers e sessao Modo IA compartilhada**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA v43 no Modal como rota primaria, segunda conta reservada para quota/indisponibilidade e o mesmo resolvedor no ThinkPad como ultimo fallback; sem Florence/Cohere. Uma conta sem sessao valida abre o circuito apos tres falhas para nao consumir Modal em recuperacoes repetidas.
+- Portal Nacional: Google Modo IA no Modal em quatro contêineres isolados (2+2 entre as contas), com sessão HTTP preservada entre etapas temporais e ThinkPad como último fallback; sem Florence/Cohere. Widget preso ou sessão inválida falha cedo para não consumir tempo/crédito repetindo o mesmo perfil.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 

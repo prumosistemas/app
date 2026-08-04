@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.69
+Versao: 1.0.70
 Data: 2026-08-03
 Modo atual: producao unica, sem homologacao ativa
 
@@ -85,7 +85,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.69",
+  "version": "1.0.70",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -166,8 +166,9 @@ python -m ops.prumo_ops modal deploy --account primary --target portal
 python -m ops.prumo_ops modal deploy --account fallback --target portal
 ```
 
-A CLI aplica `min_containers=1` e `buffer_containers=1` na principal. A conta
-reserva usa zero nos dois valores e somente escala quando houver failover real.
+A CLI publica até dois contêineres por conta Modal, com uma entrada e um
+Chromium por contêiner. O backend distribui os quatro trabalhos em 2+2; o
+ThinkPad só recebe falha/indisponibilidade das duas contas.
 
 Validar:
 
@@ -493,8 +494,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.69 .
-docker push ryang20/prumo-api:1.0.69
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.70 .
+docker push ryang20/prumo-api:1.0.70
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -505,10 +506,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.69 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.70 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.69
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.70
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```
