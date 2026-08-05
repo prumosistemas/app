@@ -129,16 +129,94 @@ A recebida terminou em `2026-08-05T03:19:44Z`. Portanto, a atualização da API 
 
 ## Implantação e validação final
 
-Esta seção será completada depois do deploy com o commit publicado, a imagem implantada, o health check e os testes de comportamento dentro do container 1.0.72.
+### Commit e publicação
+
+O commit de código e documentação pré-deploy foi publicado na `main`:
+
+```text
+2aa2a07 fix: preserve portal solver block reasons
+```
+
+O push avançou `origin/main` de `22df225` para `2aa2a07`.
+
+### Deploy no ThinkPad
+
+Foi usado o caminho operacional padrão, sem credenciais literais:
+
+```powershell
+python -m ops.prumo_ops server deploy --apply
+```
+
+O servidor executou:
+
+1. `git pull --ff-only`;
+2. build de `ryang20/prumo-api:1.0.72`;
+3. cópia do compose versionado;
+4. recriação única do container `prumo-api`;
+5. health check local.
+
+Imagem construída: `36ffc749cc8a`.
+
+Durante a primeira tentativa de health houve um `connection reset by peer` normal enquanto o container iniciava. O laço de health repetiu e concluiu com sucesso, sem intervenção manual.
+
+### Health e estado operacional
+
+Resposta confirmada depois do deploy:
+
+```json
+{
+  "ok": true,
+  "service": "Prumo API",
+  "version": "1.0.72",
+  "allow_direct_local": false,
+  "max_browsers": 30,
+  "queue": "global_fair_round_robin_by_member",
+  "storage_scope": "member"
+}
+```
+
+O container ficou ativo como `ryang20/prumo-api:1.0.72`, e o Git do servidor permaneceu limpo na `main`.
+
+### Smoke test dentro da imagem implantada
+
+Foi executado um teste isolado dentro do container, sem chamada externa real e sem consumir captcha:
+
+```text
+explicit_google_block 300
+generic_reason solver:container_unavailable: temporary backend outage
+generic_status 503
+generic_modal_cooldown 15
+```
+
+Isso prova no artefato implantado que:
+
+- bloqueio Google explícito aplica 300 segundos;
+- o motivo JSON é preservado;
+- o status HTTP 503 continua anexado à exceção;
+- um 503 genérico do pool Modal mantém 15 segundos.
+
+A primeira execução do heredoc de smoke não recebeu stdin porque `docker exec` estava sem `-i`; ela terminou sem executar código e sem efeitos. O teste foi repetido corretamente com `docker exec -i` e produziu os valores acima.
+
+### Persistência da Thaís depois da recriação
+
+Após o deploy, os mesmos diretórios foram relidos diretamente no armazenamento persistente:
+
+- emitidas: `finalizado`, 71/71, 71 XML, 71 PDF, zero erro;
+- recebidas: `finalizado`, 24/24, 24 XML, 24 PDF, zero erro.
+
+Nenhuma filha voltou para `rodando`, nenhum índice foi recriado e nenhum arquivo precisou ser baixado novamente.
 
 ## Limpeza de temporários
 
-No fechamento serão verificados:
+A limpeza final foi limitada a artefatos descartáveis:
 
-- `git status --short`;
-- arquivos não rastreados no projeto;
-- `__pycache__`/`.pyc` gerados pelas validações, respeitando `.gitignore`;
-- scripts temporários `python_*.py` criados pela ferramenta MCP durante esta intervenção;
-- inexistência de arquivos de credencial ou dumps na documentação.
+- sete diretórios de cache Python/pytest foram removidos do repositório (`__pycache__` e `.pytest_cache`);
+- nenhum `python_*.py` temporário da ferramenta MCP permaneceu no diretório de runtime;
+- nenhum arquivo não rastreado inesperado foi encontrado além deste handoff antes de seu commit;
+- dados de runs, logs, índices, XML, PDF, certificados e imagens de rollback não foram removidos;
+- as imagens 1.0.71 e 1.0.70 foram preservadas para rollback;
+- nenhum segredo, cookie, senha, conteúdo de PFX ou URL privada completa foi incluído neste arquivo.
 
-Nenhum segredo, cookie, senha, conteúdo de PFX ou URL privada completa deve ser incluído neste arquivo.
+## Resultado final
+
+O ciclo interrompido pelo Codex foi encerrado com a Thaís concluída antes do deploy, correção revisada, regressão adicional coberta, 150 testes aprovados, versão 1.0.72 implantada e armazenamento validado depois da recriação.
