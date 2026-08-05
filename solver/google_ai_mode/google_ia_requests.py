@@ -585,6 +585,7 @@ def recover_session_with_chrome(
             ws = websocket.create_connection(str(page["webSocketDebuggerUrl"]), timeout=12)
             try:
                 session: CountingSession | None = None
+                last_state: dict[str, Any] = {}
                 # Respeite a janela operacional configurada. A sequencia fixa
                 # de 3+6+12 s era repetida em ate tres Chromes e consumia
                 # praticamente todo o prazo do captcha antes do fallback.
@@ -597,15 +598,38 @@ def recover_session_with_chrome(
                         {
                             "expression": (
                                 "JSON.stringify({folif:!!document.querySelector('[data-xsrf-folif-token]'),"
-                                "folwr:!!document.querySelector('[data-xsrf-folwr-token]')})"
+                                "folwr:!!document.querySelector('[data-xsrf-folwr-token]'),"
+                                "url:location.href,title:document.title,"
+                                "body:(document.body?.innerText||'').replace(/\\s+/g,' ').slice(0,180)})"
                             ),
                             "returnByValue": True,
                         },
                     )
                     state_raw = state_result.get("result", {}).get("value") or "{}"
                     state = json.loads(state_raw)
+                    last_state = state
                     required_ready = bool(state.get("folif") if image_required else state.get("folwr"))
                     if not required_ready:
+                        # Perfis efemeros podem cair no consentimento europeu/
+                        # generico. Rejeitar todos e suficiente para continuar
+                        # sem persistir preferencias extras.
+                        _cdp_command(
+                            ws,
+                            150 + int(wait_seconds),
+                            "Runtime.evaluate",
+                            {
+                                "expression": """
+(() => {
+  const labels = ['rejeitar tudo','reject all','recusar tudo','decline all'];
+  const nodes = [...document.querySelectorAll('button,[role="button"]')];
+  const target = nodes.find(node => labels.includes((node.innerText || node.textContent || '').trim().toLowerCase()));
+  if (target) { target.click(); return true; }
+  return false;
+})()
+""",
+                                "returnByValue": True,
+                            },
+                        )
                         continue
                     cookie_result = _cdp_command(ws, 200 + int(wait_seconds), "Network.getAllCookies")
                     session = _session_from_chrome_cookies(cookie_result.get("cookies") or [])
@@ -613,7 +637,17 @@ def recover_session_with_chrome(
                         break
                     session = None
                 if session is None:
-                    raise GoogleAIModeError("Chrome abriu o Modo IA, mas não formou uma sessão HTTP válida.")
+                    diagnostic = {
+                        "url": str(last_state.get("url") or "")[:180],
+                        "title": str(last_state.get("title") or "")[:100],
+                        "body": str(last_state.get("body") or "")[:180],
+                        "folif": bool(last_state.get("folif")),
+                        "folwr": bool(last_state.get("folwr")),
+                    }
+                    raise GoogleAIModeError(
+                        "Chrome abriu o Modo IA, mas não formou uma sessão HTTP válida. "
+                        f"Diagnóstico: {json.dumps(diagnostic, ensure_ascii=False)}"
+                    )
             finally:
                 ws.close()
 

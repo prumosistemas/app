@@ -37,6 +37,9 @@ start_local_portal_solver() {
   fi
 
   mkdir -p "$state_dir" "$artifact_dir"
+  # O PID gravado pertence ao container anterior e pode coincidir com um novo
+  # processo após recreate, deixando toda recuperação bloqueada por engano.
+  rm -f "$state_dir/.session_recovery.lock"
   start_artifact_retention "$artifact_dir"
   wrapper="/tmp/prumo-google-chrome"
   cat > "$wrapper" <<EOF
