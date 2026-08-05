@@ -315,6 +315,19 @@ def modal_command(store: SecretStore, action: str, account: str, target: str | N
             modal_run(store, account, ["deploy", "deploy/modal_portal_nacional_google_solver.py"], sizing)
         else:
             raise OpsError("Target Modal invalido.")
+    elif action == "rollover":
+        if target == "iss" and account != "primary":
+            raise OpsError("O Browserless ISS pertence a conta primary.")
+        app_name = (
+            "prumo-browserless"
+            if target == "iss"
+            else "prumo-portal-nacional-google-solver"
+            if target == "portal"
+            else None
+        )
+        if not app_name:
+            raise OpsError("Target Modal invalido.")
+        modal_run(store, account, ["app", "rollover", app_name, "--strategy", "recreate"])
 
 
 SSH_COMMAND = [
@@ -550,7 +563,7 @@ def build_parser() -> argparse.ArgumentParser:
     netlify.add_argument("--apply", action="store_true")
 
     modal = sub.add_parser("modal", help="Modal com token injetado no processo filho")
-    modal.add_argument("action", choices=["status", "billing", "deploy"])
+    modal.add_argument("action", choices=["status", "billing", "deploy", "rollover"])
     modal.add_argument("--account", choices=sorted(MODAL_ACCOUNTS), default="primary")
     modal.add_argument("--target", choices=["iss", "portal"])
 
