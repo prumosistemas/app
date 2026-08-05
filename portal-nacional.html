@@ -169,6 +169,7 @@
     let selectedRunId = "";
     let activeRunId = "";
     let latestState = null;
+    let latestLogicalRuns = [];
     let selectedRunSnapshot = null;
     let selectedRunLoadedAt = 0;
     const selectedCompetencesByRun = new Map();
@@ -257,8 +258,8 @@
       };
     }
     function renderMetrics(state){
-      const runs = state.runs || [];
-      const active = runs.find(r => r.run_id === state.active_run_id);
+      const runs = groupRuns(state.runs || []);
+      const active = runs.find(r => r._children.some(child => child.run_id === state.active_run_id));
       const latest = runs[0] || {};
       const summary = latest.summary || {};
       $("metrics").innerHTML = `
@@ -270,6 +271,42 @@
       $("solverPill").textContent = state.solver_url ? "Modo IA direto" : "Solver ausente";
       $("solverPill").className = "pill " + (state.solver_url ? "ok" : "bad");
       $("btnStop").disabled = !active;
+    }
+    function logicalRunKey(run){
+      if(run?.config?.batch_id) return `batch-${run.config.batch_id}`;
+      return String(run?.run_id || "").replace(/-(emitidas|recebidas)-/, "-ambos-");
+    }
+    function mergeRunSummaries(children){
+      const summary = {baixados:0, erros:0, pendentes:0, portal_registros:0, capturados:0, competencias:{}};
+      children.forEach(child => {
+        const current = child.summary || {};
+        ["baixados","erros","pendentes","portal_registros","capturados"].forEach(key => summary[key] += Number(current[key] || 0));
+        Object.values(current.competencias || {}).forEach(group => {
+          const key = group.competencia || "nao-identificada";
+          const target = summary.competencias[key] ||= {competencia:key,total:0,baixados:0,erros:0,pendentes:0};
+          ["total","baixados","erros","pendentes"].forEach(field => target[field] += Number(group[field] || 0));
+        });
+      });
+      const newest = children.map(child => child.summary?.ultimo_evento).filter(Boolean).at(-1);
+      if(newest) summary.ultimo_evento = newest;
+      summary.problema_operacional = children.map(child => child.summary?.problema_operacional).find(Boolean) || null;
+      return summary;
+    }
+    function groupRuns(runs){
+      const groups = new Map();
+      runs.forEach(run => {
+        const key = logicalRunKey(run);
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(run);
+      });
+      return [...groups.entries()].map(([key, children]) => {
+        const modes = new Set(children.map(child => child.config?.modo));
+        const statuses = children.map(child => String(child.status || ""));
+        const status = statuses.some(value => /rodando|criada/.test(value)) ? "rodando"
+          : statuses.some(value => /erro|parado|interrompida/.test(value)) ? "finalizado_com_erros"
+          : statuses.every(value => value === "finalizado") ? "finalizado" : statuses[0] || "-";
+        return {...children[0], run_id:children.length > 1 ? key : children[0].run_id, status, config:{...children[0].config, modo:modes.size > 1 ? "ambos" : children[0].config?.modo}, summary:mergeRunSummaries(children), _children:children};
+      });
     }
     function renderCertificates(state){
       const certs = state.certificates || [];
@@ -294,7 +331,7 @@
         const s = run.summary || {};
         return `<tr data-run="${esc(run.run_id)}" class="${run.run_id===selectedRunId ? "selected" : ""}" style="cursor:pointer">
           <td>${statusPill(run.status)}</td>
-          <td><code>${esc(run.run_id)}</code><br><span class="small">${esc(run.config?.modo || "-")} · ${esc(run.config?.tipo_download || "-")}</span></td>
+          <td><code>${esc(run.run_id)}</code><br><span class="small">${esc(run.config?.modo || "-")} · ${esc(run.config?.tipo_download || "-")}${run._children.length > 1 ? " · emitidas + recebidas" : ""}</span></td>
           <td>${Number(s.baixados || 0)}/${Number(s.portal_registros || s.capturados || 0)} ok<br><span class="small">${Number(s.erros || 0)} erro · ${Number(s.pendentes || 0)} pendente</span></td>
           <td>${esc(formatTs(run.created_at))}</td>
         </tr>`;
@@ -307,14 +344,18 @@
       const s = run?.summary || {};
       const issue = s.problema_operacional;
       const issueLine = issue ? `\nSituação: ${issue.message}${issue.status_code ? ` (HTTP ${issue.status_code})` : ""}${issue.retry_in_seconds ? ` Nova tentativa em ${issue.retry_in_seconds}s.` : ""}` : "";
+      const childLines = (run?._children || []).length > 1 ? "\n" + run._children.map(child => {
+        const childSummary = child.summary || {};
+        return `${child.config?.modo || "parte"}: ${Number(childSummary.baixados || 0)} ok · ${Number(childSummary.erros || 0)} erro`;
+      }).join("\n") : "";
       $("detailBox").innerHTML = run ? `
         <div class="notice ${issue || /erro|parado|interrompida/.test(run.status||"") ? "warn" : "ok"}">
 ${esc(run.run_id)}
 Status: ${esc(run.status || "-")}
 Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Pendentes: ${Number(s.pendentes || 0)}
-Último evento: ${esc(s.ultimo_evento?.event || "-")}${esc(issueLine)}</div>` : "Selecione uma run.";
+Último evento: ${esc(s.ultimo_evento?.event || "-")}${esc(childLines)}${esc(issueLine)}</div>` : "Selecione uma run.";
       renderCompetenceSelector(run);
-      $("btnDeleteRun").disabled = !run || run.run_id === activeRunId;
+      $("btnDeleteRun").disabled = !run || (run._children || []).some(child => child.run_id === activeRunId);
     }
     function renderCompetenceSelector(run){
       const box = $("competenceBox");
@@ -368,7 +409,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const state = await api("/py/api/portal-nacional/state");
       latestState = state;
       activeRunId = state.active_run_id || "";
-      const runs = state.runs || [];
+      const runs = groupRuns(state.runs || []);
+      latestLogicalRuns = runs;
       const target = runs.find(run => run.run_id === selectedRunId) || runs[0] || null;
       const selectionChanged = Boolean(target && target.run_id !== selectedRunId);
       if(target) selectedRunId = target.run_id;
@@ -378,11 +420,18 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
         selectedRunSnapshot = {...selectedRunSnapshot, ...target, files:selectedRunSnapshot.files || []};
         renderDetail(selectedRunSnapshot);
       }
-      const detailDue = forceDetail || selectionChanged || selectedRunSnapshot?.run_id !== target.run_id || (target.run_id === activeRunId && Date.now() - selectedRunLoadedAt >= 5000);
+      const targetIsActive = target._children.some(child => child.run_id === activeRunId);
+      const detailDue = forceDetail || selectionChanged || selectedRunSnapshot?.run_id !== target.run_id || (targetIsActive && Date.now() - selectedRunLoadedAt >= 5000);
       if(detailDue) await loadRun(target.run_id, false);
     }
     async function loadRun(runId, showErr=true){
-      try{ const data = await api(`/py/api/portal-nacional/runs/${encodeURIComponent(runId)}`); selectedRunSnapshot=data.run; selectedRunLoadedAt=Date.now(); renderDetail(data.run); }
+      try{
+        const logical = latestLogicalRuns.find(run => run.run_id === runId);
+        const children = logical?._children || [{run_id:runId}];
+        const details = await Promise.all(children.map(child => api(`/py/api/portal-nacional/runs/${encodeURIComponent(child.run_id)}`)));
+        selectedRunSnapshot = {...(logical || details[0].run), summary:mergeRunSummaries(details.map(data => data.run)), _children:details.map(data => data.run)};
+        selectedRunLoadedAt=Date.now(); renderDetail(selectedRunSnapshot);
+      }
       catch(err){ if(showErr) setMsg("err", err.message); }
     }
     async function deleteCertificate(certId, btn){
@@ -415,14 +464,21 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const payload = formPayload();
       if(!payload.cert_id){ setMsg("warn", "Selecione um certificado."); switchSection("certificatesSection"); return; }
       buttonLoading($("btnStart"), true, "Iniciando");
-      try{ const data = await api("/py/api/portal-nacional/runs", {method:"POST", body:JSON.stringify(payload)}); selectedRunId = data.run_id; switchSection("notesSection"); await loadState(); setMsg("ok", "Run iniciada."); }
+      try{ const data = await api("/py/api/portal-nacional/runs", {method:"POST", body:JSON.stringify(payload)}); selectedRunId = logicalRunKey({run_id:data.run_id}); switchSection("notesSection"); await loadState(); setMsg("ok", "Run iniciada."); }
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnStart"), false, "Iniciar run"); }
     };
     $("btnRetry").onclick = async () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
       buttonLoading($("btnRetry"), true, "Retentando");
-      try{ const p=formPayload(); await api(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/retry`, {method:"POST", body:JSON.stringify(p)}); await loadState(); setMsg("ok", "Retry iniciado."); }
+      try{
+        const p=formPayload();
+        const children = selectedRunSnapshot?._children || [];
+        const target = children.find(child => Number(child.summary?.erros || 0) > 0 || Number(child.summary?.pendentes || 0) > 0) || children[0];
+        if(!target) throw new Error("Run não encontrada.");
+        await api(`/py/api/portal-nacional/runs/${encodeURIComponent(target.run_id)}/retry`, {method:"POST", body:JSON.stringify(p)});
+        await loadState(); setMsg("ok", `Retry de ${target.config?.modo || "run"} iniciado.`);
+      }
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnRetry"), false, "Retry"); }
     };
@@ -434,24 +490,32 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnStop"), false, "Parar run"); }
     };
-    $("btnDownloadRun").onclick = () => {
+    $("btnDownloadRun").onclick = async () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
       const selected = selectedCompetencesByRun.get(selectedRunId) || new Set();
-      const query = new URLSearchParams();
-      selected.forEach(value => query.append("competencia", value));
-      const suffix = query.toString() ? `?${query}` : "";
       buttonLoading($("btnDownloadRun"), true, "Preparando");
-      downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}/download${suffix}`, `${selectedRunId}.zip`)
-        .catch(err => setMsg("err", err.message))
-        .finally(() => buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"));
+      try{
+        const children = (selectedRunSnapshot?._children || []).filter(child => Number(child.summary?.baixados || 0) > 0);
+        for(const child of children){
+          const childCompetences = new Set(Object.keys(child.summary?.competencias || {}));
+          const childSelected = [...selected].filter(value => childCompetences.has(value));
+          if(selected.size && !childSelected.length) continue;
+          const childQuery = new URLSearchParams();
+          childSelected.forEach(value => childQuery.append("competencia", value));
+          const childSuffix = childQuery.toString() ? `?${childQuery}` : "";
+          await downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(child.run_id)}/download${childSuffix}`, `${child.run_id}.zip`);
+        }
+      }catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"); }
     };
     $("btnDeleteRun").onclick = async () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
-      if(selectedRunId===activeRunId){ setMsg("warn", "Pare a run antes de excluir."); return; }
+      const children = selectedRunSnapshot?._children || [];
+      if(children.some(child => child.run_id===activeRunId)){ setMsg("warn", "Pare a run antes de excluir."); return; }
       if(!confirm("Excluir esta run e todos os arquivos dela?")) return;
       buttonLoading($("btnDeleteRun"), true, "Excluindo");
       try{
-        await api(`/py/api/portal-nacional/runs/${encodeURIComponent(selectedRunId)}`, {method:"DELETE"});
+        for(const child of children) await api(`/py/api/portal-nacional/runs/${encodeURIComponent(child.run_id)}`, {method:"DELETE"});
         selectedRunId=""; await loadState(); setMsg("ok", "Run excluída.");
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnDeleteRun"), false, "Excluir run"); }

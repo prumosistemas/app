@@ -370,10 +370,10 @@ def _temporal_capture_plan(question: str) -> tuple[int, int]:
     """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
     if _question_needs_full_temporal_sequence(question):
         # Comecamos a observar quando o desafio ja pode estar no meio da
-        # animacao. Uma janela de ~17,4 s permite atravessar um ciclo inteiro
-        # mesmo nesse caso. O custo de IA continua sendo uma unica imagem de
-        # ocupacao; os quadros extras sao processados localmente no container.
-        return 80, 220
+        # animacao. Uma janela de ~9,4 s cobre o ciclo observado sem manter o
+        # browser e o container ocupados por 25-30 s em cada etapa. O mapa de
+        # ocupacao agrega todos os quadros e continua gerando uma unica imagem.
+        return 48, 200
     return 4, 180
 
 
@@ -385,8 +385,10 @@ def _classify_visual_challenge(question: str) -> dict[str, Any]:
         # pequeno objeto em movimento; portanto a segunda etapa nao e prova de
         # loop. Permita uma sequencia completa antes de solicitar outro desafio.
         category, difficulty, max_same_scene_attempts = "temporal_full", "alta", 8
+        max_sequence_attempts = 4
     elif _question_wants_trajectory_destination(normalized):
         category, difficulty, max_same_scene_attempts = "temporal_trajectory", "media", 2
+        max_sequence_attempts = 3
     elif any(
         term in normalized
         for term in (
@@ -395,10 +397,13 @@ def _classify_visual_challenge(question: str) -> dict[str, Any]:
         )
     ):
         category, difficulty, max_same_scene_attempts = "temporal_dynamic", "alta", 1
+        max_sequence_attempts = 2
     elif normalized:
         category, difficulty, max_same_scene_attempts = "visual_static", "baixa", 2
+        max_sequence_attempts = 3
     else:
         category, difficulty, max_same_scene_attempts = "unknown", "alta", 1
+        max_sequence_attempts = 2
     frame_count, interval_ms = _temporal_capture_plan(normalized)
     return {
         "category": category,
@@ -407,6 +412,7 @@ def _classify_visual_challenge(question: str) -> dict[str, Any]:
         "interval_ms": interval_ms,
         "capture_span_ms": max(0, frame_count - 1) * interval_ms,
         "max_same_scene_attempts": max_same_scene_attempts,
+        "max_sequence_attempts": max_sequence_attempts,
     }
 
 
@@ -448,9 +454,11 @@ def _register_scene_attempt(
             and _hash_distance(fingerprint, previous.get("fingerprint")) <= 14
         )
         attempt = int(previous.get("attempt") or 0) + 1 if same_scene and previous else 1
+        sequence_attempt = int(previous.get("sequence_attempt") or 0) + 1 if previous else 1
         CHALLENGE_SCENE_ATTEMPTS[key] = {
             "fingerprint": fingerprint,
             "attempt": attempt,
+            "sequence_attempt": sequence_attempt,
             "updated_at": time.monotonic(),
         }
         if len(CHALLENGE_SCENE_ATTEMPTS) > 512:
@@ -463,10 +471,16 @@ def _register_scene_attempt(
     return {
         "same_scene": same_scene,
         "same_scene_attempt": attempt,
+        "sequence_attempt": sequence_attempt,
         "fingerprint_sha256": hashlib.sha256(
             (fingerprint or "unavailable").encode("ascii")
         ).hexdigest()[:16],
     }
+
+
+def _reset_challenge_attempts(request_id: str, category: str) -> None:
+    with CHALLENGE_SCENE_LOCK:
+        CHALLENGE_SCENE_ATTEMPTS.pop((request_id, category), None)
 
 
 def _build_motion_sequence(folder: Path, frames: list[Path]) -> Path | None:
@@ -676,7 +690,7 @@ def _override_never_choice_from_occupancy(
     """Escolhe deterministicamente o alvo com menor ocupacao temporal.
 
     O Modo IA continua responsavel por localizar todas as flores/alvos. Para
-    perguntas ``never/nunca``, a decisao final usa o mapa produzido pelos 80
+    perguntas ``never/nunca``, a decisao final usa o mapa temporal capturado,
     quadros, evitando que cor natural de flor seja confundida com rastro.
     """
     lowered = str(question or "").lower()
@@ -2581,6 +2595,8 @@ def _save_and_analyze_visual_fast(
         rotate_scene = (
             int(scene_attempt["same_scene_attempt"])
             > int(classification["max_same_scene_attempts"])
+            or int(scene_attempt["sequence_attempt"])
+            > int(classification["max_sequence_attempts"])
         )
         classification["action"] = "refresh_challenge" if rotate_scene else "analyze"
         (folder / "classificacao-desafio.json").write_text(
@@ -2593,6 +2609,7 @@ def _save_and_analyze_visual_fast(
             f"cena_tentativa={scene_attempt['same_scene_attempt']} acao={classification['action']}"
         )
         if rotate_scene:
+            _reset_challenge_attempts(request_id, classification["category"])
             _restore_visual_animation(port)
             refreshed = legacy.refresh_hcaptcha_and_wait(port, wait_seconds=0.8)
             classification["refresh_clicked"] = refreshed

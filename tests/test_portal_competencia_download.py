@@ -110,4 +110,4 @@ def test_portal_frontend_uses_competence_selector_without_files_box() -> None:
     assert 'id="filesBox"' not in source
     assert 'id="competenceBox"' in source
     assert 'data-competence="todas"' in source
-    assert 'query.append("competencia", value)' in source
+    assert 'childQuery.append("competencia", value)' in source
