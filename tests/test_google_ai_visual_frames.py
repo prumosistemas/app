@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 
 SOLVER_DIR = Path(__file__).resolve().parents[1] / "solver" / "google_ai_mode"
@@ -17,6 +18,41 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 SOLVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SOLVER)
+
+
+def test_never_lands_uses_lowest_temporal_occupancy_without_affecting_trajectory(
+    tmp_path: Path,
+) -> None:
+    occupancy = np.zeros((100, 100), dtype=np.uint8)
+    occupancy[20:40, 10:30] = 255
+    occupancy[20:40, 40:60] = 210
+    SOLVER.legacy.Image.fromarray(occupancy, mode="L").save(
+        tmp_path / "ocupacao-temporal.png"
+    )
+    parsed = {
+        "objetos": {
+            "flor_1": {"nome": "flor esquerda", "caixa": {"x1": 50, "y1": 150, "x2": 350, "y2": 450}},
+            "flor_2": {"nome": "flor central", "caixa": {"x1": 350, "y1": 150, "x2": 650, "y2": 450}},
+            "flor_3": {"nome": "flor direita", "caixa": {"x1": 650, "y1": 150, "x2": 950, "y2": 450}},
+        },
+        "escolha": {"objeto": "flor_1", "x": 200, "y": 300},
+    }
+
+    result = SOLVER._override_never_choice_from_occupancy(
+        parsed, tmp_path, "Click the flower the bee never lands on"
+    )
+
+    assert result is not None and result["applied"] is True
+    assert parsed["escolha"]["objeto"] == "flor_3"
+
+    trajectory = {**parsed, "escolha": {"objeto": "flor_1", "x": 200, "y": 300}}
+    assert (
+        SOLVER._override_never_choice_from_occupancy(
+            trajectory, tmp_path, "In which basket will the ball land?"
+        )
+        is None
+    )
+    assert trajectory["escolha"]["objeto"] == "flor_1"
 
 
 def test_empty_visual_frame_is_retryable_without_provider_penalty() -> None:

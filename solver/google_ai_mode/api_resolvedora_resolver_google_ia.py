@@ -569,7 +569,7 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
     """Resume permanencia temporal sem perder a geometria dos alvos.
 
     O fundo e a mediana temporal (alvos estaticos) e recebe calor
-    amarelo/vermelho proporcional ao numero de quadros em que houve mudanca
+    ciano proporcional ao numero de quadros em que houve mudanca
     naquele ponto. Passagens rapidas ficam fracas; permanencias ficam fortes.
     A imagem final preserva exatamente a geometria clicavel original.
     """
@@ -625,12 +625,18 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
         strength_image = strength_image.filter(ImageFilter.GaussianBlur(radius=4))
         strength = np.asarray(strength_image, dtype=np.float32) / 255.0
         heat = np.zeros_like(background)
-        heat[..., 0] = 255
-        heat[..., 1] = (210 * strength).astype(np.uint8)
-        alpha = (0.72 * strength)[..., None]
+        # Ciano eletrico nao se confunde com petalas amarelas/laranjas nem com
+        # o centro natural do girassol, como acontecia com o mapa antigo.
+        heat[..., 1] = 255
+        heat[..., 2] = 255
+        alpha = (0.82 * strength)[..., None]
         overlaid = (background * (1.0 - alpha) + heat * alpha).astype(np.uint8)
 
         heat_image = legacy.Image.fromarray(overlaid, mode="RGB")
+        legacy.Image.fromarray((strength * 255).astype(np.uint8), mode="L").save(
+            folder / "ocupacao-temporal.png",
+            format="PNG",
+        )
         width, height = heat_image.size
         board_path = folder / "evidencia-permanencia-temporal.jpg"
         heat_image.save(board_path, format="JPEG", quality=90, optimize=False)
@@ -659,6 +665,81 @@ def _build_temporal_occupancy_board(folder: Path, frames: list[Path]) -> Path | 
         return board_path
     except Exception as exc:
         print(f"[Debug] Falha ao criar evidencia de permanencia: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _override_never_choice_from_occupancy(
+    parsed: dict,
+    folder: Path,
+    question: str,
+) -> dict | None:
+    """Escolhe deterministicamente o alvo com menor ocupacao temporal.
+
+    O Modo IA continua responsavel por localizar todas as flores/alvos. Para
+    perguntas ``never/nunca``, a decisao final usa o mapa produzido pelos 80
+    quadros, evitando que cor natural de flor seja confundida com rastro.
+    """
+    lowered = str(question or "").lower()
+    if "never" not in lowered and "nunca" not in lowered:
+        return None
+    objects = parsed.get("objetos")
+    occupancy_path = folder / "ocupacao-temporal.png"
+    if not isinstance(objects, dict) or len(objects) < 3 or not occupancy_path.is_file():
+        return None
+    try:
+        import numpy as np
+
+        with legacy.Image.open(occupancy_path) as image:
+            occupancy = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
+        height, width = occupancy.shape
+        candidates = []
+        for key, value in objects.items():
+            if not isinstance(value, dict) or not isinstance(value.get("caixa"), dict):
+                continue
+            box = value["caixa"]
+            x1 = max(0, min(width - 1, round(_float_0_1000(box.get("x1"), "caixa.x1") * width / 1000)))
+            y1 = max(0, min(height - 1, round(_float_0_1000(box.get("y1"), "caixa.y1") * height / 1000)))
+            x2 = max(x1 + 1, min(width, round(_float_0_1000(box.get("x2"), "caixa.x2") * width / 1000)))
+            y2 = max(y1 + 1, min(height, round(_float_0_1000(box.get("y2"), "caixa.y2") * height / 1000)))
+            crop = occupancy[y1:y2, x1:x2].reshape(-1)
+            if not crop.size:
+                continue
+            top_count = max(1, round(crop.size * 0.03))
+            score = float(np.mean(np.partition(crop, -top_count)[-top_count:]))
+            candidates.append(
+                {
+                    "key": str(key),
+                    "name": str(value.get("nome") or key),
+                    "score": score,
+                    "x": ((x1 + x2) / 2.0) * 1000.0 / width,
+                    "y": ((y1 + y2) / 2.0) * 1000.0 / height,
+                }
+            )
+        if len(candidates) < 3:
+            return None
+        candidates.sort(key=lambda item: item["score"])
+        best, second = candidates[0], candidates[1]
+        gap = second["score"] - best["score"]
+        applied = best["score"] <= 0.45 and gap >= 0.08
+        result = {
+            "applied": applied,
+            "best": best,
+            "second_score": second["score"],
+            "gap": gap,
+            "candidate_count": len(candidates),
+        }
+        if applied:
+            parsed["escolha"] = {
+                "objeto": best["key"],
+                "x": best["x"],
+                "y": best["y"],
+                "descricao_do_alvo": best["name"],
+                "argumento": "menor ocupacao temporal medida entre todos os alvos",
+                "confianca": min(0.99, max(0.80, 0.80 + gap)),
+            }
+        return result
+    except Exception as exc:
+        print(f"[Temporal] Falha na validacao deterministica: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -1518,12 +1599,14 @@ def _unified_visual_prompt(
         sequence_note = f"""
 A imagem e uma SOBREPOSICAO DE PERMANENCIA da mesma cena durante
 {temporal_span_ms / 1000.0:.1f} segundos, mantendo exatamente as coordenadas do
-canvas original. O fundo mostra os alvos estaticos; rastros fracos indicam passagem
-rapida e amarelo/vermelho forte indica que o objeto ficou naquele ponto por varios
-quadros. Em perguntas com "pousa"/"lands", "visita"/"visits",
+canvas original. O fundo mostra os alvos estaticos; marcas CIANO/TURQUESA indicam
+onde o objeto passou ou permaneceu, e ciano forte indica varios quadros naquele
+ponto. Em perguntas com "pousa"/"lands", "visita"/"visits",
 "nunca"/"never" ou "sempre"/"always", diferencie
-passagem de permanencia. Compare TODOS os alvos e escolha o centro exato do unico
-alvo compativel nas coordenadas 0..1000 da imagem.
+passagem de permanencia. Para "nunca", uma marca ciano diretamente sobre petalas
+ou centro elimina aquele alvo; rastros no fundo entre flores nao eliminam nenhuma.
+Liste em "objetos" TODAS as flores visiveis, inclusive as que nao sao resposta,
+com uma caixa apertada para cada flor. Depois escolha a unica flor sem ciano direto.
 """
     elif frame_count > 1 and temporal_layout == "montage":
         sequence_note = f"""
@@ -1563,6 +1646,7 @@ um unico objeto/destino. Quando houver nove regioes, numere 1 2 3 / 4 5 6 / 7 8 
 
 Regras:
 - responda literalmente e examine todas as alternativas;
+- quando houver flores/alvos repetidos, inclua cada alternativa separadamente em "objetos";
 - objetos parciais contam somente quando claramente identificaveis;
 - nao marque sombra, reflexo, marca-dagua, rastro transparente ou associacao vaga;
 - em trajetoria clique no destino final, nao no objeto em movimento;
@@ -2250,6 +2334,18 @@ def analyze_visual_with_google_ai(
             )
             if not motion_override or not motion_override.get("applied"):
                 motion_override = _override_choice_from_motion(parsed, challenge_dir)
+        occupancy_override = None
+        if full_temporal_sequence and query_path == occupancy_path:
+            occupancy_override = _override_never_choice_from_occupancy(
+                parsed,
+                challenge_dir,
+                captcha_question,
+            )
+            if occupancy_override and occupancy_override.get("applied"):
+                print(
+                    "[Temporal] Escolha 'nunca pousou' confirmada pelo mapa de "
+                    f"ocupacao (gap={occupancy_override['gap']:.3f})."
+                )
         detections, by_key = _parse_non9_objects(parsed)
 
         choice = parsed.get("escolha")
@@ -2334,7 +2430,9 @@ def analyze_visual_with_google_ai(
                     "quadros_temporais": analyzed_frame_count,
                     "janela_temporal_ms": temporal_span_ms,
                     "evidencia_visual": (
-                        "montagem_temporal_completa"
+                        "ocupacao_temporal"
+                        if full_temporal_sequence and query_path == occupancy_path
+                        else "montagem_temporal_completa"
                         if full_temporal_sequence
                         else "sobreposicao_temporal"
                         if moving_sequence
@@ -2342,6 +2440,7 @@ def analyze_visual_with_google_ai(
                     ),
                     "deslocamento_medido": displacement,
                     "trajetoria_local": motion_override,
+                    "ocupacao_temporal": occupancy_override,
                     "validacao_antes_clique": live_relocation,
                     "imagem_anotada": str(output_image),
                     "resposta_parseada": parsed,
