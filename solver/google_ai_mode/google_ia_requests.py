@@ -59,6 +59,7 @@ HTTP_RECOVERY_TEXT_STEPS = max(
     min(3, int(os.environ.get("GOOGLE_AI_HTTP_RECOVERY_TEXT_STEPS", "2"))),
 )
 SEARCH_URL = "https://www.google.com/search"
+AI_MODE_URL = "https://www.google.com/ai"
 TEXT_ASYNC_URL = "https://www.google.com/async/folwr"
 IMAGE_ASYNC_URL = "https://www.google.com/async/folif"
 LENS_UPLOAD_URL = "https://lens.google.com/v3/upload"
@@ -341,6 +342,9 @@ def _has_required_mode_tokens(html_text: str, image_required: bool) -> bool:
 def _recovery_search_params(image_required: bool) -> dict[str, str]:
     return {
         "udm": "50",
+        # O atalho oficial /ai passou a redirecionar para udm=50&aep=11.
+        # Sem aep=11 o Google pode devolver busca comum sem tokens folif/folwr.
+        "aep": "11",
         "q": (
             "Prepare-se para analisar uma imagem."
             if image_required
@@ -350,6 +354,12 @@ def _recovery_search_params(image_required: bool) -> dict[str, str]:
         "gl": "br",
         "pws": "0",
     }
+
+
+def _recovery_browser_url(image_required: bool) -> str:
+    params = _recovery_search_params(image_required)
+    params.pop("udm", None)
+    return f"{AI_MODE_URL}?{urlencode(params)}"
 
 
 def _validate_mode_session(
@@ -524,7 +534,7 @@ def recover_session_with_chrome(
         succeeded = False
         try:
             port = _available_loopback_port()
-            url = f"{SEARCH_URL}?{urlencode(_recovery_search_params(image_required))}"
+            url = _recovery_browser_url(image_required)
             command = [
                 str(chrome),
                 "--no-sandbox",
@@ -959,7 +969,7 @@ def recover_session_with_headless_firefox(
                 if attempt_index == 1:
                     _seed_temporary_firefox_profile(profile)
                 _write_firefox_recovery_preferences(profile)
-                url = f"{SEARCH_URL}?{urlencode(_recovery_search_params(image_required))}"
+                url = _recovery_browser_url(image_required)
                 environment = os.environ.copy()
                 environment["MOZ_HEADLESS"] = "1"
                 command = [
@@ -1631,7 +1641,7 @@ def query_google_ai(
                 if image is not None
                 else question
             )
-            search_params = {"udm": "50", "q": initial_question}
+            search_params = {"udm": "50", "aep": "11", "q": initial_question}
             initial_html, referer = fetch_initial_html(
                 session,
                 user_agent,

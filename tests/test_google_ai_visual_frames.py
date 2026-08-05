@@ -55,6 +55,16 @@ def test_never_lands_uses_lowest_temporal_occupancy_without_affecting_trajectory
     assert trajectory["escolha"]["objeto"] == "flor_1"
 
 
+def test_google_ai_recovery_uses_official_ai_entrypoint() -> None:
+    params = SOLVER.google_ai._recovery_search_params(image_required=True)
+    url = SOLVER.google_ai._recovery_browser_url(image_required=True)
+
+    assert params["udm"] == "50"
+    assert params["aep"] == "11"
+    assert url.startswith("https://www.google.com/ai?")
+    assert "aep=11" in url
+
+
 def test_empty_visual_frame_is_retryable_without_provider_penalty() -> None:
     with pytest.raises(SOLVER.VisualFrameNotReadyError):
         SOLVER._parse_non9_objects({"objetos": {}})
