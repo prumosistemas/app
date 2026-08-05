@@ -1400,14 +1400,18 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         return 3600
     if status == 429 or "too many requests" in detail:
         return 300
+    if (
+        "google_ai_request_failed" in detail
+        or "unusual traffic" in detail
+        or "sorry/index" in detail
+    ):
+        return 300
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
     # Diferente de uma grade apenas instavel, este erro preservado confirma que
     # a sessao Google Modo IA daquele endpoint nao se formou. Evite pagar o
     # mesmo recovery em todas as notas do lote; a atual tenta a proxima conta e
     # as seguintes pulam o endpoint por cinco minutos.
-    if "google_ai_request_failed" in detail:
-        return 300
     # Este retorno tambem aparece em uma unica grade ainda carregando. Ele nao
     # prova que o pool Modal inteiro perdeu a sessao: colocar o endpoint em
     # cooldown aqui desviava simultaneamente todas as outras notas para o
@@ -1426,12 +1430,17 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
 def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
     cooldown = solver_endpoint_cooldown_seconds(exc)
     hostname = (urlparse(str(url or "")).hostname or "").lower()
-    if is_local_solver_url(url) and "google_ai_request_failed" in str(exc).lower():
+    detail = str(exc).lower()
+    explicit_google_block = any(
+        marker in detail
+        for marker in ("google_ai_request_failed", "unusual traffic", "sorry/index")
+    )
+    if is_local_solver_url(url) and "google_ai_request_failed" in detail:
         # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
         # endpoint local removia o ultimo fallback das outras threads, que
         # entao falhavam usando apenas os Modals em circuito.
         cooldown = 0
-    elif hostname.endswith(".modal.run") and cooldown >= 90:
+    elif hostname.endswith(".modal.run") and cooldown >= 90 and not explicit_google_block:
         # O endpoint Modal balanceia containers independentes; um 503 nao
         # prova que todos perderam a sessao. Um intervalo curto evita rajada
         # sem esconder containers saudaveis por minutos.
@@ -1524,6 +1533,18 @@ def solve_captcha_once(
         json=payload,
         timeout=SOLVER_REQUEST_TIMEOUT_SECONDS,
     )
+    if response.status_code >= 400:
+        try:
+            failed = solver_response_json(response)
+        except Exception:
+            response.raise_for_status()
+        reason = failed.get("reason") or failed.get("error") or f"http_{response.status_code}"
+        detail = failed.get("error") or failed.get("detail") or reason
+        error = RuntimeError(f"solver:{reason}: {detail}")
+        # Preserve o status para a politica de cooldown distinguir 5xx
+        # generico de bloqueio Google explicito, mesmo com corpo JSON valido.
+        error.response = response
+        raise error
     response.raise_for_status()
     data = solver_response_json(response)
     if data.get("accepted") and data.get("job_id"):

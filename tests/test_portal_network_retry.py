@@ -401,6 +401,49 @@ def test_modal_container_outage_has_short_pool_cooldown() -> None:
     ) == 15
 
 
+def test_explicit_google_block_has_long_modal_cooldown() -> None:
+    assert automation.mark_solver_endpoint_unavailable(
+        "https://conta--solver.modal.run/solve",
+        RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index"),
+    ) == 300
+
+
+def test_solver_preserves_json_reason_from_503(monkeypatch) -> None:
+    response = requests.Response()
+    response.status_code = 503
+    response.url = "https://solver.example/solve"
+    response._content = json.dumps(
+        {
+            "success": False,
+            "reason": "google_ai_request_failed",
+            "error": "unusual traffic",
+        }
+    ).encode()
+    monkeypatch.setattr(automation.requests, "post", lambda *args, **kwargs: response)
+
+    with pytest.raises(RuntimeError, match="google_ai_request_failed.*unusual traffic"):
+        automation.solve_captcha_once("https://solver.example/solve", "key", "nota")
+
+
+def test_generic_json_503_keeps_short_modal_pool_cooldown(monkeypatch) -> None:
+    response = requests.Response()
+    response.status_code = 503
+    response.url = "https://conta--solver.modal.run/solve"
+    response._content = json.dumps(
+        {
+            "success": False,
+            "reason": "container_unavailable",
+            "error": "temporary backend outage",
+        }
+    ).encode()
+    monkeypatch.setattr(automation.requests, "post", lambda *args, **kwargs: response)
+
+    with pytest.raises(RuntimeError) as captured:
+        automation.solve_captcha_once(response.url, "key", "nota")
+
+    assert automation.mark_solver_endpoint_unavailable(response.url, captured.value) == 15
+
+
 def test_endpoint_outages_still_open_cooldown() -> None:
     response = requests.Response()
     response.status_code = 503

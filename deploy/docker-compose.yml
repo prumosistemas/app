@@ -1,6 +1,6 @@
 services:
   prumo-api:
-    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.71}
+    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.72}
     container_name: prumo-api
     restart: unless-stopped
     ports:

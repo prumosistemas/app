@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.71**
-Atualizado em: **2026-08-04**
+Versao do app: **1.0.72**
+Atualizado em: **2026-08-05**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local

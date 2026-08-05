@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.71.
+Este documento e a fonte de contexto operacional da versao 1.0.72.
 
 ## Estado desejado
 
@@ -14,7 +14,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.71.
 - Browserless local desligado.
 - Modal `prumo-browserless` com 30 sessoes turbo pela API.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
-- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota.
+- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
 - GitHub, pasta local e servidor na mesma versao.
 
 ## Onde fica cada coisa
