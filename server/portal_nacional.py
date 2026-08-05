@@ -69,6 +69,10 @@ class PortalRetryPayload(BaseModel):
     retries: int = 6
 
 
+class PortalContinuePayload(PortalRetryPayload):
+    run_ids: List[str] = Field(default_factory=list)
+
+
 class PortalSessionImportPayload(BaseModel):
     session: Dict[str, Any]
 
@@ -615,9 +619,7 @@ def _build_command(cfg: Dict[str, Any], run_dir: Path, retry_only: bool) -> List
             cmd.extend(["--pfx-password-file", str(cfg["pfx_password_file"])])
     if cfg.get("max_items"):
         cmd.extend(["--max", str(cfg["max_items"])])
-    if retry_only:
-        cmd.append("--forcar-indexar")
-    else:
+    if not retry_only:
         cmd.append("--recriar-index")
         if cfg.get("renovar_sessao"):
             cmd.append("--renovar-inicio")
@@ -842,6 +844,40 @@ async def retry_portal_run(run_id: str, payload: PortalRetryPayload, ctx: Worker
     _update_run(run_dir, config=override)
     _start_jobs(ctx, [run_dir], retry_only=True)
     return {"ok": True, "run_id": run_dir.name}
+
+
+@router.post("/runs/continue")
+async def continue_portal_runs(payload: PortalContinuePayload, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    run_ids = list(dict.fromkeys(str(value or "").strip() for value in payload.run_ids))
+    run_ids = [value for value in run_ids if value]
+    if not run_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos uma run para continuar.")
+    if len(run_ids) > 4:
+        raise HTTPException(status_code=400, detail="No máximo quatro partes podem ser continuadas juntas.")
+
+    run_dirs: List[Path] = []
+    for run_id in run_ids:
+        run_dir = _safe_run_dir(ctx, run_id)
+        run = _load_json(run_dir / "run.json", {})
+        cfg = dict(run.get("config") or {})
+        override = _normalize_cfg(
+            {
+                **cfg,
+                **payload.model_dump(exclude={"run_ids"}),
+                "modo": cfg.get("modo") or "recebidas",
+                "data_inicial": cfg.get("data_inicial"),
+                "data_final": cfg.get("data_final"),
+                "renovar_sessao": False,
+            }
+        )
+        override["modo"] = cfg.get("modo") or override["modo"]
+        override["renovar_sessao"] = False
+        override = _attach_certificate_to_run(ctx, override, run_dir)
+        _update_run(run_dir, config=override, last_error=None)
+        run_dirs.append(run_dir)
+
+    _start_jobs(ctx, run_dirs, retry_only=True)
+    return {"ok": True, "run_id": run_dirs[0].name, "run_ids": [path.name for path in run_dirs]}
 
 
 @router.post("/runs/{run_id}/stop")

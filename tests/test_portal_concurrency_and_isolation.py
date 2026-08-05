@@ -44,6 +44,25 @@ def test_portal_member_roots_and_runtime_keys_are_isolated(monkeypatch, tmp_path
         portal_nacional._safe_run_dir(gabriel, "run-alan")
 
 
+def test_continue_reuses_existing_index(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    (run_dir / "logs").mkdir(parents=True)
+    cfg = {
+        "modo": "emitidas",
+        "tipo_download": "ambos",
+        "data_inicial": "01/07/2026",
+        "data_final": "31/07/2026",
+        "cert_index": 0,
+        "concorrencia": 4,
+        "retries": 8,
+    }
+
+    command = portal_nacional._build_command(cfg, run_dir, retry_only=True)
+
+    assert "--forcar-indexar" not in command
+    assert "--recriar-index" not in command
+
+
 def test_download_keeps_xml_checkpoint_when_pdf_solver_raises(monkeypatch, tmp_path: Path) -> None:
     calls = []
 

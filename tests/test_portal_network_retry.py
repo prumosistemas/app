@@ -16,10 +16,12 @@ import portal_nacional_automation as automation  # noqa: E402
 @pytest.fixture(autouse=True)
 def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_ENDPOINT_SCORES.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
     monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_ENDPOINT_SCORES.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
 
 
@@ -79,6 +81,43 @@ def test_portal_index_retries_503_with_growing_backoff(monkeypatch, tmp_path: Pa
     assert sleeps == [15]
     assert index["status"] == "indice_pronto"
     assert any(event["event"] == "requests_index_retry_wait" for event in index["events"])
+
+
+def test_portal_index_keeps_retrying_transient_outage_past_soft_limit(monkeypatch, tmp_path: Path) -> None:
+    responses = []
+    for status, body in ((503, "indisponivel"), (503, "indisponivel"), (200, "Total de 0 registros")):
+        response = requests.Response()
+        response.status_code = status
+        response.url = "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas"
+        response._content = body.encode()
+        responses.append(response)
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            return responses.pop(0)
+
+    sleeps = []
+    monkeypatch.setenv("PORTAL_INDEX_HTTP_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr(automation, "requests_session_from_data", lambda data: FakeSession())
+    monkeypatch.setattr(automation.time, "sleep", sleeps.append)
+    session_path = tmp_path / "session.json"
+    index_path = tmp_path / "indice.json"
+    session_path.write_text(json.dumps({"cookies": []}), encoding="utf-8")
+    index = automation.load_index(index_path, "recebidas")
+
+    automation.run_requests_index(
+        index,
+        index_path,
+        session_path,
+        "recebidas",
+        automation.MODE_URLS["recebidas"],
+        "01/07/2026",
+        "30/07/2026",
+        None,
+    )
+
+    assert sleeps == [15, 30]
+    assert index["status"] == "indice_pronto"
 
 
 def test_async_solver_poll_survives_transient_timeout(monkeypatch) -> None:
@@ -230,6 +269,19 @@ def test_modal_accounts_are_balanced_and_local_remains_last() -> None:
     assert first[-1] == second[-1] == "http://127.0.0.1:8876/solve"
 
 
+def test_modal_with_recent_success_is_preferred(monkeypatch, tmp_path) -> None:
+    primary = "https://primary--solver.modal.run/solve"
+    fallback = "https://fallback--solver.modal.run/solve"
+    residential = "http://127.0.0.1:8876/solve"
+    monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "status.json")
+
+    automation.record_solver_endpoint_event(primary, "failure", "nota-1", RuntimeError("offline"))
+    automation.record_solver_endpoint_event(fallback, "success", "nota-1")
+
+    ordered = automation.balance_modal_solver_candidates([primary, fallback, residential], "nota-2")
+    assert ordered == [fallback, primary, residential]
+
+
 def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> None:
     primary = "https://modal-1.example/solve"
     fallback = "https://modal-2.example/solve"
@@ -306,12 +358,12 @@ def test_solver_outage_backoff_grows_across_different_items() -> None:
     )
     assert not automation.is_transient_solver_outage({"reason": "arquivo_invalido"})
     assert [automation.retry_backoff_seconds(2, streak) for streak in range(1, 7)] == [
-        4,
-        8,
-        16,
-        32,
-        64,
+        30,
+        60,
         120,
+        300,
+        600,
+        900,
     ]
 
 

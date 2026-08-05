@@ -143,7 +143,7 @@
               <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
             </div>
             <div class="card">
-              <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnRetry" type="button">Retry</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
+              <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnContinue" type="button">Continuar</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
               <div class="card-body stack">
                 <div id="detailBox" class="small">Selecione uma run.</div>
                 <div id="competenceBox"></div>
@@ -355,6 +355,17 @@ Status: ${esc(run.status || "-")}
 Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Pendentes: ${Number(s.pendentes || 0)}
 Último evento: ${esc(s.ultimo_evento?.event || "-")}${esc(childLines)}${esc(issueLine)}</div>` : "Selecione uma run.";
       renderCompetenceSelector(run);
+      const children = run?._children || [];
+      const canContinue = children.some(child => {
+        const summary = child.summary || {};
+        return child.run_id !== activeRunId && (
+          child.status !== "finalizado" ||
+          Number(summary.erros || 0) > 0 ||
+          Number(summary.pendentes || 0) > 0 ||
+          Number(summary.executando || 0) > 0
+        );
+      });
+      $("btnContinue").disabled = !run || Boolean(activeRunId) || !canContinue;
       $("btnDeleteRun").disabled = !run || (run._children || []).some(child => child.run_id === activeRunId);
     }
     function renderCompetenceSelector(run){
@@ -468,19 +479,23 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnStart"), false, "Iniciar run"); }
     };
-    $("btnRetry").onclick = async () => {
+    $("btnContinue").onclick = async () => {
       if(!selectedRunId){ setMsg("warn", "Selecione uma run."); return; }
-      buttonLoading($("btnRetry"), true, "Retentando");
+      buttonLoading($("btnContinue"), true, "Continuando");
       try{
         const p=formPayload();
         const children = selectedRunSnapshot?._children || [];
-        const target = children.find(child => Number(child.summary?.erros || 0) > 0 || Number(child.summary?.pendentes || 0) > 0) || children[0];
-        if(!target) throw new Error("Run não encontrada.");
-        await api(`/py/api/portal-nacional/runs/${encodeURIComponent(target.run_id)}/retry`, {method:"POST", body:JSON.stringify(p)});
-        await loadState(); setMsg("ok", `Retry de ${target.config?.modo || "run"} iniciado.`);
+        const targets = children.filter(child => {
+          const summary = child.summary || {};
+          return child.status !== "finalizado" || Number(summary.erros || 0) > 0 || Number(summary.pendentes || 0) > 0 || Number(summary.executando || 0) > 0;
+        });
+        if(!targets.length) throw new Error("Esta run já foi concluída.");
+        p.run_ids = targets.map(child => child.run_id);
+        await api("/py/api/portal-nacional/runs/continue", {method:"POST", body:JSON.stringify(p)});
+        await loadState(); setMsg("ok", `${targets.length > 1 ? "Partes" : "Run"} continuando de onde parou.`);
       }
       catch(err){ setMsg("err", err.message); }
-      finally{ buttonLoading($("btnRetry"), false, "Retry"); }
+      finally{ buttonLoading($("btnContinue"), false, "Continuar"); }
     };
     $("btnStop").onclick = async () => {
       const runId = activeRunId || selectedRunId;

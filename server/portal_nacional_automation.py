@@ -76,6 +76,7 @@ SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
 SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
 SOLVER_MODAL_ROTATION_LOCK = threading.Lock()
 SOLVER_MODAL_ROTATION_COUNTER = 0
+SOLVER_ENDPOINT_SCORES: dict[str, int] = {}
 SOLVER_STATUS_LOCK = threading.Lock()
 SOLVER_STATUS_FILE = Path(
     os.environ.get(
@@ -92,6 +93,10 @@ def record_solver_endpoint_event(
     exc: Exception | None = None,
 ) -> None:
     """Persiste telemetria minima para o master, sem payload do captcha."""
+    with SOLVER_MODAL_ROTATION_LOCK:
+        current_score = SOLVER_ENDPOINT_SCORES.get(url, 0)
+        adjustment = 2 if event == "success" else -3
+        SOLVER_ENDPOINT_SCORES[url] = max(-12, min(12, current_score + adjustment))
     parsed = urlparse(url)
     payload = {
         "endpoint_host": (parsed.hostname or "").lower(),
@@ -103,14 +108,20 @@ def record_solver_endpoint_event(
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None)
         payload["error_kind"] = f"http_{status}" if status else type(exc).__name__
+    temporary: Path | None = None
     try:
         with SOLVER_STATUS_LOCK:
             SOLVER_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            temporary = SOLVER_STATUS_FILE.with_suffix(".tmp")
+            temporary = SOLVER_STATUS_FILE.with_name(
+                f".{SOLVER_STATUS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
             temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             temporary.replace(SOLVER_STATUS_FILE)
     except OSError:
         pass
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -1028,34 +1039,39 @@ def run_requests_index(
         nonlocal session, session_data
         page_url = requests_page_url(target_url, page, window_start, window_end)
         max_attempts = max(2, min(12, int(os.environ.get("PORTAL_INDEX_HTTP_MAX_ATTEMPTS", "8"))))
+        keep_retrying_transient = os.environ.get("PORTAL_INDEX_KEEP_RETRYING", "1").strip() != "0"
         last_error: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
+        attempt = 0
+        login_failures = 0
+        while True:
+            attempt += 1
             try:
                 response = session.get(page_url, timeout=60, allow_redirects=True, headers=nfse_navigation_headers(target_url))
             except requests.RequestException as exc:
                 last_error = exc
-                if attempt >= max_attempts:
+                if attempt >= max_attempts and not keep_retrying_transient:
                     save_index(index_path, index, "portal_indisponivel", "requests_index_unavailable", page=page, attempts=attempt, reason=type(exc).__name__)
                     raise
                 delay = portal_index_backoff_seconds(attempt)
-                save_index(index_path, index, "indexando_requests", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, reason=type(exc).__name__)
-                print(f"[Indice] Falha de rede na pagina {page}; tentativa {attempt + 1}/{max_attempts} em {delay}s.")
+                save_index(index_path, index, "aguardando_portal", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, reason=type(exc).__name__, keep_retrying=keep_retrying_transient)
+                print(f"[Indice] Falha de rede na pagina {page}; nova tentativa em {delay}s.")
                 time.sleep(delay)
                 continue
             if response_is_login(response):
+                login_failures += 1
                 save_index(index_path, index, "renovando_sessao", "requests_index_login_failed", page=page, url=response.url)
                 session_data = regenerate_session(index, index_path, session_path, page_url, cert_index, pfx_file, pfx_password_file)
                 session = requests_session_from_data(session_data)
-                if attempt >= max_attempts:
+                if login_failures >= max_attempts:
                     raise RuntimeError(f"Sessao nao entrou no portal por requests; URL atual: {response.url}")
                 continue
             if response.status_code in PORTAL_INDEX_TRANSIENT_STATUS:
-                if attempt >= max_attempts:
+                if attempt >= max_attempts and not keep_retrying_transient:
                     save_index(index_path, index, "portal_indisponivel", "requests_index_unavailable", page=page, attempts=attempt, status_code=response.status_code)
                     response.raise_for_status()
                 delay = portal_index_backoff_seconds(attempt, response)
-                save_index(index_path, index, "indexando_requests", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, status_code=response.status_code)
-                print(f"[Indice] Portal respondeu HTTP {response.status_code} na pagina {page}; tentativa {attempt + 1}/{max_attempts} em {delay}s.")
+                save_index(index_path, index, "aguardando_portal", "requests_index_retry_wait", page=page, attempt=attempt, delay_seconds=delay, status_code=response.status_code, keep_retrying=keep_retrying_transient)
+                print(f"[Indice] Portal respondeu HTTP {response.status_code} na pagina {page}; nova tentativa em {delay}s.")
                 time.sleep(delay)
                 continue
             response.raise_for_status()
@@ -1314,7 +1330,7 @@ def solver_url_candidates(primary: str) -> list[str]:
 
 
 def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> list[str]:
-    """Distribui notas entre as contas Modal e preserva o ThinkPad por ultimo."""
+    """Prefere o Modal que acerta e preserva o ThinkPad por ultimo."""
     del request_id  # A ordem exata 2+2 e mais util que um hash probabilistico.
     global SOLVER_MODAL_ROTATION_COUNTER
     modal_urls = [
@@ -1327,7 +1343,10 @@ def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> l
     with SOLVER_MODAL_ROTATION_LOCK:
         offset = SOLVER_MODAL_ROTATION_COUNTER % len(modal_urls)
         SOLVER_MODAL_ROTATION_COUNTER += 1
-    return modal_urls[offset:] + modal_urls[:offset] + others
+        rotated = modal_urls[offset:] + modal_urls[:offset]
+        scores = dict(SOLVER_ENDPOINT_SCORES)
+    rotated.sort(key=lambda url: scores.get(url, 0), reverse=True)
+    return rotated + others
 
 
 def solver_endpoint_label(url: str) -> str:
@@ -1862,6 +1881,10 @@ def is_transient_solver_outage(result: dict) -> bool:
             "all_endpoints_failed",
             "provider_circuit_open",
             "solver_circuit_open",
+            "google_ai_request_failed",
+            "unusual traffic",
+            "sorry/index",
+            "async_job_timeout",
             "connection refused",
             "connection reset",
             "name or service not known",
@@ -1873,7 +1896,8 @@ def retry_backoff_seconds(retry_level: int, outage_streak: int) -> int:
     item_delay = min(2 ** max(1, retry_level), 30)
     if outage_streak <= 0:
         return item_delay
-    outage_delay = min(2 ** min(outage_streak + 1, 7), 120)
+    outage_steps = (30, 60, 120, 300, 600, 900)
+    outage_delay = outage_steps[min(outage_streak - 1, len(outage_steps) - 1)]
     return max(item_delay, outage_delay)
 
 
@@ -1959,6 +1983,7 @@ def run_requests_downloads(
         while futures:
             done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
             retry_items = []
+            outage_retry_ids: set[str] = set()
             login_errors = []
             saw_solver_outage = False
             saw_success = False
@@ -1995,7 +2020,8 @@ def run_requests_downloads(
                     continue
 
                 reason = str(result.get("reason") or "")
-                saw_solver_outage = saw_solver_outage or is_transient_solver_outage(result)
+                transient_solver_outage = is_transient_solver_outage(result)
+                saw_solver_outage = saw_solver_outage or transient_solver_outage
                 attempts = int(index["items"][key].get("requests_attempts") or 1)
                 index["items"][key]["last_error"] = result
                 if result.get("files_by_tipo"):
@@ -2017,7 +2043,20 @@ def run_requests_downloads(
                     print(f"Sessao caiu via requests: {key} :: {result}")
                     continue
 
-                if attempts < max_attempts:
+                if transient_solver_outage:
+                    # Indisponibilidade externa nao e erro da nota e nao pode
+                    # consumir seu limite. Mantem a run viva ate o usuario
+                    # parar, usando um unico probe com backoff crescente.
+                    index["items"][key]["requests_attempts"] = max(0, attempts - 1)
+                    index["items"][key]["solver_outage_attempts"] = int(
+                        index["items"][key].get("solver_outage_attempts") or 0
+                    ) + 1
+                    index["items"][key]["status"] = "pendente"
+                    retry_items.append(index["items"][key])
+                    outage_retry_ids.add(key)
+                    save_index(index_path, index, "aguardando_solver", "item_waiting_solver", id=key, outage_attempt=index["items"][key]["solver_outage_attempts"], active=len(futures), queue=len(queue))
+                    print(f"Solver indisponivel; nota preservada para continuar: {key}")
+                elif attempts < max_attempts:
                     index["items"][key]["status"] = "pendente"
                     retry_items.append(index["items"][key])
                     save_index(index_path, index, "baixando_requests", "item_retry_scheduled", id=key, attempt=attempts, error=result, active=len(futures), queue=len(queue))
@@ -2042,7 +2081,9 @@ def run_requests_downloads(
 
             retry_items = [
                 item for item in retry_items
-                if int(item.get("requests_attempts") or 0) < max_attempts or login_errors
+                if item.get("id") in outage_retry_ids
+                or int(item.get("requests_attempts") or 0) < max_attempts
+                or login_errors
             ]
             retry_items.sort(key=lambda item: (int(item.get("page") or 0), item.get("id") or ""))
             queue.extend(retry_items)
@@ -2069,7 +2110,8 @@ def run_requests_downloads(
                 )
                 time.sleep(retry_delay)
 
-            while queue and len(futures) < max_workers:
+            active_limit = 1 if solver_outage_streak > 0 else max_workers
+            while queue and len(futures) < active_limit:
                 submit_next(executor, futures)
 
             save_index(index_path, index, "baixando_requests", "requests_pool_tick", started=started_count, active=len(futures), queue=len(queue))
