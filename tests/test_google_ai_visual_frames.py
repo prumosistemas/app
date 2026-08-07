@@ -65,6 +65,34 @@ def test_google_ai_recovery_uses_official_ai_entrypoint() -> None:
     assert "aep=11" in url
 
 
+def test_linux_chrome_recovery_stops_the_entire_process_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class Process:
+        pid = 4321
+
+        @staticmethod
+        def wait(timeout: float) -> int:
+            return 0
+
+    monkeypatch.setattr(SOLVER.google_ai.sys, "platform", "linux")
+    monkeypatch.setattr(
+        SOLVER.google_ai.os,
+        "killpg",
+        lambda pid, sig: calls.append((pid, sig)),
+        raising=False,
+    )
+    monkeypatch.setattr(SOLVER.google_ai.time, "sleep", lambda _seconds: None)
+
+    SOLVER.google_ai._stop_firefox_profile(
+        Process(), tmp_path, process_group=True
+    )
+
+    assert calls == [(4321, SOLVER.google_ai.signal.SIGTERM)]
+
+
 def test_empty_visual_frame_is_retryable_without_provider_penalty() -> None:
     with pytest.raises(SOLVER.VisualFrameNotReadyError):
         SOLVER._parse_non9_objects({"objetos": {}})

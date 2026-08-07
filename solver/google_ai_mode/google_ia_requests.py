@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import re
+import signal
 import shutil
 import socket
 import subprocess
@@ -564,6 +565,10 @@ def recover_session_with_chrome(
                 stderr=subprocess.DEVNULL,
                 env=os.environ.copy(),
                 creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
+                # Chrome cria vários subprocessos. Um grupo próprio permite
+                # encerrar toda a árvore após a recuperação, inclusive quando
+                # o processo-pai sai antes dos filhos.
+                start_new_session=(sys.platform != "win32"),
             )
 
             page: dict[str, Any] | None = None
@@ -658,7 +663,11 @@ def recover_session_with_chrome(
             return session
         finally:
             if process is not None:
-                _stop_firefox_profile(process, profile)
+                _stop_firefox_profile(
+                    process,
+                    profile,
+                    process_group=(sys.platform != "win32"),
+                )
             shutil.rmtree(profile, ignore_errors=True)
             removed = not profile.exists()
             if (
@@ -813,7 +822,33 @@ def _seed_temporary_firefox_profile(profile: Path) -> None:
                     pass
 
 
-def _stop_firefox_profile(process: subprocess.Popen[Any], profile: Path) -> None:
+def _stop_firefox_profile(
+    process: subprocess.Popen[Any],
+    profile: Path,
+    *,
+    process_group: bool = False,
+) -> None:
+    if process_group and sys.platform != "win32":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+        time.sleep(0.5)
+        return
+
     try:
         process.terminate()
         process.wait(timeout=2.0)

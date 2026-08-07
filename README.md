@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.72 - cooldown inteligente para bloqueio Google**
+Versao: **1.0.73 - limpeza da arvore de processos do solver residencial**
 
 ## Estado atual
 
@@ -80,9 +80,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.72 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.73 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.72
+docker push ryang20/prumo-api:1.0.73
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
