@@ -153,15 +153,21 @@ class HuggingFaceGoogleAIPool:
         *,
         space_ids: list[str],
         token: str,
+        tokens_by_owner: dict[str, str] | None = None,
         timeout_seconds: float = 60.0,
         cooldown_seconds: float = 180.0,
         api_name: str = "/test_google_ai",
     ) -> None:
         unique = list(dict.fromkeys(str(item or "").strip() for item in space_ids if str(item or "").strip()))
+        owner_tokens = {
+            str(owner).strip(): str(owner_token).strip()
+            for owner, owner_token in (tokens_by_owner or {}).items()
+            if str(owner).strip() and str(owner_token).strip()
+        }
         self.providers = [
             HuggingFaceGoogleAIProvider(
                 space_id=space_id,
-                token=token,
+                token=owner_tokens.get(space_id.split("/", 1)[0], token),
                 timeout_seconds=timeout_seconds,
                 cooldown_seconds=cooldown_seconds,
                 api_name=api_name,

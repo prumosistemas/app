@@ -351,7 +351,9 @@ def hf_command(
                     repo_id=repo_id,
                     repo_type="space",
                     space_sdk="gradio",
-                    space_hardware="zero-a10g",
+                    # O navegador e o Modo IA usam CPU. CPU Basic evita a
+                    # exigencia de PRO/30 dias do ZeroGPU em contas novas.
+                    space_hardware="cpu-basic",
                     private=True,
                     token=token,
                 )

@@ -50,7 +50,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v48-fast-empty-canvas"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v49-low-contention-audit"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -66,6 +66,7 @@ HF_SPACE_IDS = [
 HF_PROVIDER = HuggingFaceGoogleAIPool(
     space_ids=HF_SPACE_IDS,
     token=os.environ.get("HF_TOKEN", ""),
+    tokens_by_owner={"jorjoinho": os.environ.get("HF_SECONDARY_TOKEN", "")},
     timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "60")),
     cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
 )
@@ -1079,6 +1080,7 @@ def _create_temporal_video(folder: Path, frame_paths: list[Path], interval_ms: i
                 "-framerate", f"{fps:.3f}", "-start_number", "1",
                 "-i", str(folder / "quadro-%02d.jpg"),
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
+                "-threads", "1",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
             ],
             capture_output=True,
@@ -2821,8 +2823,12 @@ def _save_and_analyze_visual_fast(
             folder,
             frame_paths,
             capture_interval_ms,
-            build_sequence=True,
-            build_overlay=not full_temporal,
+            # Os quadros e a evidencia de ocupacao ja preservam a auditoria.
+            # Montagem/overlay duplicavam o mesmo material e disputavam CPU
+            # com a etapa seguinte do hCaptcha. Mantemos o MP4 em uma unica
+            # thread, fora do caminho critico.
+            build_sequence=False,
+            build_overlay=False,
         )
     else:
         occupancy_seconds = 0.0

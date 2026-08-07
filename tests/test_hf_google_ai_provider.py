@@ -99,3 +99,18 @@ def test_huggingface_pool_falls_back_between_spaces(monkeypatch, tmp_path: Path)
     assert result.route.startswith("huggingface:owner/")
     assert pool.health()["count"] == 2
     assert pool.health()["token_exposed"] is False
+
+
+def test_huggingface_pool_selects_private_token_by_owner() -> None:
+    pool = provider_module.HuggingFaceGoogleAIPool(
+        space_ids=["primary/one", "secondary/two"],
+        token="primary-secret",
+        tokens_by_owner={"secondary": "secondary-secret"},
+    )
+
+    assert [provider.token for provider in pool.providers] == [
+        "primary-secret",
+        "secondary-secret",
+    ]
+    assert "primary-secret" not in str(pool.health())
+    assert "secondary-secret" not in str(pool.health())
