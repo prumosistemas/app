@@ -77,7 +77,7 @@ async def _download_file(volume: Any, remote_path: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")
     with temporary.open("wb") as handle:
-        async for chunk in volume.read_file(remote_path):
+        async for chunk in volume.read_file.aio(remote_path):
             handle.write(chunk)
     os.replace(temporary, target)
 
@@ -95,13 +95,13 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
 
     target_root = mirror_root() / role
     manifest = _load_manifest(target_root)
-    client = modal.Client.from_credentials(token_id, token_secret)
+    client = await modal.Client.from_credentials.aio(token_id, token_secret)
     volume = modal.Volume.from_name(
         "prumo-portal-debug-artifacts-v2", version=2, client=client
     )
     challenge_entries = []
     try:
-        async for entry in volume.iterdir("/desafios/unificados", recursive=False):
+        async for entry in volume.iterdir.aio("/desafios/unificados", recursive=False):
             challenge_entries.append(entry)
     except Exception:
         challenge_entries = []
@@ -110,7 +110,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
     candidates = []
     for directory in selected:
         try:
-            async for entry in volume.iterdir(directory.path, recursive=True):
+            async for entry in volume.iterdir.aio(directory.path, recursive=True):
                 if _wanted_summary(entry.path):
                     candidates.append(entry)
         except Exception:
@@ -118,7 +118,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
 
     cutoff = int(time.time() - RETENTION_DAYS * 86400)
     try:
-        async for entry in volume.iterdir("/auditoria", recursive=True):
+        async for entry in volume.iterdir.aio("/auditoria", recursive=True):
             if entry.path.endswith(".jsonl") and int(entry.mtime or 0) >= cutoff:
                 candidates.append(entry)
     except Exception:
