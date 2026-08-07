@@ -2405,6 +2405,7 @@ def auto_solve_grid(
     challenge_open_failures = 0
     challenge_state_failures = 0
     challenge_opened = False
+    visual_not_ready_failures = 0
     
     for i in range(max_refreshes):
         token = extract_token_from_page(port)
@@ -2500,6 +2501,7 @@ def auto_solve_grid(
                     continue
                 escolha = save_and_analyze_non_9_challenge(port, state, request_id, attempt + i)
                 if escolha:
+                    visual_not_ready_failures = 0
                     print(f"[Auto] Clicando escolha nao-9: {escolha}")
                     if click_non_9_choice(port, escolha):
                         time.sleep(NON9_POST_CLICK_DELAY_SECONDS)
@@ -2510,6 +2512,29 @@ def auto_solve_grid(
                             print("[Auto] Sem token ainda; vou continuar para o proximo desafio.")
                             time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)
                             continue
+                error_reason = str(get_solver_error().get("reason") or "")
+                if error_reason == "visual_challenge_not_ready":
+                    visual_not_ready_failures += 1
+                    # Uma captura sem alvo pode ser transitoria; duas seguidas
+                    # indicam cena ruim. Trocar cedo evita ocupar um backend por
+                    # cinco minutos. Se o widget nao oferecer troca, a terceira
+                    # falha devolve para o failover externo tentar outro egress.
+                    if visual_not_ready_failures >= 2:
+                        refreshed = refresh_hcaptcha_and_wait(port, wait_seconds=0.8)
+                        audit_event(
+                            "challenge_refreshed",
+                            reason="visual_not_ready_streak",
+                            success=bool(refreshed),
+                        )
+                        if refreshed:
+                            visual_not_ready_failures = 0
+                            continue
+                    if visual_not_ready_failures >= 3:
+                        set_solver_error(
+                            "visual_challenge_not_ready",
+                            "Tres capturas sem alvo; liberando o backend para failover.",
+                        )
+                        return None
                 if not FAST_RELOAD_NON_9:
                     print("[Auto] Desafio nao-9 sem token; vou aguardar/procurar proximo desafio.")
                     time.sleep(NON9_NEXT_CHALLENGE_DELAY_SECONDS)

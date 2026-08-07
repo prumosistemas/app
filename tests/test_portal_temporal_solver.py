@@ -28,7 +28,7 @@ def test_never_lands_uses_full_sequence_without_trajectory_override():
     solver = _solver()
     question = "Clique na flor onde a abelha nunca pousa"
 
-    assert solver._temporal_capture_plan(question) == (48, 200)
+    assert solver._temporal_capture_plan(question) == (30, 300)
     assert solver._question_needs_full_temporal_sequence(question)
     assert not solver._question_wants_trajectory_destination(question)
     assert solver._classify_visual_challenge(question)["category"] == "temporal_full"
@@ -46,7 +46,7 @@ def test_full_temporal_semantics_are_multilingual(question):
     solver = _solver()
 
     assert solver._question_needs_full_temporal_sequence(question)
-    assert solver._temporal_capture_plan(question) == (48, 200)
+    assert solver._temporal_capture_plan(question) == (30, 300)
     assert solver._classify_visual_challenge(question)["category"] == "temporal_full"
 
 

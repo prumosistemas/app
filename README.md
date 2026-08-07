@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.75 - pool Hugging Face e auditoria visual persistente**
+Versao: **1.0.76 - captura temporal rápida e operação HF segura**
 
 ## Estado atual
 
@@ -9,7 +9,7 @@ Versao: **1.0.75 - pool Hugging Face e auditoria visual persistente**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere.
+- Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; os frames brutos permanecem somente nos Volumes Modal.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
 - Browserless local: desligado por padrao, documentado como fallback.
@@ -32,6 +32,7 @@ Versao: **1.0.75 - pool Hugging Face e auditoria visual persistente**
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/AI_OPERATOR_CONTEXT.md` | Entrada canonica para IA operar sem ver credenciais |
+| `docs/HUGGINGFACE_CONTEXT.md` | Contas, aliases, limite gratuito e operacao dos Spaces HF |
 | `docs/OPERACAO_PRUMO_DETALHADO.md` | Contexto operacional |
 | `docs/CONTEXTO_ATUAL_2026-07-10.md` | Snapshot historico da arquitetura em 2026-07-10 |
 | `docs/C4.md` | C4 canônico e decisões arquiteturais atuais |
@@ -82,9 +83,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.75 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.76 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.75
+docker push ryang20/prumo-api:1.0.76
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

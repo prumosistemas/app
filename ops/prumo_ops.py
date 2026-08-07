@@ -260,6 +260,121 @@ MODAL_ACCOUNTS = {
     "fallback": ("MODAL_FALLBACK_TOKEN_ID", "MODAL_FALLBACK_TOKEN_SECRET"),
 }
 
+HF_ACCOUNTS = {
+    "primary": ("HUGGINGFACE_PRIMARY_TOKEN", "HUGGINGFACE_TOKEN"),
+    "secondary": ("HUGGINGFACE_SECONDARY_TOKEN",),
+}
+
+
+def hf_token(store: SecretStore, account: str) -> str:
+    for name in HF_ACCOUNTS[account]:
+        if store.has(name):
+            return store.require(name)
+    raise OpsError(f"Token Hugging Face ausente para a conta {account}.")
+
+
+def hf_identity(store: SecretStore, account: str) -> dict[str, Any]:
+    token = hf_token(store, account)
+    response = requests.get(
+        "https://huggingface.co/api/whoami-v2",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+    data = require_ok(response, "Hugging Face")
+    if not isinstance(data, dict) or not data.get("name"):
+        raise OpsError("Hugging Face nao informou a identidade da conta.")
+    return data
+
+
+def hf_command(
+    store: SecretStore,
+    action: str,
+    account: str,
+    source_dir: str | None,
+    space_names: list[str] | None,
+) -> None:
+    identity = hf_identity(store, account)
+    username = str(identity["name"])
+    if action == "status":
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=hf_token(store, account))
+        spaces = []
+        for space in api.list_spaces(author=username, limit=100):
+            runtime = None
+            try:
+                runtime = api.get_space_runtime(space.id)
+            except Exception:
+                pass
+            spaces.append({
+                "id": space.id,
+                "private": bool(getattr(space, "private", False)),
+                "stage": getattr(runtime, "stage", None),
+                "hardware": getattr(runtime, "hardware", None),
+                "requested_hardware": getattr(runtime, "requested_hardware", None),
+            })
+        emit({
+            "account": account,
+            "username": username,
+            "plan": (identity.get("plan") or {}).get("name") if isinstance(identity.get("plan"), dict) else identity.get("plan"),
+            "spaces": spaces,
+            "token_exposed": False,
+        })
+        return
+    if action != "deploy":
+        raise OpsError("Acao Hugging Face invalida.")
+    if not source_dir or not space_names:
+        raise OpsError("Informe --source-dir e pelo menos um --space-name.")
+    source = Path(source_dir).expanduser().resolve()
+    required = ("README.md", "app.py", "google_ia_requests.py", "requirements.txt", "packages.txt")
+    if not source.is_dir() or any(not (source / name).is_file() for name in required):
+        raise OpsError("A fonte do Space esta incompleta.")
+
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import HfHubHTTPError
+
+    token = hf_token(store, account)
+    api = HfApi(token=token)
+    deployed = []
+    for raw_name in space_names:
+        name = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(raw_name or "").strip()).strip("-.")
+        if not name:
+            raise OpsError("Nome de Space invalido.")
+        repo_id = f"{username}/{name}"
+        try:
+            try:
+                api.repo_info(repo_id=repo_id, repo_type="space", token=token)
+            except HfHubHTTPError as lookup_error:
+                if getattr(lookup_error.response, "status_code", None) != 404:
+                    raise
+                api.create_repo(
+                    repo_id=repo_id,
+                    repo_type="space",
+                    space_sdk="gradio",
+                    space_hardware="zero-a10g",
+                    private=True,
+                    token=token,
+                )
+            api.upload_folder(
+                repo_id=repo_id,
+                repo_type="space",
+                folder_path=source,
+                allow_patterns=[*required],
+                commit_message="Deploy Prumo Google Modo IA",
+                token=token,
+            )
+            runtime = api.get_space_runtime(repo_id, token=token)
+        except HfHubHTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            raise OpsError(f"Hugging Face recusou {repo_id} (HTTP {status or 'desconhecido'}).") from exc
+        deployed.append({
+            "id": repo_id,
+            "stage": getattr(runtime, "stage", None),
+            "hardware": getattr(runtime, "hardware", None),
+            "requested_hardware": getattr(runtime, "requested_hardware", None),
+        })
+    emit({"account": account, "deployed": deployed, "token_exposed": False})
+
 
 def modal_run(
     store: SecretStore,
@@ -356,7 +471,7 @@ def modal_command(
             raise OpsError("Target Modal invalido.")
         modal_run(store, account, ["app", "rollover", app_name, "--strategy", "recreate"])
     elif action == "sync-hf-secret":
-        token = store.require("HUGGINGFACE_TOKEN")
+        token = hf_token(store, "primary")
         mode = hf_mode or "prefer"
         payload = {
             "HF_TOKEN": token,
@@ -365,7 +480,10 @@ def modal_command(
                 "ryanzinprot/navegador-headless-2"
             ),
             "PRUMO_HF_GOOGLE_AI_MODE": mode,
-            "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "60",
+            # Dois Spaces gratuitos atendem uma requisicao cada. Trinta
+            # segundos preservam os sucessos observados (maximo ~24 s) e
+            # desviam cedo a fila excedente para o egress Modal ja aquecido.
+            "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "30",
             "PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS": "180",
         }
         temporary_path: Path | None = None
@@ -560,21 +678,31 @@ def migrate_local(store: SecretStore) -> None:
                 values[f"{prefix}_TOKEN_ID"] = str(section["token_id"])
                 values[f"{prefix}_TOKEN_SECRET"] = str(section["token_secret"])
                 imported.append(f"modal:{profile}")
-    hf_token_file = Path.home() / "Downloads" / "hf_write_token.txt"
-    if hf_token_file.is_file():
+    hf_token_files = (
+        (Path.home() / "Downloads" / "hf_write_token.txt", "primary"),
+        (Path.home() / "Downloads" / "hf_write_token - 2.txt", "secondary"),
+    )
+    for hf_token_file, account in hf_token_files:
+        if not hf_token_file.is_file():
+            continue
         candidate = hf_token_file.read_text(encoding="utf-8-sig").strip()
-        if candidate:
-            try:
-                probe = requests.get(
-                    "https://huggingface.co/api/whoami-v2",
-                    headers={"Authorization": f"Bearer {candidate}"},
-                    timeout=30,
-                )
-            except requests.RequestException:
-                probe = None
-            if probe is not None and probe.ok:
+        if not candidate:
+            continue
+        try:
+            probe = requests.get(
+                "https://huggingface.co/api/whoami-v2",
+                headers={"Authorization": f"Bearer {candidate}"},
+                timeout=30,
+            )
+        except requests.RequestException:
+            probe = None
+        if probe is not None and probe.ok:
+            if account == "primary":
                 values["HUGGINGFACE_TOKEN"] = candidate
-                imported.append("huggingface:validated-download-token")
+                values["HUGGINGFACE_PRIMARY_TOKEN"] = candidate
+            else:
+                values["HUGGINGFACE_SECONDARY_TOKEN"] = candidate
+            imported.append(f"huggingface:{account}:validated-download-token")
     if not values:
         raise OpsError("Nenhuma credencial local conhecida foi encontrada.")
     store.set_many(values)
@@ -648,6 +776,12 @@ def build_parser() -> argparse.ArgumentParser:
     modal.add_argument("--target", choices=["iss", "portal"])
     modal.add_argument("--hf-mode", choices=["off", "prefer", "fallback"])
 
+    hf = sub.add_parser("hf", help="Hugging Face sem credenciais na linha de comando")
+    hf.add_argument("action", choices=["status", "deploy"])
+    hf.add_argument("--account", choices=sorted(HF_ACCOUNTS), default="primary")
+    hf.add_argument("--source-dir")
+    hf.add_argument("--space-name", action="append", dest="space_names")
+
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
     server.add_argument("action", choices=["status", "logs", "deploy"])
     server.add_argument("--apply", action="store_true")
@@ -673,6 +807,8 @@ def main(argv: list[str] | None = None) -> int:
             netlify_status(store) if args.action == "status" else netlify_deploy(store, args.apply)
         elif args.area == "modal":
             modal_command(store, args.action, args.account, args.target, args.hf_mode)
+        elif args.area == "hf":
+            hf_command(store, args.action, args.account, args.source_dir, args.space_names)
         elif args.area == "server":
             server_command(args.action, args.apply, args.lines)
         elif args.area == "app":

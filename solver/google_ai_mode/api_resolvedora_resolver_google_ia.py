@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import hashlib
 import importlib.util
 import io
@@ -49,7 +50,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v46-hf-pool-audit"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v47-fast-temporal"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -394,11 +395,10 @@ def _question_wants_trajectory_destination(question: str) -> bool:
 def _temporal_capture_plan(question: str) -> tuple[int, int]:
     """Retorna quantidade/intervalo cobrindo um ciclo sem onerar desafios estaticos."""
     if _question_needs_full_temporal_sequence(question):
-        # Comecamos a observar quando o desafio ja pode estar no meio da
-        # animacao. Uma janela de ~9,4 s cobre o ciclo observado sem manter o
-        # browser e o container ocupados por 25-30 s em cada etapa. O mapa de
-        # ocupacao agrega todos os quadros e continua gerando uma unica imagem.
-        return 48, 200
+        # Trinta quadros cobrem praticamente a mesma janela do plano antigo
+        # (8,7 s contra 9,4 s), mas cortam 37,5% da serializacao CDP, JPEGs e
+        # processamento. O mapa de ocupacao agrega a janela inteira.
+        return 30, 300
     return 4, 180
 
 
@@ -896,7 +896,7 @@ new Promise(async (resolve) => {{
         // movimento comprovado e diferenca relativa pequena.
         if (
           {max(2, frame_count)} > 16 &&
-          elapsed >= 10000 &&
+          elapsed >= 7000 &&
           movedEnough &&
           returnedNearStart
         ) {{
@@ -1088,6 +1088,56 @@ def _create_temporal_video(folder: Path, frame_paths: list[Path], interval_ms: i
         return completed.returncode == 0 and output.is_file() and output.stat().st_size > 0
     except Exception:
         return False
+
+
+_DEBUG_ARTIFACT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="portal-temporal-debug",
+)
+_DEBUG_ARTIFACT_SLOTS = threading.BoundedSemaphore(2)
+
+
+def _schedule_temporal_debug_artifacts(
+    folder: Path,
+    frame_paths: list[Path],
+    interval_ms: int,
+    *,
+    build_sequence: bool,
+    build_overlay: bool,
+) -> bool:
+    """Gera montagem/overlay/MP4 fora do caminho crítico, com fila limitada."""
+    if len(frame_paths) < 2 or not _DEBUG_ARTIFACT_SLOTS.acquire(blocking=False):
+        return False
+    stable_paths = [Path(path) for path in frame_paths]
+
+    def worker() -> None:
+        started = time.perf_counter()
+        status = {"sequence_created": False, "overlay_created": False, "video_created": False}
+        try:
+            if build_sequence:
+                status["sequence_created"] = bool(_build_motion_sequence(folder, stable_paths))
+            if build_overlay:
+                status["overlay_created"] = bool(_build_motion_overlay(folder, stable_paths))
+            status["video_created"] = _create_temporal_video(folder, stable_paths, interval_ms)
+            status["elapsed_seconds"] = round(time.perf_counter() - started, 4)
+            (folder / "debug-artifacts-status.json").write_text(
+                json.dumps(status, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            status.update({"error_type": type(exc).__name__, "elapsed_seconds": round(time.perf_counter() - started, 4)})
+            try:
+                (folder / "debug-artifacts-status.json").write_text(
+                    json.dumps(status, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+        finally:
+            _DEBUG_ARTIFACT_SLOTS.release()
+
+    _DEBUG_ARTIFACT_EXECUTOR.submit(worker)
+    return True
 
 
 def _capture_live_canvas_for_click(port: int, output_path: Path) -> dict[str, Any] | None:
@@ -2346,12 +2396,13 @@ def analyze_visual_with_google_ai(
         full_path = challenge_dir / "desafio-completo.png"
     if not full_path.is_file():
         full_path = image_path
+    full_temporal_question = _question_needs_full_temporal_sequence(captcha_question)
     sequence_path = challenge_dir / "sequencia-temporal.jpg"
     if not sequence_path.is_file():
         sequence_path = challenge_dir / "sequencia-temporal.png"
     occupancy_path = challenge_dir / "evidencia-permanencia-temporal.jpg"
     overlay_path = challenge_dir / "desafio-temporal-sobreposto.jpg"
-    if not overlay_path.is_file():
+    if not full_temporal_question and not overlay_path.is_file():
         overlay_path = _build_motion_overlay(
             challenge_dir,
             sorted(challenge_dir.glob("quadro-[0-9][0-9].jpg")),
@@ -2368,12 +2419,8 @@ def analyze_visual_with_google_ai(
         temporal_span_ms = max(0, frame_count - 1) * int(capture_info.get("interval_ms") or 0)
     except Exception:
         capture_info = {}
-    full_temporal_sequence = (
-        _question_needs_full_temporal_sequence(captcha_question)
-        and sequence_path.is_file()
-        and frame_count >= 6
-    )
-    has_temporal_artifacts = sequence_path.is_file() or overlay_path.is_file()
+    full_temporal_sequence = full_temporal_question and occupancy_path.is_file() and frame_count >= 6
+    has_temporal_artifacts = sequence_path.is_file() or overlay_path.is_file() or occupancy_path.is_file()
     tracked_centers = _motion_centers(challenge_dir) if has_temporal_artifacts else []
     displacement = 0.0
     if len(tracked_centers) >= 3:
@@ -2765,17 +2812,29 @@ def _save_and_analyze_visual_fast(
             return None
         # A montagem temporal usa somente a area clicavel. O canvas completo
         # inclui uma faixa superior vazia/referencia e desperdicava resolucao.
-        _build_motion_sequence(folder, frame_paths)
-        _build_motion_overlay(folder, frame_paths)
-        _build_temporal_occupancy_board(folder, frame_paths)
-    video_created = _create_temporal_video(folder, frame_paths, capture_interval_ms)
+        full_temporal = _question_needs_full_temporal_sequence(prompt_text)
+        occupancy_started = time.perf_counter()
+        if full_temporal:
+            _build_temporal_occupancy_board(folder, frame_paths)
+        occupancy_seconds = time.perf_counter() - occupancy_started
+        debug_scheduled = _schedule_temporal_debug_artifacts(
+            folder,
+            frame_paths,
+            capture_interval_ms,
+            build_sequence=True,
+            build_overlay=not full_temporal,
+        )
+    else:
+        occupancy_seconds = 0.0
+        debug_scheduled = False
     capture_seconds = time.perf_counter() - capture_started
     legacy.audit_event(
         "capture_finished",
         elapsed_seconds=round(capture_seconds, 4),
         captured=bool(captured),
         frame_count=len(frame_paths),
-        video_created=video_created,
+        video_created=False,
+        debug_artifacts_scheduled=debug_scheduled,
     )
     (folder / "timing.json").write_text(
         json.dumps(
@@ -2793,7 +2852,9 @@ def _save_and_analyze_visual_fast(
                 ),
                 "overlay_created": (folder / "desafio-temporal-sobreposto.jpg").is_file(),
                 "occupancy_created": (folder / "evidencia-permanencia-temporal.jpg").is_file(),
-                "video_created": video_created,
+                "occupancy_seconds": round(occupancy_seconds, 4),
+                "debug_artifacts_scheduled": debug_scheduled,
+                "video_created": False,
             },
             ensure_ascii=False,
             indent=2,

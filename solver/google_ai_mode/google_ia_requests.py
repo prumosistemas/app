@@ -1638,6 +1638,12 @@ def query_google_ai(
     if attempts < 1:
         raise ValueError("attempts deve ser pelo menos 1")
 
+    # CountingSession e reutilizada entre etapas; exponha somente o custo da
+    # consulta atual, nao o contador acumulado desde que o Space subiu.
+    http_requests_before = (
+        int(_SESSION_CACHE[0].http_requests) if _SESSION_CACHE is not None else 0
+    )
+
     user_agent = DEFAULT_USER_AGENT
     used_recovery_sources: set[str] = set()
     if _SESSION_CACHE is not None:
@@ -1751,7 +1757,7 @@ def query_google_ai(
             _SESSION_CACHE = (session, user_agent, session_source)
             return QueryResult(
                 answer=answer,
-                http_requests=session.http_requests,
+                http_requests=max(0, session.http_requests - http_requests_before),
                 ai_queries=ai_queries,
                 sources=extract_sources(response.text),
                 image=str(image) if image is not None else None,

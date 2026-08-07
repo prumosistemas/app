@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.75.
+Este documento e a fonte de contexto operacional da versao 1.0.76.
 
 ## Estado desejado
 
@@ -17,6 +17,8 @@ Este documento e a fonte de contexto operacional da versao 1.0.75.
 - Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
 - GitHub, pasta local e servidor na mesma versao.
 - Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
+- A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
+- A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
 
 ## Onde fica cada coisa

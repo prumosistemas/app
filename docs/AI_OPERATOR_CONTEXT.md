@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.75**
+Versao do app: **1.0.76**
 Atualizado em: **2026-08-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -28,6 +28,10 @@ O cofre fica em
 `%LOCALAPPDATA%\Prumo\operator-secrets.dpapi.json`, fora do Git. Os valores so
 podem ser abertos pelo mesmo usuario do Windows. `secrets status` mostra nomes,
 nunca valores.
+
+Os tokens HF usam `HUGGINGFACE_PRIMARY_TOKEN` e
+`HUGGINGFACE_SECONDARY_TOKEN`. A conta secundaria ainda nao possui compute;
+consulte `docs/HUGGINGFACE_CONTEXT.md`. Tokens nunca ficam fisicamente no Git.
 
 ## Ordem de leitura
 
@@ -57,7 +61,7 @@ permanece até o administrador reativar explicitamente o colaborador.
 | ThinkPad | API `prumo-api`, dados em `/opt/prumo/data`, codigo em `/home/server/prumo-src` | `server/`, `deploy/docker-compose.yml` |
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
 | Modal fallback | segundo solver Google Modo IA, escala a zero quando ocioso | mesmo arquivo de deploy do Portal |
-| Hugging Face | Dois Spaces privados formam o primeiro pool de egress somente para análise visual do captcha | `solver/google_ai_mode/hf_google_ai_provider.py` |
+| Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `solver/google_ai_mode/hf_google_ai_provider.py`, `docs/HUGGINGFACE_CONTEXT.md` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker
@@ -114,6 +118,8 @@ python -m ops.prumo_ops status
 python -m ops.prumo_ops cloudflare status
 python -m ops.prumo_ops modal status --account primary
 python -m ops.prumo_ops modal status --account fallback
+python -m ops.prumo_ops hf status --account primary
+python -m ops.prumo_ops hf status --account secondary
 python -m ops.prumo_ops server status
 python -m ops.prumo_ops app login-smoke --alias master
 ```

@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.75
+Versao: 1.0.76
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -12,7 +12,7 @@ A Prumo roda em cinco partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
-5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback.
+5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback. A segunda conta HF esta protegida no cofre, mas ainda sem compute por inelegibilidade ZeroGPU da conta nova.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -157,6 +157,8 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
 - Volume privado: `prumo-portal-google-ai-state`.
 - Rota de navegador: direta, sem proxy. Na análise visual, ambas as contas tentam o pool privado `ryanzinprot/navegador-headless` e `ryanzinprot/navegador-headless-2`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
+- O timeout HF e 30 s: com quatro workers e dois Spaces serializados, fila excedente usa cedo o egress Modal aquecido.
+- A conta HF secundaria `jorjoinho` esta no cofre, mas a API recusou novos Spaces ZeroGPU com HTTP 402 em 2026-08-07. Veja `docs/HUGGINGFACE_CONTEXT.md`.
 
 Deploy seguro das duas contas, sem trocar perfil global:
 
