@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ SUMMARY_NAMES = {
     "resposta-google-ia.json", "classificacao-desafio.json", "timing.json",
     "validacao-antes-clique.json", "overlay-browser.json", "canvas-info.json",
     "estado-dom.json", "antes-captura-dom.json", "capturado-dom.json",
+    "video-origin.json",
 }
 SAFE_MEDIA_SUFFIXES = {".json", ".jsonl", ".jpg", ".jpeg", ".png", ".webp", ".mp4"}
 
@@ -63,7 +65,81 @@ def _safe_relative(remote_path: str) -> Path:
 
 def _wanted_summary(remote_path: str) -> bool:
     name = PurePosixPath(remote_path).name
-    return name in SUMMARY_NAMES
+    return name in SUMMARY_NAMES or bool(re.fullmatch(r"quadro-\d{2,3}\.(?:jpg|png)", name))
+
+
+def _create_local_video(folder: Path) -> bool:
+    """Monta o MP4 no ThinkPad, fora do caminho critico do solver Modal."""
+    target = folder / "captura-temporal.mp4"
+    if target.is_file() and target.stat().st_size > 0:
+        return False
+    frames = sorted(folder.glob("quadro-[0-9][0-9].jpg"))
+    if len(frames) < 2:
+        return False
+    temporary = folder / "captura-temporal.local.mp4"
+    try:
+        import cv2
+
+        first = cv2.imread(str(frames[0]))
+        if first is None:
+            return False
+        height, width = first.shape[:2]
+        interval_ms = 300
+        try:
+            info = json.loads((folder / "canvas-info.json").read_text(encoding="utf-8"))
+            interval_ms = max(1, int(info.get("interval_ms") or interval_ms))
+        except (OSError, ValueError, TypeError):
+            pass
+        writer = cv2.VideoWriter(
+            str(temporary),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            max(2.0, min(12.0, 1000.0 / interval_ms)),
+            (width, height),
+        )
+        if not writer.isOpened():
+            return False
+        try:
+            for path in frames:
+                frame = cv2.imread(str(path))
+                if frame is None:
+                    continue
+                if frame.shape[1] != width or frame.shape[0] != height:
+                    frame = cv2.resize(frame, (width, height))
+                writer.write(frame)
+        finally:
+            writer.release()
+        if not temporary.is_file() or temporary.stat().st_size <= 0:
+            temporary.unlink(missing_ok=True)
+            return False
+        os.replace(temporary, target)
+        _write_json_atomic(folder / "video-origin.json", {
+            "created_on": "thinkpad",
+            "frame_count": len(frames),
+            "interval_ms": interval_ms,
+            "foreground_solver_cpu_used": False,
+        })
+        return True
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        return False
+
+
+def _build_missing_local_videos(root: Path, limit: int = 4) -> int:
+    challenge_root = root / "desafios" / "unificados"
+    if not challenge_root.is_dir():
+        return 0
+    folders = sorted(
+        (path for path in challenge_root.iterdir() if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    created = 0
+    for folder in folders:
+        if created >= max(1, limit):
+            break
+        if _create_local_video(folder):
+            created += 1
+    return created
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -141,6 +217,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
 
     downloaded = sum(await asyncio.gather(*(transfer(entry) for entry in candidates)))
 
+    videos_created = _build_missing_local_videos(target_root)
     _write_json_atomic(target_root / "manifest.json", manifest)
     return {
         "ok": True,
@@ -148,6 +225,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
         "downloaded": downloaded,
         "challenge_dirs_seen": len(challenge_entries),
         "summary_candidates": len(candidates),
+        "videos_created": videos_created,
     }
 
 

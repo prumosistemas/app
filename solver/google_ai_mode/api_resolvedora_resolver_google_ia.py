@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import concurrent.futures
 import hashlib
 import importlib.util
 import io
@@ -50,7 +49,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v49-low-contention-audit"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v50-server-side-video"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -1064,82 +1063,6 @@ def _save_grid_click_map(image_path: Path, selected: list[int], challenge_dir: P
         canvas.save(challenge_dir / "cliques-planejados.jpg", quality=92)
     except Exception as exc:
         legacy.audit_event("click_map_failed", error_type=type(exc).__name__)
-
-
-def _create_temporal_video(folder: Path, frame_paths: list[Path], interval_ms: int) -> bool:
-    """Gera um MP4 leve para auditoria sem interferir na resolução."""
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg or len(frame_paths) < 2:
-        return False
-    output = folder / "captura-temporal.mp4"
-    fps = max(2.0, min(12.0, 1000.0 / max(1, interval_ms)))
-    try:
-        completed = subprocess.run(
-            [
-                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-framerate", f"{fps:.3f}", "-start_number", "1",
-                "-i", str(folder / "quadro-%02d.jpg"),
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
-                "-threads", "1",
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
-            ],
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-        return completed.returncode == 0 and output.is_file() and output.stat().st_size > 0
-    except Exception:
-        return False
-
-
-_DEBUG_ARTIFACT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=1,
-    thread_name_prefix="portal-temporal-debug",
-)
-_DEBUG_ARTIFACT_SLOTS = threading.BoundedSemaphore(2)
-
-
-def _schedule_temporal_debug_artifacts(
-    folder: Path,
-    frame_paths: list[Path],
-    interval_ms: int,
-    *,
-    build_sequence: bool,
-    build_overlay: bool,
-) -> bool:
-    """Gera montagem/overlay/MP4 fora do caminho crítico, com fila limitada."""
-    if len(frame_paths) < 2 or not _DEBUG_ARTIFACT_SLOTS.acquire(blocking=False):
-        return False
-    stable_paths = [Path(path) for path in frame_paths]
-
-    def worker() -> None:
-        started = time.perf_counter()
-        status = {"sequence_created": False, "overlay_created": False, "video_created": False}
-        try:
-            if build_sequence:
-                status["sequence_created"] = bool(_build_motion_sequence(folder, stable_paths))
-            if build_overlay:
-                status["overlay_created"] = bool(_build_motion_overlay(folder, stable_paths))
-            status["video_created"] = _create_temporal_video(folder, stable_paths, interval_ms)
-            status["elapsed_seconds"] = round(time.perf_counter() - started, 4)
-            (folder / "debug-artifacts-status.json").write_text(
-                json.dumps(status, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            status.update({"error_type": type(exc).__name__, "elapsed_seconds": round(time.perf_counter() - started, 4)})
-            try:
-                (folder / "debug-artifacts-status.json").write_text(
-                    json.dumps(status, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-        finally:
-            _DEBUG_ARTIFACT_SLOTS.release()
-
-    _DEBUG_ARTIFACT_EXECUTOR.submit(worker)
-    return True
 
 
 def _capture_live_canvas_for_click(port: int, output_path: Path) -> dict[str, Any] | None:
@@ -2819,17 +2742,10 @@ def _save_and_analyze_visual_fast(
         if full_temporal:
             _build_temporal_occupancy_board(folder, frame_paths)
         occupancy_seconds = time.perf_counter() - occupancy_started
-        debug_scheduled = _schedule_temporal_debug_artifacts(
-            folder,
-            frame_paths,
-            capture_interval_ms,
-            # Os quadros e a evidencia de ocupacao ja preservam a auditoria.
-            # Montagem/overlay duplicavam o mesmo material e disputavam CPU
-            # com a etapa seguinte do hCaptcha. Mantemos o MP4 em uma unica
-            # thread, fora do caminho critico.
-            build_sequence=False,
-            build_overlay=False,
-        )
+        # Os quadros e a evidencia de ocupacao sao publicados no Volume Modal.
+        # O ThinkPad monta o MP4 depois do espelhamento: nenhuma codificacao de
+        # auditoria compete com o proximo quadro do hCaptcha.
+        debug_scheduled = False
     else:
         occupancy_seconds = 0.0
         debug_scheduled = False

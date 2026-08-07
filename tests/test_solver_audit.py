@@ -12,6 +12,12 @@ if str(SERVER) not in sys.path:
 import solver_audit
 
 
+def test_solver_audit_mirrors_temporal_frames_without_unrelated_files() -> None:
+    assert solver_audit._wanted_summary("/desafios/unificados/x/quadro-01.jpg")
+    assert solver_audit._wanted_summary("/desafios/unificados/x/quadro-120.png")
+    assert not solver_audit._wanted_summary("/desafios/unificados/x/certificado.pfx")
+
+
 def test_solver_audit_summarizes_route_clicks_and_unusual(monkeypatch, tmp_path: Path) -> None:
     root = tmp_path / "thinkpad"
     audit = root / "auditoria" / "2026-08-07" / "req-1.jsonl"
