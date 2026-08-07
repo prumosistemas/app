@@ -482,7 +482,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "Prumo API",
-        "version": "1.0.73",
+        "version": "1.0.75",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
