@@ -89,7 +89,7 @@ huggingface_secrets = [modal.Secret.from_name("prumo-huggingface")]
 
 image = (
     modal.Image.from_registry(BROWSERLESS_IMAGE, add_python="3.11")
-    .apt_install("ca-certificates", "curl", "socat", "xvfb")
+    .apt_install("ca-certificates", "curl", "ffmpeg", "socat", "xvfb")
     .run_commands(
         "curl -fsSL "
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 "
@@ -418,6 +418,7 @@ def proxy_probe() -> str:
         # Literal POSIX: o deploy tambem roda no Windows e str(Path('/...'))
         # pode virar uma raiz com barra invertida fora do Volume montado.
         "GOOGLE_AI_ARTIFACT_ROOT": "/solver-artifacts",
+        "PRUMO_SOLVER_LOCATION": os.environ.get("PRUMO_SOLVER_LOCATION", "modal"),
         "GOOGLE_CHROME_BIN": "/usr/local/bin/google-chrome-prumo",
         "MODO_IA_DETECTOR_PROJECT": "/app/detector",
         "HOST": "0.0.0.0",

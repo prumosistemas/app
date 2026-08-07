@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.74 - rota hibrida Hugging Face para o Modo IA**
+Versao: **1.0.75 - pool Hugging Face e auditoria visual persistente**
 
 ## Estado atual
 
@@ -9,7 +9,8 @@ Versao: **1.0.74 - rota hibrida Hugging Face para o Modo IA**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com um Space privado Hugging Face como egress visual adicional e ThinkPad como último fallback; sem Florence/Cohere. A conta principal prefere HF e volta ao egress Modal se o Space falhar; a conta reserva faz a ordem inversa.
+- Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere.
+- A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; os frames brutos permanecem somente nos Volumes Modal.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
@@ -40,7 +41,7 @@ Versao: **1.0.74 - rota hibrida Hugging Face para o Modo IA**
 
 O unico resolvedor visual ativo e o Google Modo IA do projeto organizado. O
 navegador do hCaptcha continua no Modal; somente a imagem efemera do desafio e
-o prompt podem seguir ao Space privado Hugging Face. Certificado, cookies do
+o prompt podem seguir aos Spaces privados Hugging Face. Certificado, cookies do
 Portal e arquivos fiscais nunca saem do ThinkPad. O código validado está
 versionado em `solver/google_ai_mode/`.
 
@@ -81,9 +82,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.73 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.75 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.73
+docker push ryang20/prumo-api:1.0.75
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

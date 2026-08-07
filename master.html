@@ -84,6 +84,10 @@
     .metrics-toolbar select { width:auto; min-width:160px; }
     .infra-events { display:grid; gap:7px; max-height:280px; overflow:auto; }
     .infra-event { padding:8px 10px; border-left:3px solid var(--red); background:#fff7f7; color:#7f1d1d; font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
+    .audit-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; margin-top:10px; }
+    .audit-media { border:1px solid var(--border); border-radius:7px; padding:8px; background:var(--panel2); min-width:0; }
+    .audit-media img,.audit-media video { width:100%; max-height:360px; object-fit:contain; background:#111; border-radius:5px; }
+    .audit-json { max-height:280px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.45 var(--mono); }
     .hidden { display:none !important; }
     @media (max-width:900px) { .app { display:block; } aside { height:auto; position:static; } nav { display:flex; overflow:auto; } .grid.two,.grid.three,.form-row,.metric-grid,.modal-accounts,.modal-account .metric-grid { grid-template-columns:1fr; } main { padding:16px; } }
   </style>
@@ -175,6 +179,7 @@
           </label>
         </div>
         <div class="card"><div class="card-head"><h3>Contas Modal</h3><button id="btnReloadModalBilling" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="modalBillingBox" aria-live="polite"><span class="small">Carregando contas...</span></div></div>
+        <div class="card"><div class="card-head"><h3>Auditoria do resolvedor</h3><button id="btnReloadSolverAudit" class="secondary" type="button">Recarregar</button></div><div class="card-body" id="solverAuditBox" aria-live="polite"><span class="small">Carregando execuções...</span></div></div>
         <div id="metricCards" class="metric-grid"></div>
         <div class="grid two">
           <div class="card"><div class="card-head"><h3>CPU e memória</h3></div><div class="chart-wrap"><canvas id="resourcesChart"></canvas></div></div>
@@ -200,6 +205,8 @@ let resourcesChart = null;
 let runtimeChart = null;
 let metricsTimer = null;
 let companiesCache = [];
+let solverAuditsCache = [];
+let solverAuditObjectUrls = [];
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 function ts(value){ if(value === null || value === undefined || value === "") return "Nunca"; const n=Number(value); const d=Number.isFinite(n)?new Date(n*1000):new Date(value); return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}); }
@@ -226,7 +233,7 @@ function switchSection(id){
   $("pageTitle").textContent={overviewSection:"Visão geral",companiesSection:"Empresas",billingSection:"Pagamentos",logsSection:"Logs"}[id] || "Master";
   if(id==="companiesSection") loadCompanies();
   if(id==="billingSection"){ loadBilling(); }
-  if(id==="logsSection"){ loadLogs(); loadModalBilling(); loadMetrics(); startMetricsPolling(); }
+  if(id==="logsSection"){ loadLogs(); loadModalBilling(); loadSolverAudit(); loadMetrics(); startMetricsPolling(); }
   else { stopMetricsPolling(); }
 }
 async function loadSession(){
@@ -361,6 +368,49 @@ async function loadLogs(){
     $("logsTable").innerHTML=`<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Ator</th><th>Ação</th><th>Mensagem</th><th>IP</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${esc(ts(row.created_at))}</td><td>${esc(row.company_name||"-")}</td><td>${esc(row.actor_email||"-")}</td><td><code>${esc(row.action||"")}</code></td><td>${esc(row.message||"")}</td><td>${esc(row.ip||"")}</td></tr>`).join("")}</tbody></table></div>`;
   } catch(err){ message("err",err.message); }
 }
+async function auditBlob(path){
+  const headers=new Headers();
+  if(csrf) headers.set("X-CSRF-Token",csrf);
+  if(sessionToken) headers.set("Authorization","Bearer "+sessionToken);
+  const res=await fetch(API+path,{credentials:"include",headers});
+  if(res.status===401||res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
+  if(!res.ok) throw new Error("Não foi possível abrir o artefato.");
+  return await res.blob();
+}
+function auditRoute(row){ return (row.route_successes||[]).at(-1) || (row.route_attempts||[]).at(-1) || "sem rota"; }
+async function loadSolverAudit(){
+  const box=$("solverAuditBox"); if(!box) return;
+  box.innerHTML="<span class='small'>Sincronizando resumos do Modal e ThinkPad...</span>";
+  try{
+    const data=await api("/api/master/solver-audit?limit=60");
+    solverAuditsCache=data.audits||[];
+    const sync=data.sync||{};
+    const syncText=sync.updated_at?`Última sincronização: ${esc(ts(sync.updated_at))} · ${Number(sync.elapsed_seconds||0).toFixed(1)}s`:`Sincronização: ${esc(sync.error||"iniciando")}`;
+    if(!solverAuditsCache.length){ box.innerHTML=`<div class="notice info">Ainda não há auditoria espelhada.<br><span class="small">${syncText}</span></div>`; return; }
+    box.innerHTML=`<div class="small" style="margin-bottom:10px">${syncText}</div><div class="table-wrap"><table><thead><tr><th>Início</th><th>Local</th><th>Resultado</th><th>Rota visual</th><th>Tempo</th><th>Navegadores</th><th>Ações</th></tr></thead><tbody>${solverAuditsCache.map((row,index)=>`<tr><td>${esc(ts(row.started_at))}<br><code>${esc(row.request_id)}</code></td><td>${esc(row.location||row.source)}</td><td><span class="pill ${row.success===true?"ok":row.success===false?"bad":"warn"}">${row.success===true?"Resolvido":row.success===false?"Falhou":"Em andamento"}</span>${row.unusual_traffic?` <span class="pill bad">unusual</span>`:""}<br><span class="small">${esc(row.reason||"")}</span></td><td><code>${esc(auditRoute(row))}</code><br><span class="small">${Number(row.provider_failures||0)} falha(s)</span></td><td>${Number(row.duration_seconds||0).toFixed(1)}s</td><td>${Number(row.peak_active_browsers||0)} / ${Number(row.max_browsers||0)}</td><td><button class="secondary" data-audit-open="${index}">Ver evidências (${(row.artifacts||[]).length})</button></td></tr>`).join("")}</tbody></table></div><div id="solverAuditDetail"></div>`;
+    box.querySelectorAll("[data-audit-open]").forEach(button=>button.onclick=()=>openSolverAudit(Number(button.dataset.auditOpen)));
+  }catch(err){ box.innerHTML=`<div class="notice err">${esc(err.message)}</div>`; }
+}
+async function openSolverAudit(index){
+  const row=solverAuditsCache[index]; const target=$("solverAuditDetail"); if(!row||!target) return;
+  solverAuditObjectUrls.forEach(URL.revokeObjectURL); solverAuditObjectUrls=[];
+  target.innerHTML="<div class='notice info' style='margin-top:10px'>Carregando imagens e vídeo...</div>";
+  const rendered=[];
+  for(const artifact of (row.artifacts||[])){
+    try{
+      const query=`/api/master/solver-audit/file?source=${encodeURIComponent(row.source)}&path=${encodeURIComponent(artifact.path)}`;
+      const blob=await auditBlob(query);
+      if(artifact.kind==="json"){
+        const text=await blob.text(); rendered.push(`<div class="audit-media"><b>${esc(artifact.name)}</b><pre class="audit-json">${esc(text)}</pre></div>`);
+      }else{
+        const url=URL.createObjectURL(blob); solverAuditObjectUrls.push(url);
+        rendered.push(`<div class="audit-media"><b>${esc(artifact.name)}</b>${artifact.kind==="video"?`<video controls preload="metadata" src="${url}"></video>`:`<img loading="lazy" src="${url}" alt="${esc(artifact.name)}">`}</div>`);
+      }
+    }catch(_){ rendered.push(`<div class="audit-media"><b>${esc(artifact.name)}</b><div class="small">Não disponível no espelho.</div></div>`); }
+  }
+  const timeline=(row.timeline||[]).map(event=>`<div><code>${esc(event.timestamp||"")} · ${esc(event.event||"")}</code> ${esc(JSON.stringify(Object.fromEntries(Object.entries(event).filter(([key])=>!["timestamp","event","request_id"].includes(key)))))}</div>`).join("");
+  target.innerHTML=`<details open style="margin-top:12px"><summary><b>${esc(row.request_id)}</b> · cliques ${(row.clicks||[]).length} · trocas ${(row.refreshes||[]).length}</summary><div class="audit-gallery">${rendered.join("")||"<span class='small'>Sem mídia resumida.</span>"}</div><details style="margin-top:10px"><summary>Linha do tempo técnica</summary><div class="audit-json">${timeline}</div></details></details>`;
+}
 function metricValue(value,suffix=""){ const number=Number(value||0); return `${number.toFixed(number>=10?0:1)}${suffix}`; }
 function renderMetricCards(latest){
   const host=latest.host || {}; const runtime=latest.runtime || {}; const queue=runtime.queue || {}; const containers=latest.containers || {};
@@ -426,6 +476,7 @@ $("metricsRange").onchange=loadMetrics;
 $("billingCompanySelect")?.addEventListener("change",()=>{ loadBilling().catch(err=>message("err",err.message)); });
 $("btnReloadBilling")?.addEventListener("click",()=>loadBilling().catch(err=>message("err",err.message)));
 $("btnReloadModalBilling")?.addEventListener("click",()=>loadModalBilling().catch(err=>message("err",err.message)));
+$("btnReloadSolverAudit")?.addEventListener("click",()=>loadSolverAudit().catch(err=>message("err",err.message)));
 $("billingSettingsForm")?.addEventListener("submit",async event=>{
   event.preventDefault();
   try{

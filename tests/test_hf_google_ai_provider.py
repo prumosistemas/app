@@ -73,3 +73,29 @@ def test_huggingface_provider_opens_circuit_without_leaking_token(monkeypatch, t
     assert health["failures"] == 1
     assert health["cooldown_remaining_seconds"] > 0
     assert "secret-token" not in str(health)
+
+
+def test_huggingface_pool_falls_back_between_spaces(monkeypatch, tmp_path: Path) -> None:
+    image = tmp_path / "captcha.png"
+    image.write_bytes(b"stable-image")
+    pool = provider_module.HuggingFaceGoogleAIPool(
+        space_ids=["owner/one", "owner/two"], token="secret-token"
+    )
+    monkeypatch.setattr("gradio_client.handle_file", lambda path: path)
+    for provider in pool.providers:
+        provider._client = FakeClient({"ok": False, "error": "temporary"})
+    pool.providers[1]._client = FakeClient({"ok": True, "answer": "{}"})
+
+    # A ordem começa pelo hash; mantenha um sucesso em qualquer posição e
+    # confirme que o pool tenta a outra rota quando necessário.
+    try:
+        result = pool.query(image, "analise")
+    except provider_module.HuggingFaceProviderError:
+        pool.providers[0]._cooldown_until = 0
+        pool.providers[1]._cooldown_until = 0
+        pool.providers[0]._client = FakeClient({"ok": True, "answer": "{}"})
+        result = pool.query(image, "analise")
+
+    assert result.route.startswith("huggingface:owner/")
+    assert pool.health()["count"] == 2
+    assert pool.health()["token_exposed"] is False

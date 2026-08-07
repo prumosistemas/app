@@ -338,6 +338,7 @@ def modal_command(
                 if account == "primary"
                 else {"PORTAL_MODAL_MIN_CONTAINERS": "0", "PORTAL_MODAL_BUFFER_CONTAINERS": "0"}
             )
+            sizing["PRUMO_SOLVER_LOCATION"] = f"modal_{account}"
             modal_run(store, account, ["deploy", "deploy/modal_portal_nacional_google_solver.py"], sizing)
         else:
             raise OpsError("Target Modal invalido.")
@@ -356,12 +357,15 @@ def modal_command(
         modal_run(store, account, ["app", "rollover", app_name, "--strategy", "recreate"])
     elif action == "sync-hf-secret":
         token = store.require("HUGGINGFACE_TOKEN")
-        mode = hf_mode or ("prefer" if account == "primary" else "fallback")
+        mode = hf_mode or "prefer"
         payload = {
             "HF_TOKEN": token,
-            "PRUMO_HF_GOOGLE_AI_SPACE": "ryanzinprot/navegador-headless",
+            "PRUMO_HF_GOOGLE_AI_SPACES": (
+                "ryanzinprot/navegador-headless,"
+                "ryanzinprot/navegador-headless-2"
+            ),
             "PRUMO_HF_GOOGLE_AI_MODE": mode,
-            "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "75",
+            "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "60",
             "PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS": "180",
         }
         temporary_path: Path | None = None

@@ -7,6 +7,7 @@ do Hugging Face vem do ambiente do processo e nunca aparece em logs/health.
 from __future__ import annotations
 
 import re
+import hashlib
 import threading
 import time
 from dataclasses import dataclass
@@ -140,5 +141,60 @@ class HuggingFaceGoogleAIProvider:
             "successes": self._successes,
             "failures": self._failures,
             "last_error": self._last_error,
+            "token_exposed": False,
+        }
+
+
+class HuggingFaceGoogleAIPool:
+    """Distribui imagens entre Spaces e mantém circuito separado por Space."""
+
+    def __init__(
+        self,
+        *,
+        space_ids: list[str],
+        token: str,
+        timeout_seconds: float = 60.0,
+        cooldown_seconds: float = 180.0,
+        api_name: str = "/test_google_ai",
+    ) -> None:
+        unique = list(dict.fromkeys(str(item or "").strip() for item in space_ids if str(item or "").strip()))
+        self.providers = [
+            HuggingFaceGoogleAIProvider(
+                space_id=space_id,
+                token=token,
+                timeout_seconds=timeout_seconds,
+                cooldown_seconds=cooldown_seconds,
+                api_name=api_name,
+            )
+            for space_id in unique
+        ]
+
+    @property
+    def configured(self) -> bool:
+        return any(provider.configured for provider in self.providers)
+
+    def query(self, image_path: str | Path, prompt: str) -> HuggingFaceGoogleAIResult:
+        configured = [provider for provider in self.providers if provider.configured]
+        if not configured:
+            raise HuggingFaceProviderError("huggingface_pool_not_configured")
+        image = Path(image_path)
+        digest = hashlib.sha256(image.read_bytes()).digest()
+        offset = int.from_bytes(digest[:4], "big") % len(configured)
+        ordered = configured[offset:] + configured[:offset]
+        errors: list[str] = []
+        for provider in ordered:
+            try:
+                result = provider.query(image, prompt)
+                result.route = f"huggingface:{provider.space_id}"
+                return result
+            except HuggingFaceProviderError as exc:
+                errors.append(f"{provider.space_id}:{_safe_error(exc, provider.token)}")
+        raise HuggingFaceProviderError("huggingface_pool_failed:" + " | ".join(errors))
+
+    def health(self) -> dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "spaces": [provider.health() for provider in self.providers],
+            "count": len(self.providers),
             "token_exposed": False,
         }

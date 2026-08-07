@@ -120,17 +120,23 @@ from run_queue import (
     startup_queue_workers,
 )
 from portal_nacional import router as portal_nacional_router
+from solver_audit import (
+    list_solver_audits,
+    resolve_audit_file,
+    start_solver_audit_sync,
+)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await startup_queue_workers()
+    start_solver_audit_sync()
     yield
 
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.73",
+    version="1.0.75",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
     lifespan=lifespan,
 )
@@ -1724,6 +1730,33 @@ async def admin_modal_billing(ctx: WorkerContext = Depends(get_worker_context)) 
     if ctx.user_role != "master":
         raise HTTPException(status_code=403, detail="Permissão negada.")
     return await asyncio.to_thread(_modal_billing_snapshot)
+
+
+@app.get("/api/admin/solver-audit")
+async def admin_solver_audit(
+    limit: int = Query(default=40, ge=1, le=200),
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> Dict[str, Any]:
+    if ctx.user_role != "master":
+        raise HTTPException(status_code=403, detail="Permissão negada.")
+    return await asyncio.to_thread(list_solver_audits, limit)
+
+
+@app.get("/api/admin/solver-audit/file")
+async def admin_solver_audit_file(
+    source: str = Query(...),
+    path: str = Query(...),
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> FileResponse:
+    if ctx.user_role != "master":
+        raise HTTPException(status_code=403, detail="Permissão negada.")
+    try:
+        target = await asyncio.to_thread(resolve_audit_file, source, path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Caminho de auditoria inválido.")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado.")
+    return FileResponse(target, filename=target.name)
 
 
 @app.get("/api/internal/runtime-metrics")

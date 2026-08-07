@@ -97,6 +97,64 @@ MAX_SOLVE_SECONDS = 180
 SERVER_INSTANCE = None
 SOLVER_WIDGET_SITEKEYS: dict[int, str] = {}
 SOLVER_WIDGET_LOCK = threading.Lock()
+AUDIT_CONTEXT = threading.local()
+AUDIT_WRITE_LOCK = threading.Lock()
+
+
+def _audit_request_id(value: str) -> str:
+    return "".join(character if character.isalnum() or character in "-_." else "-" for character in str(value or ""))[-180:] or "request"
+
+
+def audit_begin(request_id: str) -> None:
+    AUDIT_CONTEXT.request_id = _audit_request_id(request_id)
+    AUDIT_CONTEXT.started_monotonic = time.monotonic()
+
+
+def audit_end() -> None:
+    for name in ("request_id", "started_monotonic"):
+        try:
+            delattr(AUDIT_CONTEXT, name)
+        except AttributeError:
+            pass
+
+
+def audit_event(event: str, **fields) -> None:
+    """Registra linha do tempo sem sitekey, token ou conteudo fiscal."""
+    request_id = getattr(AUDIT_CONTEXT, "request_id", None)
+    if not request_id:
+        return
+    started = float(getattr(AUDIT_CONTEXT, "started_monotonic", time.monotonic()))
+    with ACTIVE_LOCK:
+        active = ACTIVE_SOLVERS
+    payload = {
+        "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "elapsed_seconds": round(max(0.0, time.monotonic() - started), 4),
+        "event": str(event or "event")[:80],
+        "request_id": request_id,
+        "location": os.environ.get("PRUMO_SOLVER_LOCATION", "unknown")[:80],
+        "active_browsers": active,
+        "max_browsers": MAX_BROWSERS,
+    }
+    for key, value in fields.items():
+        if key.lower() in {"token", "sitekey", "password", "secret", "cookies"}:
+            continue
+        if isinstance(value, str):
+            payload[key] = value[:500]
+        elif isinstance(value, (int, float, bool)) or value is None:
+            payload[key] = value
+        elif isinstance(value, (list, tuple)):
+            payload[key] = list(value)[:20]
+        elif isinstance(value, dict):
+            payload[key] = {str(k)[:80]: v for k, v in list(value.items())[:30]}
+    target = CAPTCHA_DIR / "auditoria" / datetime.now().strftime("%Y-%m-%d") / f"{request_id}.jsonl"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with AUDIT_WRITE_LOCK, target.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+    except OSError:
+        pass
 
 LEGACY_PROVIDER_API_KEYS = (
     LEGACY_PROVIDER_API_KEY_1.strip(),
@@ -2633,13 +2691,19 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
         
+        request_id = None
+        audit_finished = False
         try:
             data = json.loads(body)
             sitekey = data.get("sitekey")
             url = data.get("url", "https://www.nfse.gov.br/")
+            request_id = data.get("request_id") or datetime.now().strftime("%Y%m%d%H%M%S%f")
+            audit_begin(request_id)
+            audit_event("solve_received")
             
             fatal_state = fatal_circuit_state()
             if fatal_state["open"]:
+                audit_event("solve_rejected", reason=fatal_state["reason"], fatal=True)
                 self.send_response(503)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -2655,21 +2719,24 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if not sitekey:
+                audit_event("solve_rejected", reason="sitekey_missing")
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": "sitekey obrigatorio"}).encode())
                 return
             
-            request_id = data.get("request_id") or datetime.now().strftime("%Y%m%d%H%M%S%f")
             LAST_SOLVER_ERROR.value = None
             print(f"\\n[Solver API] Recebida requisicao {request_id}: sitekey={sitekey[:20]}...")
 
             if SOLVER_SEMAPHORE:
                 print(f"[Solver API] {request_id}: aguardando vaga de navegador...")
+                queue_started = time.monotonic()
                 SOLVER_SEMAPHORE.acquire()
+                audit_event("browser_slot_acquired", queue_seconds=round(time.monotonic() - queue_started, 4))
             with ACTIVE_LOCK:
                 ACTIVE_SOLVERS += 1
+            audit_event("solve_started")
             try:
                 token = solve_captcha_for_request(sitekey, url, request_id)
             finally:
@@ -2685,6 +2752,8 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 response = {"token": token, "success": True, "request_id": request_id}
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
+                audit_event("solve_finished", success=True, reason="token", token_length=len(token))
+                audit_finished = True
                 print(f"[Solver API] {request_id}: token enviado: {len(token)} chars")
             else:
                 error_info = get_solver_error("solver_failed")
@@ -2706,6 +2775,8 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                     "request_id": request_id,
                 }
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
+                audit_event("solve_finished", success=False, reason=reason, fatal=fatal)
+                audit_finished = True
                 print(f"[Solver API] {request_id}: falha ao resolver: {response['reason']} - {response['error']}")
                 
         except Exception as e:
@@ -2714,6 +2785,12 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e), "reason": "api_exception", "success": False}, ensure_ascii=False).encode("utf-8"))
+            audit_event("solve_finished", success=False, reason="api_exception", error_type=type(e).__name__)
+            audit_finished = True
+        finally:
+            if request_id and not audit_finished:
+                audit_event("solve_finished", success=False, reason="request_ended_early")
+            audit_end()
     
     def do_GET(self):
         """Endpoint de health check"""
@@ -2771,6 +2848,7 @@ def solve_captcha_for_request(sitekey: str, url: str, request_id: str = "request
                     f"[Solver API] Navegador aberto na porta {solver_port} "
                     f"(janela {browser_attempt}/{BROWSER_RESTART_LIMIT})"
                 )
+                audit_event("browser_opened", browser_attempt=browser_attempt)
                 if preserve_origin:
                     inject_solver_document(solver_port, sitekey)
                 wait_solver_page(solver_port)

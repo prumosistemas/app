@@ -53,6 +53,7 @@ EOF
   export GOOGLE_AI_ARTIFACT_ROOT="$artifact_dir"
   export MODO_IA_DETECTOR_PROJECT="$solver_dir"
   export GOOGLE_CHROME_BIN="$chrome_bin"
+  export PRUMO_SOLVER_LOCATION=thinkpad
   export GOOGLE_AI_FIREFOX_FALLBACK=0
   export GOOGLE_AI_RECOVERY_POLICY=chrome
   export GOOGLE_AI_RECOVERY_VERBOSE=1

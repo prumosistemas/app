@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.74**
+Versao do app: **1.0.75**
 Atualizado em: **2026-08-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -57,15 +57,16 @@ permanece até o administrador reativar explicitamente o colaborador.
 | ThinkPad | API `prumo-api`, dados em `/opt/prumo/data`, codigo em `/home/server/prumo-src` | `server/`, `deploy/docker-compose.yml` |
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
 | Modal fallback | segundo solver Google Modo IA, escala a zero quando ocioso | mesmo arquivo de deploy do Portal |
-| Hugging Face | Space privado fornece um egress adicional somente para analise visual do captcha | `solver/google_ai_mode/hf_google_ai_provider.py` |
+| Hugging Face | Dois Spaces privados formam o primeiro pool de egress somente para análise visual do captcha | `solver/google_ai_mode/hf_google_ai_provider.py` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker
 e valida `X-Internal-Secret`; o servico no host esta ligado a `127.0.0.1:8000`.
 O ISS usa Browserless Modal direto. No Portal, o hCaptcha roda nas duas contas
-Modal; a analise Google Modo IA pode usar o Space privado HF. A principal
-prefere HF e a reserva prefere seu proprio egress. O ThinkPad permanece como
-ultimo fallback residencial.
+Modal; a análise Google Modo IA tenta os dois Spaces privados HF, depois o
+egress da conta Modal que hospeda o navegador. O ThinkPad permanece como
+último fallback residencial. A API espelha no ThinkPad imagens-resumo, MP4 e
+eventos de auditoria dos Volumes Modal, com retenção de sete dias.
 
 ## Preparacao do cofre
 
@@ -164,7 +165,7 @@ servidor ficam fora do pacote.
 python -m ops.prumo_ops modal billing --account primary
 python -m ops.prumo_ops modal billing --account fallback
 python -m ops.prumo_ops modal sync-hf-secret --account primary --hf-mode prefer
-python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode fallback
+python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode prefer
 python -m ops.prumo_ops modal deploy --account primary --target iss
 python -m ops.prumo_ops modal deploy --account primary --target portal
 python -m ops.prumo_ops modal deploy --account fallback --target portal

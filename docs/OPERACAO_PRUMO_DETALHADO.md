@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.73.
+Este documento e a fonte de contexto operacional da versao 1.0.75.
 
 ## Estado desejado
 
@@ -16,6 +16,8 @@ Este documento e a fonte de contexto operacional da versao 1.0.73.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
 - Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
 - GitHub, pasta local e servidor na mesma versao.
+- Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
+- O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
 
 ## Onde fica cada coisa
 

@@ -9,6 +9,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -17,14 +18,14 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from PIL import ImageFilter
+from PIL import ImageDraw, ImageFilter
 
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from hf_google_ai_provider import HuggingFaceGoogleAIProvider
+from hf_google_ai_provider import HuggingFaceGoogleAIPool
 
 LEGACY_SOLVER_PATH = BASE_DIR / "api_resolvedora_resolver.py"
 DEFAULT_GOOGLE_AI_PROJECT = Path(
@@ -48,15 +49,23 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v45-huggingface-hybrid"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v46-hf-pool-audit"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
     HF_PROVIDER_MODE = "off"
-HF_PROVIDER = HuggingFaceGoogleAIProvider(
-    space_id=os.environ.get("PRUMO_HF_GOOGLE_AI_SPACE", ""),
+HF_SPACE_IDS = [
+    item.strip()
+    for item in (
+        os.environ.get("PRUMO_HF_GOOGLE_AI_SPACES")
+        or os.environ.get("PRUMO_HF_GOOGLE_AI_SPACE", "")
+    ).replace(";", ",").split(",")
+    if item.strip()
+]
+HF_PROVIDER = HuggingFaceGoogleAIPool(
+    space_ids=HF_SPACE_IDS,
     token=os.environ.get("HF_TOKEN", ""),
-    timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "75")),
+    timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "60")),
     cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
 )
 PROVIDER_LOCK = threading.Lock()
@@ -1020,10 +1029,65 @@ def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
     # Compatibilidade defensiva para páginas que tenham sobrevivido a um
     # rollover antigo. A v28 não congela a animação em momento algum.
     _restore_visual_animation(port)
-    return _legacy_click_non_9_choice(port, escolha)
+    started = time.perf_counter()
+    success = _legacy_click_non_9_choice(port, escolha)
+    legacy.audit_event(
+        "click_point",
+        x=round(float(escolha.get("x") or 0), 2),
+        y=round(float(escolha.get("y") or 0), 2),
+        success=bool(success),
+        elapsed_seconds=round(time.perf_counter() - started, 4),
+    )
+    return success
 
 
 legacy.click_non_9_choice = _click_non_9_choice_frozen
+
+
+def _save_grid_click_map(image_path: Path, selected: list[int], challenge_dir: Path) -> None:
+    """Registra visualmente os centros que serão clicados na grade 3x3."""
+    if not selected:
+        return
+    try:
+        with legacy.Image.open(image_path).convert("RGB") as source:
+            canvas = source.copy()
+        draw = ImageDraw.Draw(canvas)
+        width, height = canvas.size
+        radius = max(10, min(width, height) // 24)
+        for number in selected:
+            row, column = divmod(number - 1, 3)
+            x = int((column + 0.5) * width / 3)
+            y = int((row + 0.5) * height / 3)
+            draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline="red", width=5)
+            draw.text((x + radius + 3, y - radius), str(number), fill="red", stroke_width=2, stroke_fill="white")
+        canvas.save(challenge_dir / "cliques-planejados.jpg", quality=92)
+    except Exception as exc:
+        legacy.audit_event("click_map_failed", error_type=type(exc).__name__)
+
+
+def _create_temporal_video(folder: Path, frame_paths: list[Path], interval_ms: int) -> bool:
+    """Gera um MP4 leve para auditoria sem interferir na resolução."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or len(frame_paths) < 2:
+        return False
+    output = folder / "captura-temporal.mp4"
+    fps = max(2.0, min(12.0, 1000.0 / max(1, interval_ms)))
+    try:
+        completed = subprocess.run(
+            [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-framerate", f"{fps:.3f}", "-start_number", "1",
+                "-i", str(folder / "quadro-%02d.jpg"),
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
+            ],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        return completed.returncode == 0 and output.is_file() and output.stat().st_size > 0
+    except Exception:
+        return False
 
 
 def _capture_live_canvas_for_click(port: int, output_path: Path) -> dict[str, Any] | None:
@@ -1600,6 +1664,8 @@ def _query_image(image_path: Path, prompt: str) -> Any:
     # tambem impede que duas tentativas do mesmo container disputem o Space.
     with PROVIDER_LOCK:
         for route in routes:
+            route_started = time.perf_counter()
+            legacy.audit_event("provider_attempt", route=route)
             try:
                 if route == "huggingface":
                     result = HF_PROVIDER.query(image_path, prompt)
@@ -1611,10 +1677,28 @@ def _query_image(image_path: Path, prompt: str) -> Any:
                         attempts=3,
                         allow_browser_recovery=True,
                     )
-                _record_google_success(result, route)
+                actual_route = str(getattr(result, "route", route) or route)
+                _record_google_success(result, actual_route)
+                legacy.audit_event(
+                    "provider_success",
+                    route=actual_route,
+                    elapsed_seconds=round(time.perf_counter() - route_started, 4),
+                    http_requests=int(result.http_requests),
+                    ai_queries=int(result.ai_queries),
+                )
                 return result
             except Exception as exc:
                 errors.append(exc)
+                legacy.audit_event(
+                    "provider_failure",
+                    route=route,
+                    elapsed_seconds=round(time.perf_counter() - route_started, 4),
+                    error_type=type(exc).__name__,
+                    unusual_traffic=any(
+                        marker in str(exc).lower()
+                        for marker in ("unusual traffic", "unusual_traffic", "sorry/index")
+                    ),
+                )
                 if route == "modal_direct":
                     clear_cache = getattr(google_ai, "clear_cached_session", None)
                     if callable(clear_cache):
@@ -1779,6 +1863,8 @@ def solve_with_google_ai(
         legacy.record_provider_success()
         if challenge_dir:
             challenge_dir.mkdir(parents=True, exist_ok=True)
+            _save_grid_click_map(image_path, selected, challenge_dir)
+            legacy.audit_event("click_tiles_planned", indices=selected, count=len(selected))
             (challenge_dir / "resposta-google-ia.json").write_text(
                 json.dumps(
                     {
@@ -1791,6 +1877,7 @@ def solve_with_google_ai(
                         "resposta_parseada": parsed,
                         "resposta_bruta": raw_answer,
                         "metricas": {
+                            "rota": str(getattr(result, "route", "modal_direct")),
                             "http_requests": result.http_requests,
                             "ai_queries": result.ai_queries,
                             "sources": len(result.sources),
@@ -2514,6 +2601,7 @@ def analyze_visual_with_google_ai(
                     ],
                     "resposta_bruta": raw_answer,
                     "metricas": {
+                        "rota": str(getattr(result, "route", "modal_direct")),
                         "http_requests": result.http_requests,
                         "ai_queries": result.ai_queries,
                         "sources": len(result.sources),
@@ -2639,6 +2727,14 @@ def _save_and_analyze_visual_fast(
             > int(classification["max_sequence_attempts"])
         )
         classification["action"] = "refresh_challenge" if rotate_scene else "analyze"
+        legacy.audit_event(
+            "challenge_classified",
+            category=classification.get("category"),
+            difficulty=classification.get("difficulty"),
+            action=classification.get("action"),
+            same_scene_attempt=classification.get("same_scene_attempt"),
+            sequence_attempt=classification.get("sequence_attempt"),
+        )
         (folder / "classificacao-desafio.json").write_text(
             json.dumps(classification, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -2653,6 +2749,11 @@ def _save_and_analyze_visual_fast(
             _restore_visual_animation(port)
             refreshed = legacy.refresh_hcaptcha_and_wait(port, wait_seconds=0.8)
             classification["refresh_clicked"] = refreshed
+            legacy.audit_event(
+                "challenge_refreshed",
+                reason="scene_attempt_limit",
+                success=bool(refreshed),
+            )
             (folder / "classificacao-desafio.json").write_text(
                 json.dumps(classification, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -2667,7 +2768,15 @@ def _save_and_analyze_visual_fast(
         _build_motion_sequence(folder, frame_paths)
         _build_motion_overlay(folder, frame_paths)
         _build_temporal_occupancy_board(folder, frame_paths)
+    video_created = _create_temporal_video(folder, frame_paths, capture_interval_ms)
     capture_seconds = time.perf_counter() - capture_started
+    legacy.audit_event(
+        "capture_finished",
+        elapsed_seconds=round(capture_seconds, 4),
+        captured=bool(captured),
+        frame_count=len(frame_paths),
+        video_created=video_created,
+    )
     (folder / "timing.json").write_text(
         json.dumps(
             {
@@ -2684,6 +2793,7 @@ def _save_and_analyze_visual_fast(
                 ),
                 "overlay_created": (folder / "desafio-temporal-sobreposto.jpg").is_file(),
                 "occupancy_created": (folder / "evidencia-permanencia-temporal.jpg").is_file(),
+                "video_created": video_created,
             },
             ensure_ascii=False,
             indent=2,
@@ -2746,6 +2856,20 @@ def _challenge_wait_state(port: int) -> dict[str, Any] | None:
 
 
 _legacy_click_submit = legacy.click_hcaptcha_submit
+_legacy_click_tasks = legacy.click_hcaptcha_tasks
+
+
+def _click_tasks_audited(port: int, indexes: list[int]) -> bool:
+    started = time.perf_counter()
+    success = _legacy_click_tasks(port, indexes)
+    legacy.audit_event(
+        "click_tiles",
+        indices=[int(item) for item in indexes],
+        count=len(indexes),
+        success=bool(success),
+        elapsed_seconds=round(time.perf_counter() - started, 4),
+    )
+    return success
 
 
 def _click_submit_when_ready_google_ai(port: int) -> bool:
@@ -2757,11 +2881,14 @@ def _click_submit_when_ready_google_ai(port: int) -> bool:
         if state and not state.get("loading") and state.get("submit_disabled") is False:
             ready_polls += 1
             if ready_polls >= 2:
-                return _legacy_click_submit(port)
+                success = _legacy_click_submit(port)
+                legacy.audit_event("submit_clicked", success=bool(success))
+                return success
         else:
             ready_polls = 0
         time.sleep(0.10)
     print("[Auto] Verificar nao ficou pronto; nao vou clicar fora de hora.")
+    legacy.audit_event("submit_skipped", reason="not_ready")
     return False
 
 
@@ -2831,6 +2958,7 @@ def _wait_token_or_next_stage_google_ai(
 legacy.solve_with_legacy_provider = solve_with_google_ai
 legacy.analyze_non_9_with_legacy_provider = analyze_visual_with_google_ai
 legacy.save_and_analyze_non_9_challenge = _save_and_analyze_visual_fast
+legacy.click_hcaptcha_tasks = _click_tasks_audited
 legacy.click_hcaptcha_submit = _click_submit_when_ready_google_ai
 legacy.wait_token_or_retry_after_submit = _wait_token_or_next_stage_google_ai
 

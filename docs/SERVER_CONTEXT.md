@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.74
+Versao: 1.0.75
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -12,7 +12,7 @@ A Prumo roda em cinco partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
-5. API hCaptcha no Modal com Google Modo IA hibrido: Space privado Hugging Face como egress visual adicional e ThinkPad apenas no ultimo fallback.
+5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -156,7 +156,7 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Fonte versionada: `solver/google_ai_mode/`.
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
 - Volume privado: `prumo-portal-google-ai-state`.
-- Rota de navegador: direta, sem proxy. Na analise visual, a conta principal prefere o Space `ryanzinprot/navegador-headless` e volta ao egress Modal em falha; a conta fallback prefere Modal e usa HF se receber bloqueio ou erro. O Space e privado e recebe somente imagem efemera do captcha e prompt.
+- Rota de navegador: direta, sem proxy. Na análise visual, ambas as contas tentam o pool privado `ryanzinprot/navegador-headless` e `ryanzinprot/navegador-headless-2`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
 
 Deploy seguro das duas contas, sem trocar perfil global:
 
@@ -171,7 +171,7 @@ Antes do primeiro deploy ou ao girar o token HF:
 ```powershell
 python -m ops.prumo_ops secrets migrate-local
 python -m ops.prumo_ops modal sync-hf-secret --account primary --hf-mode prefer
-python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode fallback
+python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode prefer
 ```
 
 A CLI publica até dois contêineres por conta Modal, com uma entrada e um
@@ -339,6 +339,7 @@ O Netlify pode bloquear novos deploys por crédito da conta. Para não misturar 
 ## Retencao e crescimento de disco
 
 - `/opt/prumo/data/_api_data/google_ai_solver_artifacts` guarda debug visual por 7 dias.
+- `/opt/prumo/data/_api_data/portal_solver_audit` espelha dos dois Volumes Modal apenas imagens-resumo, vídeos, JSONs e linha do tempo; frames brutos não são duplicados no ThinkPad.
 - Após 15 minutos sem alteração, `.html`, `.json` e `.txt` viram gzip; PNG vira WebP lossless quando o resultado é menor.
 - XML/PDF, índices e certificados das empresas não são compactados nem removidos por essa rotina.
 - O compose limita o log `json-file` da API a 3 arquivos de 10 MiB.

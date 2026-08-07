@@ -199,6 +199,14 @@ export default {
         return await handleMasterModalBilling(request, env);
       }
 
+      if (url.pathname === "/api/master/solver-audit" && request.method === "GET") {
+        return await handleMasterSolverAudit(request, env);
+      }
+
+      if (url.pathname === "/api/master/solver-audit/file" && request.method === "GET") {
+        return await handleMasterSolverAuditFile(request, env);
+      }
+
       if (url.pathname === "/api/billing" && request.method === "GET") {
         return await handleBilling(request, env);
       }
@@ -818,6 +826,35 @@ async function handleMasterModalBilling(request, env) {
     return jsonResponse(request, env, billing, 502);
   }
   return jsonResponse(request, env, billing);
+}
+
+async function handleMasterSolverAudit(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+  const requested = Number(new URL(request.url).searchParams.get("limit") || 40);
+  const limit = Math.max(1, Math.min(200, Number.isFinite(requested) ? requested : 40));
+  const result = await fetchPythonSolverAudit(env, auth.user, limit);
+  if (!result.ok) return jsonResponse(request, env, result, 502);
+  return jsonResponse(request, env, result);
+}
+
+async function handleMasterSolverAuditFile(request, env) {
+  const auth = await requireRole(request, env, "master");
+  if (auth.response) return auth.response;
+  const url = new URL(request.url);
+  const source = url.searchParams.get("source") || "";
+  const path = url.searchParams.get("path") || "";
+  if (!source || !path) return jsonResponse(request, env, { ok: false, error: "Artefato inválido." }, 400);
+  const response = await fetchPythonSolverAuditFile(env, auth.user, source, path);
+  if (!response.ok) return jsonResponse(request, env, { ok: false, error: await response.text() }, response.status);
+  return new Response(response.body, {
+    status: 200,
+    headers: apiHeaders(request, env, {
+      "Content-Type": response.headers.get("Content-Type") || "application/octet-stream",
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": response.headers.get("Content-Disposition") || "inline",
+    }),
+  });
 }
 
 async function handleBilling(request, env) {
@@ -2948,6 +2985,39 @@ async function fetchPythonModalBilling(env, actor) {
     return await res.json();
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+async function fetchPythonSolverAudit(env, actor, limit) {
+  if (!env.PYTHON_API_URL || !env.ISS_INTERNAL_SECRET) {
+    return { ok: false, error: "PYTHON_API_URL ou ISS_INTERNAL_SECRET não configurado." };
+  }
+  const base = String(env.PYTHON_API_URL).replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/api/admin/solver-audit?limit=${encodeURIComponent(limit)}`, {
+      method: "GET",
+      headers: pythonHeaders(env, actor),
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+async function fetchPythonSolverAuditFile(env, actor, source, path) {
+  if (!env.PYTHON_API_URL || !env.ISS_INTERNAL_SECRET) {
+    return new Response("Proxy interno não configurado.", { status: 500 });
+  }
+  const base = String(env.PYTHON_API_URL).replace(/\/+$/, "");
+  const query = `source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}`;
+  try {
+    return await fetch(`${base}/api/admin/solver-audit/file?${query}`, {
+      method: "GET",
+      headers: pythonHeaders(env, actor),
+    });
+  } catch (_err) {
+    return new Response("API interna não respondeu.", { status: 502 });
   }
 }
 
