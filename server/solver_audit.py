@@ -19,7 +19,7 @@ from typing import Any
 
 SYNC_INTERVAL_SECONDS = max(30, int(os.getenv("PORTAL_SOLVER_AUDIT_SYNC_SECONDS", "120")))
 RETENTION_DAYS = max(1, int(os.getenv("PORTAL_DEBUG_RETENTION_DAYS", "7")))
-MAX_BOOTSTRAP_CHALLENGES = max(10, int(os.getenv("PORTAL_SOLVER_AUDIT_BOOTSTRAP_DIRS", "80")))
+MAX_BOOTSTRAP_CHALLENGES = max(10, int(os.getenv("PORTAL_SOLVER_AUDIT_BOOTSTRAP_DIRS", "40")))
 
 SUMMARY_NAMES = {
     "desafio.png", "desafio.webp", "desafio-anotado-google-ia.png",
@@ -107,32 +107,39 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
         challenge_entries = []
 
     selected = sorted(challenge_entries, key=lambda item: (int(item.mtime or 0), item.path))[-MAX_BOOTSTRAP_CHALLENGES:]
-    candidates = []
+    summary_candidates = []
     for directory in selected:
         try:
             async for entry in volume.iterdir.aio(directory.path, recursive=True):
                 if _wanted_summary(entry.path):
-                    candidates.append(entry)
+                    summary_candidates.append(entry)
         except Exception:
             continue
 
     cutoff = int(time.time() - RETENTION_DAYS * 86400)
+    audit_candidates = []
     try:
         async for entry in volume.iterdir.aio("/auditoria", recursive=True):
             if entry.path.endswith(".jsonl") and int(entry.mtime or 0) >= cutoff:
-                candidates.append(entry)
+                audit_candidates.append(entry)
     except Exception:
         pass
 
-    downloaded = 0
-    for entry in candidates:
+    # Eventos primeiro: o painel fica útil antes de terminar o espelho visual.
+    candidates = list({entry.path: entry for entry in [*audit_candidates, *summary_candidates]}.values())
+    semaphore = asyncio.Semaphore(6)
+
+    async def transfer(entry: Any) -> int:
         signature = f"{int(entry.mtime or 0)}:{int(entry.size or 0)}"
         if manifest.get(entry.path) == signature:
-            continue
-        target = target_root / _safe_relative(entry.path)
-        await _download_file(volume, entry.path, target)
+            return 0
+        async with semaphore:
+            target = target_root / _safe_relative(entry.path)
+            await _download_file(volume, entry.path, target)
         manifest[entry.path] = signature
-        downloaded += 1
+        return 1
+
+    downloaded = sum(await asyncio.gather(*(transfer(entry) for entry in candidates)))
 
     _write_json_atomic(target_root / "manifest.json", manifest)
     return {
