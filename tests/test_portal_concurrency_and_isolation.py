@@ -63,6 +63,27 @@ def test_continue_reuses_existing_index(tmp_path: Path) -> None:
     assert "--recriar-index" not in command
 
 
+def test_retry_without_overrides_preserves_xml_only_configuration() -> None:
+    cfg = {
+        "modo": "emitidas",
+        "tipo_download": "xml",
+        "data_inicial": "01/07/2026",
+        "data_final": "31/07/2026",
+        "cert_index": 0,
+        "concorrencia": 4,
+        "retries": 8,
+        "max_items": 0,
+    }
+
+    resumed = portal_nacional._retry_config(
+        cfg,
+        portal_nacional.PortalRetryPayload(),
+    )
+
+    assert resumed["tipo_download"] == "xml"
+    assert resumed["retries"] == 8
+
+
 def test_download_keeps_xml_checkpoint_when_pdf_solver_raises(monkeypatch, tmp_path: Path) -> None:
     calls = []
 

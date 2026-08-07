@@ -64,9 +64,11 @@ class PortalRunPayload(BaseModel):
 
 
 class PortalRetryPayload(BaseModel):
-    tipo_download: str = Field(default="ambos")
-    max_items: int = 0
-    retries: int = 6
+    # Campos ausentes preservam a configuracao original da run. Defaults aqui
+    # faziam um retry interno de XML voltar silenciosamente para XML+PDF.
+    tipo_download: str | None = None
+    max_items: int | None = None
+    retries: int | None = None
 
 
 class PortalContinuePayload(PortalRetryPayload):
@@ -75,6 +77,20 @@ class PortalContinuePayload(PortalRetryPayload):
 
 class PortalSessionImportPayload(BaseModel):
     session: Dict[str, Any]
+
+
+def _retry_config(cfg: Dict[str, Any], payload: PortalRetryPayload) -> Dict[str, Any]:
+    values = payload.model_dump(exclude={"run_ids"}, exclude_none=True)
+    return _normalize_cfg(
+        {
+            **cfg,
+            **values,
+            "modo": cfg.get("modo") or "recebidas",
+            "data_inicial": cfg.get("data_inicial"),
+            "data_final": cfg.get("data_final"),
+            "renovar_sessao": False,
+        }
+    )
 
 
 def _now_iso() -> str:
@@ -837,7 +853,7 @@ async def retry_portal_run(run_id: str, payload: PortalRetryPayload, ctx: Worker
     run_dir = _safe_run_dir(ctx, run_id)
     run = _load_json(run_dir / "run.json", {})
     cfg = dict(run.get("config") or {})
-    override = _normalize_cfg({**cfg, **payload.model_dump(), "modo": cfg.get("modo") or "recebidas", "data_inicial": cfg.get("data_inicial"), "data_final": cfg.get("data_final"), "renovar_sessao": False})
+    override = _retry_config(cfg, payload)
     override["modo"] = cfg.get("modo") or override["modo"]
     override["renovar_sessao"] = False
     override = _attach_certificate_to_run(ctx, override, run_dir)
@@ -860,16 +876,7 @@ async def continue_portal_runs(payload: PortalContinuePayload, ctx: WorkerContex
         run_dir = _safe_run_dir(ctx, run_id)
         run = _load_json(run_dir / "run.json", {})
         cfg = dict(run.get("config") or {})
-        override = _normalize_cfg(
-            {
-                **cfg,
-                **payload.model_dump(exclude={"run_ids"}),
-                "modo": cfg.get("modo") or "recebidas",
-                "data_inicial": cfg.get("data_inicial"),
-                "data_final": cfg.get("data_final"),
-                "renovar_sessao": False,
-            }
-        )
+        override = _retry_config(cfg, payload)
         override["modo"] = cfg.get("modo") or override["modo"]
         override["renovar_sessao"] = False
         override = _attach_certificate_to_run(ctx, override, run_dir)
