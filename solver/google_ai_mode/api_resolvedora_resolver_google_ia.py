@@ -50,7 +50,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v47-fast-temporal"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v48-fast-empty-canvas"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -2865,6 +2865,13 @@ def _save_and_analyze_visual_fast(
         (folder / "canvas-erro.txt").write_text(
             "Canvas limpo nao ficou pronto no prazo curto; a tentativa sera refeita.\n",
             encoding="utf-8",
+        )
+        # Sem esta classificacao, o loop externo repetia dez capturas vazias
+        # de ~19 s no mesmo backend. A politica visual agora troca a cena apos
+        # duas e libera para failover apos tres falhas consecutivas.
+        legacy.set_solver_error(
+            "visual_challenge_not_ready",
+            "Canvas visual nao ficou pronto e nao produziu quadros utilizaveis.",
         )
         return None
     _save_browser_dom_debug(port, folder, "capturado")
