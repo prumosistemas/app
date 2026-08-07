@@ -40,10 +40,11 @@ GOOGLE_SOLVER = SOURCE_ROOT / "api_resolvedora_resolver_google_ia.py"
 DETECTOR = DETECTOR_ROOT / "detector_visual.py"
 ARTIFACT_RETENTION = SOURCE_ROOT / "artifact_retention.py"
 GOOGLE_CLIENT = SOURCE_ROOT / "google_ia_requests.py"
+HF_GOOGLE_PROVIDER = SOURCE_ROOT / "hf_google_ai_provider.py"
 CHROME_WRAPPER = Path(__file__).with_name("chrome_modal_no_sandbox.sh")
 
 if modal.is_local():
-    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, DETECTOR, ARTIFACT_RETENTION, CHROME_WRAPPER):
+    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, HF_GOOGLE_PROVIDER, DETECTOR, ARTIFACT_RETENTION, CHROME_WRAPPER):
         if not required.is_file():
             raise RuntimeError(f"Arquivo obrigatorio ausente: {required}")
 
@@ -84,6 +85,7 @@ proxy_access_secrets = (
     if PROXY_ENABLED and PROXY_HOSTNAME
     else []
 )
+huggingface_secrets = [modal.Secret.from_name("prumo-huggingface")]
 
 image = (
     modal.Image.from_registry(BROWSERLESS_IMAGE, add_python="3.11")
@@ -101,6 +103,7 @@ image = (
         "pillow",
         "requests",
         "websocket-client",
+        "gradio-client==2.5.0",
     )
     .add_local_file(
         CHROME_WRAPPER,
@@ -111,6 +114,7 @@ image = (
     .add_local_file(LEGACY_SOLVER, "/app/api_resolvedora_resolver.py")
     .add_local_file(GOOGLE_SOLVER, "/app/api_resolvedora_resolver_google_ia.py")
     .add_local_file(GOOGLE_CLIENT, "/app/google-ai-client/google_ia_requests.py")
+    .add_local_file(HF_GOOGLE_PROVIDER, "/app/hf_google_ai_provider.py")
     .add_local_file(DETECTOR, "/app/detector/detector_visual.py")
     .add_local_file(ARTIFACT_RETENTION, "/app/artifact_retention.py")
 )
@@ -393,7 +397,7 @@ def proxy_probe() -> str:
 
 
 @app.function(
-    secrets=proxy_access_secrets,
+    secrets=[*proxy_access_secrets, *huggingface_secrets],
     volumes={
         "/google-ai-seed": google_state,
         "/solver-artifacts": debug_artifacts,

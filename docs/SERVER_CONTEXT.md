@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.73
+Versao: 1.0.74
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -12,7 +12,7 @@ A Prumo roda em cinco partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
-5. API Google Modo IA no Modal, app `prumo-portal-nacional-google-solver`, usada apenas para hCaptcha do Portal Nacional.
+5. API hCaptcha no Modal com Google Modo IA hibrido: Space privado Hugging Face como egress visual adicional e ThinkPad apenas no ultimo fallback.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -156,7 +156,7 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Fonte versionada: `solver/google_ai_mode/`.
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
 - Volume privado: `prumo-portal-google-ai-state`.
-- Rota padrao: direta, sem proxy. O proxy local responde no ThinkPad, mas o probe a partir do Modal expira no Cloudflare Access; só definir `PRUMO_MODAL_PROXY_HOSTNAME` após configurar e validar autenticação de máquina.
+- Rota de navegador: direta, sem proxy. Na analise visual, a conta principal prefere o Space `ryanzinprot/navegador-headless` e volta ao egress Modal em falha; a conta fallback prefere Modal e usa HF se receber bloqueio ou erro. O Space e privado e recebe somente imagem efemera do captcha e prompt.
 
 Deploy seguro das duas contas, sem trocar perfil global:
 
@@ -164,6 +164,14 @@ Deploy seguro das duas contas, sem trocar perfil global:
 cd C:\Users\ryang\Desktop\projetosv2\projeto
 python -m ops.prumo_ops modal deploy --account primary --target portal
 python -m ops.prumo_ops modal deploy --account fallback --target portal
+```
+
+Antes do primeiro deploy ou ao girar o token HF:
+
+```powershell
+python -m ops.prumo_ops secrets migrate-local
+python -m ops.prumo_ops modal sync-hf-secret --account primary --hf-mode prefer
+python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode fallback
 ```
 
 A CLI publica até dois contêineres por conta Modal, com uma entrada e um
@@ -193,6 +201,12 @@ antigo estava desabilitado, o Browserless ISS foi republicado em `ryangurgell20`
 o servidor passou a usar o endpoint novo e o handshake WebSocket foi validado.
 
 O solver e stateless. Ele nao recebe cookies do usuario, nao grava arquivos finais e nao deve misturar dados de usuarios. Ele so recebe `sitekey/request_id`, resolve o hCaptcha e devolve token. Os XML/PDF ficam no servidor, dentro da arvore do colaborador.
+
+Em 2026-08-07, a v45 foi validada em producao durante runs reais. O egress
+Modal recebeu `unusual traffic`, a rota HF concluiu a analise temporal e o
+solver devolveu token hCaptcha valido de 2.799 caracteres sem usar o ThinkPad.
+O health expoe apenas politica, contadores e estado do circuito; o token HF
+nunca e retornado.
 
 ## Fallback Browserless local
 

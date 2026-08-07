@@ -261,7 +261,13 @@ MODAL_ACCOUNTS = {
 }
 
 
-def modal_run(store: SecretStore, account: str, arguments: list[str], extra_env: dict[str, str] | None = None) -> None:
+def modal_run(
+    store: SecretStore,
+    account: str,
+    arguments: list[str],
+    extra_env: dict[str, str] | None = None,
+    sensitive_values: list[str] | None = None,
+) -> None:
     id_name, secret_name = MODAL_ACCOUNTS[account]
     token_id = store.require(id_name)
     token_secret = store.require(secret_name)
@@ -288,7 +294,10 @@ def modal_run(store: SecretStore, account: str, arguments: list[str], extra_env:
         errors="replace",
         timeout=900,
     )
-    safe = redact((result.stdout or "") + (result.stderr or ""), [token_id, token_secret]).strip()
+    safe = redact(
+        (result.stdout or "") + (result.stderr or ""),
+        [token_id, token_secret, *(sensitive_values or [])],
+    ).strip()
     if safe:
         console_encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
         print(safe.encode(console_encoding, errors="replace").decode(console_encoding))
@@ -296,9 +305,26 @@ def modal_run(store: SecretStore, account: str, arguments: list[str], extra_env:
         raise OpsError(f"Modal terminou com codigo {result.returncode}.")
 
 
-def modal_command(store: SecretStore, action: str, account: str, target: str | None) -> None:
+def modal_command(
+    store: SecretStore,
+    action: str,
+    account: str,
+    target: str | None,
+    hf_mode: str | None = None,
+) -> None:
     if action == "status":
         modal_run(store, account, ["app", "list", "--json"])
+    elif action == "logs":
+        app_name = (
+            "prumo-browserless"
+            if target == "iss"
+            else "prumo-portal-nacional-google-solver"
+            if target == "portal"
+            else None
+        )
+        if not app_name:
+            raise OpsError("Informe --target para consultar logs Modal.")
+        modal_run(store, account, ["app", "logs", app_name, "--tail", "250", "--timestamps"])
     elif action == "billing":
         modal_run(store, account, ["billing", "report", "--for", "this month", "--json"])
     elif action == "deploy":
@@ -328,6 +354,41 @@ def modal_command(store: SecretStore, action: str, account: str, target: str | N
         if not app_name:
             raise OpsError("Target Modal invalido.")
         modal_run(store, account, ["app", "rollover", app_name, "--strategy", "recreate"])
+    elif action == "sync-hf-secret":
+        token = store.require("HUGGINGFACE_TOKEN")
+        mode = hf_mode or ("prefer" if account == "primary" else "fallback")
+        payload = {
+            "HF_TOKEN": token,
+            "PRUMO_HF_GOOGLE_AI_SPACE": "ryanzinprot/navegador-headless",
+            "PRUMO_HF_GOOGLE_AI_MODE": mode,
+            "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "75",
+            "PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS": "180",
+        }
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", encoding="utf-8", delete=False
+            ) as handle:
+                json.dump(payload, handle, separators=(",", ":"))
+                temporary_path = Path(handle.name)
+            modal_run(
+                store,
+                account,
+                [
+                    "secret", "create", "prumo-huggingface",
+                    "--from-json", str(temporary_path), "--force",
+                ],
+                sensitive_values=[token],
+            )
+            emit({
+                "account": account,
+                "secret": "prumo-huggingface",
+                "mode": mode,
+                "value_printed": False,
+            })
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
 
 SSH_COMMAND = [
@@ -495,6 +556,21 @@ def migrate_local(store: SecretStore) -> None:
                 values[f"{prefix}_TOKEN_ID"] = str(section["token_id"])
                 values[f"{prefix}_TOKEN_SECRET"] = str(section["token_secret"])
                 imported.append(f"modal:{profile}")
+    hf_token_file = Path.home() / "Downloads" / "hf_write_token.txt"
+    if hf_token_file.is_file():
+        candidate = hf_token_file.read_text(encoding="utf-8-sig").strip()
+        if candidate:
+            try:
+                probe = requests.get(
+                    "https://huggingface.co/api/whoami-v2",
+                    headers={"Authorization": f"Bearer {candidate}"},
+                    timeout=30,
+                )
+            except requests.RequestException:
+                probe = None
+            if probe is not None and probe.ok:
+                values["HUGGINGFACE_TOKEN"] = candidate
+                imported.append("huggingface:validated-download-token")
     if not values:
         raise OpsError("Nenhuma credencial local conhecida foi encontrada.")
     store.set_many(values)
@@ -563,9 +639,10 @@ def build_parser() -> argparse.ArgumentParser:
     netlify.add_argument("--apply", action="store_true")
 
     modal = sub.add_parser("modal", help="Modal com token injetado no processo filho")
-    modal.add_argument("action", choices=["status", "billing", "deploy", "rollover"])
+    modal.add_argument("action", choices=["status", "logs", "billing", "deploy", "rollover", "sync-hf-secret"])
     modal.add_argument("--account", choices=sorted(MODAL_ACCOUNTS), default="primary")
     modal.add_argument("--target", choices=["iss", "portal"])
+    modal.add_argument("--hf-mode", choices=["off", "prefer", "fallback"])
 
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
     server.add_argument("action", choices=["status", "logs", "deploy"])
@@ -591,7 +668,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.area == "netlify":
             netlify_status(store) if args.action == "status" else netlify_deploy(store, args.apply)
         elif args.area == "modal":
-            modal_command(store, args.action, args.account, args.target)
+            modal_command(store, args.action, args.account, args.target, args.hf_mode)
         elif args.area == "server":
             server_command(args.action, args.apply, args.lines)
         elif args.area == "app":

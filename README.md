@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.73 - limpeza da arvore de processos do solver residencial**
+Versao: **1.0.74 - rota hibrida Hugging Face para o Modo IA**
 
 ## Estado atual
 
@@ -9,7 +9,7 @@ Versao: **1.0.73 - limpeza da arvore de processos do solver residencial**
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
-- Portal Nacional: Google Modo IA no Modal em quatro contêineres isolados (2+2 entre as contas), com sessão HTTP preservada entre etapas temporais e ThinkPad como último fallback; sem Florence/Cohere. Widget preso ou sessão inválida falha cedo para não consumir tempo/crédito repetindo o mesmo perfil.
+- Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com um Space privado Hugging Face como egress visual adicional e ThinkPad como último fallback; sem Florence/Cohere. A conta principal prefere HF e volta ao egress Modal se o Space falhar; a conta reserva faz a ordem inversa.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
@@ -38,10 +38,11 @@ Versao: **1.0.73 - limpeza da arvore de processos do solver residencial**
 
 ## Solver do Portal Nacional
 
-O unico resolvedor ativo e o Google Modo IA do projeto organizado. Ele usa
-saida direta do Modal por padrao e guarda apenas o estado anonimo em Volume
-privado. O código validado está versionado em `solver/google_ai_mode/`. O deploy
-normal usa a conta principal e a conta de fallback:
+O unico resolvedor visual ativo e o Google Modo IA do projeto organizado. O
+navegador do hCaptcha continua no Modal; somente a imagem efemera do desafio e
+o prompt podem seguir ao Space privado Hugging Face. Certificado, cookies do
+Portal e arquivos fiscais nunca saem do ThinkPad. O código validado está
+versionado em `solver/google_ai_mode/`.
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto

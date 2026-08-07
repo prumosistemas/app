@@ -21,6 +21,11 @@ from PIL import ImageFilter
 
 
 BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from hf_google_ai_provider import HuggingFaceGoogleAIProvider
+
 LEGACY_SOLVER_PATH = BASE_DIR / "api_resolvedora_resolver.py"
 DEFAULT_GOOGLE_AI_PROJECT = Path(
     r"C:\Users\ryang\Desktop\projetosv2\google_modo_ia_perfil_limpo"
@@ -43,8 +48,17 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-05-google-ai-mode-v44-official-entrypoint"
+SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v45-huggingface-hybrid"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
+HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
+if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
+    HF_PROVIDER_MODE = "off"
+HF_PROVIDER = HuggingFaceGoogleAIProvider(
+    space_id=os.environ.get("PRUMO_HF_GOOGLE_AI_SPACE", ""),
+    token=os.environ.get("HF_TOKEN", ""),
+    timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "75")),
+    cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
+)
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
 PROVIDER_STATS: dict[str, Any] = {
@@ -56,6 +70,8 @@ PROVIDER_STATS: dict[str, Any] = {
     "last_http_requests": None,
     "last_ai_queries": None,
     "last_source_count": None,
+    "last_route": None,
+    "route_successes": {"modal_direct": 0, "huggingface": 0},
 }
 CHALLENGE_SCENE_LOCK = threading.Lock()
 CHALLENGE_SCENE_ATTEMPTS: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1429,7 +1445,7 @@ def _record_google_request_start() -> None:
         PROVIDER_STATS["requests"] += 1
 
 
-def _record_google_success(result: Any) -> None:
+def _record_google_success(result: Any, route: str) -> None:
     with PROVIDER_STATS_LOCK:
         PROVIDER_STATS["successes"] += 1
         PROVIDER_STATS["last_error"] = None
@@ -1437,6 +1453,9 @@ def _record_google_success(result: Any) -> None:
         PROVIDER_STATS["last_http_requests"] = int(result.http_requests)
         PROVIDER_STATS["last_ai_queries"] = int(result.ai_queries)
         PROVIDER_STATS["last_source_count"] = len(result.sources)
+        PROVIDER_STATS["last_route"] = route
+        route_successes = PROVIDER_STATS.setdefault("route_successes", {})
+        route_successes[route] = int(route_successes.get(route, 0)) + 1
 
 
 def _record_google_failure(exc: Exception) -> None:
@@ -1568,25 +1587,46 @@ def _parse_json_answer(text: str) -> dict[str, Any]:
 
 def _query_image(image_path: Path, prompt: str) -> Any:
     _record_google_request_start()
-    # O cliente persiste uma sessao anonima compartilhada; serializar evita corrida
-    # na gravacao atomica dos dois JSONs e reduz recusas por rajada.
+    remote_enabled = HF_PROVIDER.configured and HF_PROVIDER_MODE != "off"
+    routes = (
+        ("huggingface", "modal_direct")
+        if remote_enabled and HF_PROVIDER_MODE == "prefer"
+        else ("modal_direct", "huggingface")
+        if remote_enabled
+        else ("modal_direct",)
+    )
+    errors: list[Exception] = []
+    # O cliente local persiste uma sessao anonima compartilhada; serializar
+    # tambem impede que duas tentativas do mesmo container disputem o Space.
     with PROVIDER_LOCK:
-        try:
-            result = google_ai.query_google_ai(
-                prompt,
-                timeout=90,
-                image_path=image_path,
-                attempts=3,
-                allow_browser_recovery=True,
-            )
-        except Exception as exc:
-            clear_cache = getattr(google_ai, "clear_cached_session", None)
-            if callable(clear_cache):
-                clear_cache()
-            _record_google_failure(exc)
-            raise
-    _record_google_success(result)
-    return result
+        for route in routes:
+            try:
+                if route == "huggingface":
+                    result = HF_PROVIDER.query(image_path, prompt)
+                else:
+                    result = google_ai.query_google_ai(
+                        prompt,
+                        timeout=90,
+                        image_path=image_path,
+                        attempts=3,
+                        allow_browser_recovery=True,
+                    )
+                _record_google_success(result, route)
+                return result
+            except Exception as exc:
+                errors.append(exc)
+                if route == "modal_direct":
+                    clear_cache = getattr(google_ai, "clear_cached_session", None)
+                    if callable(clear_cache):
+                        clear_cache()
+                print(
+                    f"[Google AI] rota {route} falhou; "
+                    f"tentando fallback: {type(exc).__name__}",
+                    flush=True,
+                )
+    final_error = errors[-1] if errors else RuntimeError("google_ai_no_route")
+    _record_google_failure(final_error)
+    raise final_error
 
 
 def _unified_visual_prompt(
@@ -2809,6 +2849,8 @@ def google_ai_health() -> dict[str, Any]:
         "model": PROVIDER_MODEL,
         "route": "server_proxy" if os.environ.get("PRUMO_MODAL_PROXY_HOSTNAME", "").strip() else "direct",
         "serialized_provider_requests": True,
+        "route_policy": HF_PROVIDER_MODE,
+        "huggingface": HF_PROVIDER.health(),
         "browser_recovery_last_state": recovery_state,
         "stats": _provider_stats_snapshot(),
     }
