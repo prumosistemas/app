@@ -18,6 +18,20 @@ def test_solver_audit_mirrors_temporal_frames_without_unrelated_files() -> None:
     assert not solver_audit._wanted_summary("/desafios/unificados/x/certificado.pfx")
 
 
+def test_solver_audit_removes_frames_only_after_video_exists(tmp_path: Path) -> None:
+    challenge = tmp_path / "desafios" / "unificados" / "challenge"
+    challenge.mkdir(parents=True)
+    (challenge / "quadro-01.jpg").write_bytes(b"frame")
+    (challenge / "quadro-02.jpg").write_bytes(b"frame")
+
+    assert solver_audit._build_missing_local_videos(tmp_path, limit=0) == (0, 0)
+    assert (challenge / "quadro-01.jpg").exists()
+
+    (challenge / "captura-temporal.mp4").write_bytes(b"video")
+    assert solver_audit._build_missing_local_videos(tmp_path, limit=0) == (0, 2)
+    assert not (challenge / "quadro-01.jpg").exists()
+
+
 def test_solver_audit_summarizes_route_clicks_and_unusual(monkeypatch, tmp_path: Path) -> None:
     root = tmp_path / "thinkpad"
     audit = root / "auditoria" / "2026-08-07" / "req-1.jsonl"

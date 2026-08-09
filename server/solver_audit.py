@@ -124,7 +124,7 @@ def _create_local_video(folder: Path) -> bool:
         return False
 
 
-def _build_missing_local_videos(root: Path, limit: int = 4) -> int:
+def _build_missing_local_videos(root: Path, limit: int = 4) -> tuple[int, int]:
     challenge_root = root / "desafios" / "unificados"
     if not challenge_root.is_dir():
         return 0
@@ -134,12 +134,25 @@ def _build_missing_local_videos(root: Path, limit: int = 4) -> int:
         reverse=True,
     )
     created = 0
+    frames_removed = 0
     for folder in folders:
-        if created >= max(1, limit):
-            break
-        if _create_local_video(folder):
+        video = folder / "captura-temporal.mp4"
+        if not video.is_file() or video.stat().st_size <= 0:
+            if created >= max(1, limit):
+                continue
+            if not _create_local_video(folder):
+                continue
             created += 1
-    return created
+        # O MP4, a imagem de ocupacao e os resumos permanecem no ThinkPad.
+        # Os quadros brutos continuam sete dias no Volume Modal e nao precisam
+        # ocupar duas vezes o disco local depois da conversao comprovada.
+        for frame in [*folder.glob("quadro-*.jpg"), *folder.glob("quadro-*.png")]:
+            try:
+                frame.unlink()
+                frames_removed += 1
+            except OSError:
+                pass
+    return created, frames_removed
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -217,7 +230,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
 
     downloaded = sum(await asyncio.gather(*(transfer(entry) for entry in candidates)))
 
-    videos_created = _build_missing_local_videos(target_root)
+    videos_created, frames_removed = _build_missing_local_videos(target_root)
     _write_json_atomic(target_root / "manifest.json", manifest)
     return {
         "ok": True,
@@ -226,6 +239,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
         "challenge_dirs_seen": len(challenge_entries),
         "summary_candidates": len(candidates),
         "videos_created": videos_created,
+        "redundant_frames_removed": frames_removed,
     }
 
 
