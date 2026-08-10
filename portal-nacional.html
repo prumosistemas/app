@@ -389,7 +389,7 @@
           <td>${job.enabled ? `<span class="pill ok">Diária · ${esc(job.schedule_label)}</span><div class="small">Próxima: ${esc(formatTs(job.next_run_at))}</div>` : `<span class="pill">Pausada</span>`}</td>
           <td>${esc(formatTs(job.last_started_at))}<div class="small">${job.last_capture_start ? `${esc(job.last_capture_start)} a ${esc(job.last_capture_end)}` : "Ainda não executada"}</div></td>
           <td>${statusPill(job.last_status)}${job.last_error ? `<div class="small">${esc(job.last_error)}</div>` : ""}</td>
-          <td><div class="actions"><button data-capture-auto="${esc(job.id)}" type="button">Capturar agora</button><button class="secondary" data-edit-auto="${esc(job.id)}" type="button">Editar</button><button class="danger" data-delete-auto="${esc(job.id)}" type="button">Excluir</button></div></td>
+          <td><div class="actions"><button data-capture-auto="${esc(job.id)}" type="button" ${activeRunId||job.last_status==="rodando"?'disabled title="Já existe uma captura rodando"':""}>${activeRunId||job.last_status==="rodando"?"Captura em andamento":"Capturar agora"}</button><button class="secondary" data-edit-auto="${esc(job.id)}" type="button">Editar</button><button class="danger" data-delete-auto="${esc(job.id)}" type="button">Excluir</button></div></td>
         </tr>`).join("")}</tbody></table></div>`;
       $("automaticList").querySelectorAll("[data-capture-auto]").forEach(btn => btn.onclick = () => captureAutomaticNow(btn.dataset.captureAuto, btn));
       $("automaticList").querySelectorAll("[data-edit-auto]").forEach(btn => btn.onclick = () => editAutomatic(btn.dataset.editAuto));
@@ -600,6 +600,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       switchSection("automaticSection");
     }
     async function captureAutomaticNow(jobId, btn){
+      const job=(latestState?.automatic?.jobs||[]).find(item=>item.id===jobId);
+      if(activeRunId||job?.last_status==="rodando"){ setMsg("warn","Já existe uma captura rodando. Aguarde a conclusão."); return; }
       buttonLoading(btn, true, "Iniciando"); setMsg("", "");
       try{
         const data = await api(`/py/api/portal-nacional/automatic/${encodeURIComponent(jobId)}/capture-now`, {method:"POST", body:"{}"});

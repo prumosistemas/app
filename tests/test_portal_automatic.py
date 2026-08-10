@@ -108,6 +108,8 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert 'automatic/download?${query}' in source
     assert "renderAutomaticRuns(state.runs)" in source
     assert 'switchSection("automaticSection"); setMsg("ok", "Captura automática iniciada.' in source
+    assert 'Captura em andamento' in source
+    assert 'if(activeRunId||job?.last_status==="rodando")' in source
     assert source.count("groupRuns(manualPortalRuns(state.runs))") == 2
     assert "!run?.config?.automatic" in source
 
