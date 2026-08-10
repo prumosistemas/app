@@ -27,6 +27,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Cada colaborador tem estado isolado na chave SQLite `:closure_scans`. São preservadas exatamente as cinco verificações mais recentes; runs interrompidas mantêm resultados concluídos e runs ativas são retomadas após reinício do contêiner.
 - Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A descoberta pagina a grade com até quatro sessões reutilizáveis e informa o avanço por página; a análise reutiliza a página entre empresas e persiste progresso a cada três resultados. O `ViewExpired` final de inscrições sem escrituração consultável segue a semântica `FECHADO` do projeto de referência. Na retomada após queda, CNPJs já persistidos são preservados e não são consultados novamente. A suíte local da versão passou com 189 testes.
 - Redirecionamento excessivo e ausência transitória de CID agora reabrem uma sessão e tentam novamente; se o índice JSF da linha ficou obsoleto, a empresa é localizada outra vez pelo CNPJ. A ação `Tentar erros` preserva todas as classificações válidas e recoloca somente resultados `ERRO` na fila.
+- Prova de produção `scan_tFQd2TCaxv9RabkQ`: a primeira passagem encontrou 642 empresas e terminou com 10 falhas transitórias (8 loops de redirect e 2 CIDs ausentes). A retomada preservou 632 resultados, repetiu somente os 10 casos e finalizou 642/642, com 68 abertas, 574 fechadas e zero erro. A conta `AVANCAR CONTADORES` também foi copiada de forma interna, sem imprimir credencial, para `laryssasales@avancar.com`.
 
 ### Estabilidade e latência do login em 2026-08-10
 
@@ -47,6 +48,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - O certificado agora pode ser editado por clique na lista. A API nunca devolve o nome original do PFX; arquivo e senha existentes são mantidos quando não forem substituídos.
 - A navegação lateral mantém apenas `Voltar`; `Atualizar` e `Sair` foram removidos. `Parar run` fica junto de `Continuar` e `Excluir run`, e a listagem não varre todos os arquivos das runs em cada atualização. A rota do Portal usa `Cache-Control: no-store`, evitando HTML antigo durante uma publicação.
 - Os processos do Portal vivem na memória do contêiner da API. Um deploy/reinício preserva arquivos e checkpoint, mas a run passa para `interrompida` e precisa de `Continuar`; por isso mudanças somente de HTML/Worker não devem reiniciar a API, e retomadas operacionais devem ocorrer depois do último deploy do servidor.
+- Prova pós-deploy: a run manual de `laryssasales@avancar.com` retomou do checkpoint e finalizou 15/15, sem erro ou pendência. A run PDF de Alan preservou os 34 arquivos anteriores, avançou para 98/119 em menos de um minuto e permaneceu viva com 21 pendências em backoff crescente após os provedores do Modo IA sinalizarem `unusual traffic`; não houve reindexação nem conversão silenciosa para XML.
 - Validação local: 168 testes, compilação Python e validação sintática do JavaScript inline.
 
 ### Atualização de cobrança em 2026-08-03
