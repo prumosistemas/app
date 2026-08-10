@@ -24,9 +24,12 @@ Atualização:
 """
 
 import asyncio
+import base64
+import io
 import logging
 import os
 import re
+import zipfile
 from datetime import datetime
 from typing import Any, Callable, Dict, Tuple
 
@@ -58,6 +61,68 @@ from flow_errors import (
 )
 
 logger = logging.getLogger("iss.escrituracao")
+
+
+_JS_FETCH_EXPORTACAO = r"""
+async (link) => {
+    const response = await fetch(link.href, {
+        credentials: "include",
+        cache: "no-store",
+    });
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return {
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get("content-type") || "",
+        contentDisposition: response.headers.get("content-disposition") || "",
+        href: link.href || "",
+        byteLength: bytes.length,
+        base64: btoa(binary),
+    };
+}
+"""
+
+
+def _validate_exportacao_excel(data: bytes) -> tuple[str, int]:
+    """Valida a resposta do ISS e devolve extensão e linhas não vazias."""
+    if not data:
+        raise ValueError("arquivo vazio")
+
+    # O portal atualmente oferece XLSX mesmo quando a tela chama o formato de XLS.
+    if data.startswith(b"PK\x03\x04"):
+        if not zipfile.is_zipfile(io.BytesIO(data)):
+            raise ValueError("conteúdo ZIP inválido")
+
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        try:
+            if not workbook.worksheets:
+                raise ValueError("planilha sem abas")
+            nonempty_rows = sum(
+                1
+                for sheet in workbook.worksheets
+                for row in sheet.iter_rows(values_only=True)
+                if any(value not in (None, "") for value in row)
+            )
+        finally:
+            workbook.close()
+        return ".xlsx", nonempty_rows
+
+    # Compatibilidade caso o ISS volte a entregar o XLS binário antigo.
+    if data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") and len(data) >= 512:
+        return ".xls", -1
+
+    preview = data[:256].lower()
+    if b"<html" in preview or b"<!doctype html" in preview:
+        raise ValueError("o portal devolveu HTML em vez da planilha")
+    raise ValueError("formato de planilha desconhecido")
 
 
 def _safe_text(s: str) -> str:
@@ -977,11 +1042,60 @@ async def baixar_exportacao(page, cnpj: str, cnpj_dir: str, ctx: FlowContext) ->
         await log_flow(ctx, "Nenhum arquivo de exportação disponível.", event="INFO")
         return
 
-    async with page.expect_download(timeout=60_000) as dl:
-        await page.click(btn)
-    download = await dl.value
-    destino = os.path.join(cnpj_dir, f"exportacao_{cnpj}.xls")
-    await download.save_as(destino)
+    # O link possui um onclick AJAX do RichFaces. Clicar nele via Playwright inicia
+    # um download que o navegador remoto reporta como concluído, mas cujo artefato
+    # chega com zero bytes ao servidor. O fetch abaixo roda dentro do navegador,
+    # preservando sessão, cookies e o mesmo IP usado no ISS Fortaleza.
+    try:
+        response = await page.eval_on_selector(btn, _JS_FETCH_EXPORTACAO)
+    except Exception as exc:
+        raise FlowError(
+            "EXPORTACAO_DOWNLOAD_FALHOU",
+            f"Falha ao obter XLS no navegador autenticado: {exc}",
+            short_message="Não foi possível baixar o XLS gerado pelo portal.",
+            action="Repetir o fluxo; o arquivo vazio não será aceito como sucesso.",
+            retryable=True,
+        ) from exc
+
+    status = int((response or {}).get("status") or 0)
+    if not response or not response.get("ok"):
+        raise FlowError(
+            "EXPORTACAO_HTTP_INVALIDO",
+            f"Download do XLS respondeu HTTP {status}.",
+            short_message="O portal recusou o download do XLS gerado.",
+            action="Repetir o fluxo mantendo a sessão autenticada.",
+            retryable=True,
+        )
+
+    try:
+        data = base64.b64decode(response.get("base64") or "", validate=True)
+        extension, nonempty_rows = _validate_exportacao_excel(data)
+    except Exception as exc:
+        raise FlowError(
+            "EXPORTACAO_ARQUIVO_INVALIDO",
+            f"XLS gerado inválido ({response.get('byteLength', 0)} bytes): {exc}",
+            short_message="O portal devolveu um arquivo de escrituração vazio ou inválido.",
+            action="Repetir o fluxo; arquivos vazios não são mais registrados como sucesso.",
+            retryable=True,
+        ) from exc
+
+    destino = os.path.join(cnpj_dir, f"exportacao_{cnpj}{extension}")
+    temporario = f"{destino}.tmp"
+    try:
+        with open(temporario, "wb") as arquivo:
+            arquivo.write(data)
+        os.replace(temporario, destino)
+    finally:
+        if os.path.exists(temporario):
+            os.remove(temporario)
+
+    rows_text = "não aferível no XLS legado" if nonempty_rows < 0 else str(nonempty_rows)
+    await log_flow(
+        ctx,
+        f"Exportação salva e validada: {len(data)} bytes; linhas não vazias: {rows_text}.",
+        event="INFO",
+        code="EXPORTACAO_VALIDADA",
+    )
 
 
 async def maybe_log_stop_after_open(

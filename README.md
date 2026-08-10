@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.82 - captura diária simplificada do Portal Nacional**
+Versao: **1.0.83 - exportação de escrituração validada**
 
 ## Estado atual
 
@@ -16,6 +16,7 @@ Versao: **1.0.82 - captura diária simplificada do Portal Nacional**
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas automáticas por 123 dias. Os horários são distribuídos ao longo das 24 horas e o agendador inicia somente uma captura automática quando o Portal está livre; `Capturar agora` permanece disponível.
 - A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
+- A exportação de escrituração do ISS é obtida pelo link gerado dentro do navegador autenticado. Arquivos vazios, HTML de erro e planilhas estruturalmente inválidas deixam de ser aceitos como sucesso; o log registra bytes e linhas não vazias.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -87,9 +88,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.82 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.83 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.82
+docker push ryang20/prumo-api:1.0.83
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
