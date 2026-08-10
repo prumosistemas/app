@@ -47,6 +47,10 @@ def test_automatic_schedules_are_evenly_spread_across_day(monkeypatch, tmp_path:
 def test_automatic_capture_starts_with_four_month_window_then_overlaps() -> None:
     assert portal_nacional._automatic_capture_range({}, date(2026, 8, 10)) == ("09/04/2026", "10/08/2026")
     assert portal_nacional._automatic_capture_range(
+        {"data_inicial": "2026-06-01"},
+        date(2026, 8, 10),
+    ) == ("01/06/2026", "10/08/2026")
+    assert portal_nacional._automatic_capture_range(
         {"last_success_date": "2026-08-01"},
         date(2026, 8, 10),
     ) == ("30/07/2026", "10/08/2026")
@@ -84,8 +88,14 @@ def test_retention_deletes_only_old_automatic_runs(monkeypatch, tmp_path: Path) 
 def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     source = (Path(__file__).resolve().parents[1] / "portal-nacional.html").read_text(encoding="utf-8")
     assert 'id="btnBack" href="/"' in source
+    assert 'id="btnLogout"' not in source
+    assert 'id="btnRefresh"' not in source
     assert 'data-section="automaticSection"' in source
-    assert 'id="btnStop"' in source and 'sectionId !== "notesSection"' in source
+    assert 'id="btnStop"' in source
+    assert source.index('id="btnStop"') < source.index('id="btnDeleteRun"')
+    assert 'id="automaticDataInicial"' in source
+    assert 'id="automaticEnabled"' not in source
+    assert 'id="automaticTipo"' not in source
     assert "Capturar agora" in source
     assert 'data-edit-cert="' in source
 

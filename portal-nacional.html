@@ -49,7 +49,6 @@
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}tbody tr{transition:background .15s}tbody tr:hover{background:#fafbff}tbody tr.selected{background:#eef2ff;box-shadow:inset 3px 0 var(--accent)}
     .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
     .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
-    .check-row{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text2);font-weight:700}.check-row input{width:18px;height:18px;accent-color:var(--accent)}
     .clickable-row{cursor:pointer}.clickable-row:focus-visible{outline:3px solid rgba(99,102,241,.25);outline-offset:-3px}.automatic-summary{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
     code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}button,.button,.nav-btn{min-height:44px}}
@@ -72,7 +71,6 @@
       </nav>
       <div class="sidebar-footer">
         <a class="nav-btn" id="btnBack" href="/"><span aria-hidden="true">←</span>Voltar</a>
-        <button class="nav-btn" id="btnLogout" type="button">Sair</button>
       </div>
     </aside>
     <main id="mainContent" tabindex="-1">
@@ -80,10 +78,6 @@
         <div>
           <h2 id="pageTitle">Certificados</h2>
           <p id="pageSubtitle">Certificados digitais usados para acessar o Portal Nacional.</p>
-        </div>
-        <div class="actions">
-          <button class="secondary" id="btnRefresh" type="button">Atualizar</button>
-          <button class="secondary hidden" id="btnStop" type="button">Parar run</button>
         </div>
       </div>
       <div id="msg" aria-live="polite"></div>
@@ -127,10 +121,9 @@
                 <div><label>Certificado</label><select id="automaticCertSelect" name="cert_id"></select></div>
                 <div class="form-grid">
                   <div><label>Notas</label><select id="automaticModo" name="modo"><option value="ambos">Recebidas e emitidas</option><option value="recebidas">Recebidas</option><option value="emitidas">Emitidas</option></select></div>
-                  <div><label>Arquivos</label><select id="automaticTipo" name="tipo_download"><option value="ambos">XML e PDF</option><option value="xml">Só XML</option><option value="pdf">Só PDF</option></select></div>
+                  <div><label>Data inicial</label><input id="automaticDataInicial" name="data_inicial" type="date" required></div>
                 </div>
-                <label class="check-row"><input id="automaticEnabled" type="checkbox" checked> Capturar uma vez por dia</label>
-                <div class="notice">A primeira captura cobre os últimos quatro meses. Depois, o sistema verifica diariamente com sobreposição de segurança. Os horários são distribuídos automaticamente entre empresas para reduzir concorrência.</div>
+                <div class="notice">A primeira captura começa na data escolhida e baixa XML e PDF. Depois, o sistema verifica diariamente com sobreposição de segurança. Os horários são distribuídos automaticamente entre empresas para reduzir concorrência.</div>
                 <div class="actions"><button id="btnSaveAutomatic" type="submit">Salvar automação</button><button class="secondary hidden" id="btnCancelAutomaticEdit" type="button">Cancelar</button></div>
               </form>
             </div>
@@ -173,7 +166,7 @@
               <div class="card-body"><div id="runsTable" class="small">Carregando...</div></div>
             </div>
             <div class="card">
-              <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnContinue" type="button">Continuar</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
+              <div class="card-head"><h3>Detalhe</h3><div class="actions"><button class="secondary" id="btnContinue" type="button">Continuar</button><button class="secondary" id="btnStop" type="button">Parar run</button><button class="danger" id="btnDeleteRun" type="button">Excluir run</button></div></div>
               <div class="card-body stack">
                 <div id="detailBox" class="small">Selecione uma run.</div>
                 <div id="competenceBox"></div>
@@ -280,7 +273,6 @@
       const page = pages[sectionId] || pages.certificatesSection;
       $("pageTitle").textContent = page[0];
       $("pageSubtitle").textContent = page[1];
-      $("btnStop").classList.toggle("hidden", sectionId !== "notesSection");
     }
     function formPayload(){
       const fd = new FormData($("runForm"));
@@ -381,7 +373,7 @@
       if(!jobs.length){ $("automaticList").innerHTML = `<div class="small">Nenhuma captura automática configurada.</div>`; return; }
       $("automaticList").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Certificado</th><th>Agenda</th><th>Última captura</th><th>Status</th><th>Ações</th></tr></thead><tbody>${jobs.map(job => `
         <tr>
-          <td><strong>${esc(job.certificate_alias)}</strong><div class="small">${esc(job.modo)} · ${esc(job.tipo_download)}</div></td>
+          <td><strong>${esc(job.certificate_alias)}</strong><div class="small">${esc(job.modo)} · XML e PDF · desde ${esc(job.data_inicial ? job.data_inicial.split("-").reverse().join("/") : "-")}</div></td>
           <td>${job.enabled ? `<span class="pill ok">Diária · ${esc(job.schedule_label)}</span><div class="small">Próxima: ${esc(formatTs(job.next_run_at))}</div>` : `<span class="pill">Pausada</span>`}</td>
           <td>${esc(formatTs(job.last_started_at))}<div class="small">${job.last_capture_start ? `${esc(job.last_capture_start)} a ${esc(job.last_capture_end)}` : "Ainda não executada"}</div></td>
           <td>${statusPill(job.last_status)}${job.last_error ? `<div class="small">${esc(job.last_error)}</div>` : ""}</td>
@@ -552,7 +544,9 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       editingAutomaticId = "";
       $("automaticForm").reset();
       $("automaticCertSelect").disabled = false;
-      $("automaticEnabled").checked = true;
+      const initial = new Date();
+      initial.setDate(initial.getDate() - 123);
+      $("automaticDataInicial").value = dateIso(initial);
       $("btnSaveAutomatic").textContent = "Salvar automação";
       $("btnCancelAutomaticEdit").classList.add("hidden");
     }
@@ -563,8 +557,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       $("automaticCertSelect").value = job.cert_id;
       $("automaticCertSelect").disabled = true;
       $("automaticModo").value = job.modo;
-      $("automaticTipo").value = job.tipo_download;
-      $("automaticEnabled").checked = Boolean(job.enabled);
+      $("automaticDataInicial").value = job.data_inicial || dateIso(new Date());
       $("btnSaveAutomatic").textContent = "Salvar alterações";
       $("btnCancelAutomaticEdit").classList.remove("hidden");
       switchSection("automaticSection");
@@ -608,7 +601,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       ev.preventDefault(); setMsg("", "");
       const certId = $("automaticCertSelect").value;
       if(!certId){ setMsg("warn", "Cadastre e selecione um certificado enviado."); switchSection("certificatesSection"); return; }
-      const payload = {cert_id:certId, modo:$("automaticModo").value, tipo_download:$("automaticTipo").value, enabled:$("automaticEnabled").checked};
+      const payload = {cert_id:certId, modo:$("automaticModo").value, data_inicial:$("automaticDataInicial").value};
       buttonLoading($("btnSaveAutomatic"), true, "Salvando");
       try{ await api("/py/api/portal-nacional/automatic", {method:"POST", body:JSON.stringify(payload)}); resetAutomaticForm(); await loadState(); setMsg("ok", "Automação salva. A primeira captura será iniciada quando o Portal estiver livre."); }
       catch(err){ setMsg("err", err.message); }
@@ -674,10 +667,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnDeleteRun"), false, "Excluir run"); }
     };
-    $("btnRefresh").onclick = () => loadState(true).catch(err => setMsg("err", err.message));
     $("btnCancelCertEdit").onclick = resetCertificateForm;
     $("btnCancelAutomaticEdit").onclick = resetAutomaticForm;
-    $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
     document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
     $("certFile").addEventListener("change", () => {
       $("certFileName").textContent = $("certFile").files[0] ? "Arquivo selecionado" : "Selecionar arquivo .pfx";

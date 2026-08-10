@@ -95,8 +95,7 @@ class PortalSessionImportPayload(BaseModel):
 class PortalAutomaticPayload(BaseModel):
     cert_id: str
     modo: str = "ambos"
-    tipo_download: str = "ambos"
-    enabled: bool = True
+    data_inicial: str
 
 
 def _retry_config(cfg: Dict[str, Any], payload: PortalRetryPayload) -> Dict[str, Any]:
@@ -274,7 +273,11 @@ def _automatic_capture_range(job: Dict[str, Any], today: date | None = None) -> 
     try:
         start = datetime.strptime(last_success, "%Y-%m-%d").date() - timedelta(days=PORTAL_AUTOMATIC_OVERLAP_DAYS)
     except ValueError:
-        start = end - timedelta(days=PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS)
+        configured_start = str(job.get("data_inicial") or "").strip()
+        try:
+            start = datetime.strptime(configured_start, "%Y-%m-%d").date()
+        except ValueError:
+            start = end - timedelta(days=PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS)
     if start > end:
         start = end
     return start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y")
@@ -1135,6 +1138,7 @@ def _public_automatic_state(ctx: WorkerContext) -> Dict[str, Any]:
                     "enabled": bool(job.get("enabled", True)),
                     "modo": str(job.get("modo") or "ambos"),
                     "tipo_download": str(job.get("tipo_download") or "ambos"),
+                    "data_inicial": job.get("data_inicial"),
                     "schedule_minute": minute,
                     "schedule_label": f"{minute // 60:02d}:{minute % 60:02d}",
                     "next_run_at": job.get("next_run_at"),
@@ -1321,12 +1325,19 @@ async def save_portal_automatic(
 ) -> Dict[str, Any]:
     cert_id = safe_slug(payload.cert_id, "cert")
     cert = _get_uploaded_certificate(ctx, cert_id)
-    today = datetime.now(PORTAL_TIMEZONE).strftime("%d/%m/%Y")
+    current = datetime.now(PORTAL_TIMEZONE)
+    try:
+        configured_start = datetime.strptime(str(payload.data_inicial or "").strip(), "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Data inicial inválida.") from exc
+    if configured_start > current.date():
+        raise HTTPException(status_code=400, detail="Data inicial não pode estar no futuro.")
+    today = current.strftime("%d/%m/%Y")
     normalized = _normalize_cfg(
         {
             "cert_id": cert_id,
             "modo": payload.modo,
-            "tipo_download": payload.tipo_download,
+            "tipo_download": "ambos",
             "data_inicial": today,
             "data_final": today,
         }
@@ -1344,21 +1355,26 @@ async def save_portal_automatic(
                 "last_run_ids": [],
             }
             state["jobs"].append(job)
+        previous_start = str(job.get("data_inicial") or "")
         job.update(
             {
                 "cert_id": cert_id,
                 "certificate_alias": str(cert["meta"].get("alias") or "Certificado"),
                 "modo": normalized["modo"],
-                "tipo_download": normalized["tipo_download"],
-                "enabled": bool(payload.enabled),
+                "tipo_download": "ambos",
+                "data_inicial": configured_start.isoformat(),
+                "enabled": True,
                 "retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
                 "updated_at": _now_iso(),
             }
         )
-        if not job["enabled"]:
-            job["next_run_at"] = None
+        if previous_start != job["data_inicial"]:
+            job.pop("last_success_date", None)
+            job["last_status"] = "aguardando"
+            job["last_error"] = None
+            job["next_run_at"] = current.isoformat(timespec="seconds")
         elif not job.get("next_run_at"):
-            job["next_run_at"] = datetime.now(PORTAL_TIMEZONE).isoformat(timespec="seconds")
+            job["next_run_at"] = current.isoformat(timespec="seconds")
         _save_automatic_state(ctx, state)
         _rebalance_automatic_schedules()
     return {"ok": True, "automatic": _public_automatic_state(ctx)}

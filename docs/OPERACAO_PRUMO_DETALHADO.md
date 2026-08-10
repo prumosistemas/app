@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.81.
+Este documento e a fonte de contexto operacional da versao 1.0.82.
 
 ## Estado desejado
 
@@ -153,7 +153,7 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 - Modal `prumo-portal-nacional-google-solver` apenas para hCaptcha;
 - upload de certificado `.pfx`/`.p12` por colaborador, com senha validada e protegida no servidor;
 - sessao gerada diretamente pelo PFX no runtime atual, sem depender da store Windows no Linux.
-- aba `Notas automático`, com configuração por certificado, primeira busca de quatro meses, captura diária, botão `Capturar agora` e retenção móvel de 123 dias;
+- aba `Notas automático`, com configuração por certificado e data inicial, captura diária fixa em XML+PDF, botão `Capturar agora` e retenção móvel de 123 dias;
 - agenda global espalhada pelas 24 horas e execução automática serializada para não disputar o Portal e os solvers com outra run ativa.
 
 O agendador nasce e encerra junto com o FastAPI. A configuração fica em
@@ -165,10 +165,10 @@ de 123 dias seleciona somente essas runs e nunca remove capturas manuais.
 Operação da tela:
 
 1. Em `Certificados`, clique numa linha ou em `Editar` para alterar o alias, a senha ou substituir o PFX. Arquivo e senha em branco são preservados.
-2. Em `Notas automático`, escolha o certificado e os tipos de nota/arquivo. Salvar habilitado torna a primeira captura imediatamente elegível.
+2. Em `Notas automático`, escolha certificado, tipo de nota e data inicial. Salvar torna a captura diária em XML+PDF imediatamente elegível.
 3. O horário mostrado é administrado pelo servidor e redistribuído quando configurações são incluídas ou excluídas.
 4. `Capturar agora` ignora a espera da agenda, mas recusa se o mesmo colaborador já estiver executando outra run.
-5. `Parar run` aparece somente na aba `Notas`. `Voltar` retorna à central da Prumo e fica acima de `Sair`.
+5. `Parar run` fica ao lado de `Excluir run`. A navegação lateral mantém somente `Voltar`, que retorna à central da Prumo.
 
 Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A central `/` e a rota limpa `/portal-nacional` foram mantidas ativas por rotas especificas do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`), que entregam `index.html` e `portal-nacional.html` diretamente.
 

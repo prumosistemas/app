@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.81**
+Versao do app: **1.0.82**
 Atualizado em: **2026-08-10**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -76,6 +76,8 @@ No Portal Nacional, `Notas automático` persiste somente configuração e IDs em
 `automatic.json`, dentro do escopo do colaborador. O agendador do contêiner
 distribui os horários ao longo do dia, não inicia captura automática enquanto
 outra run do Portal estiver ativa e retém apenas runs automáticas por 123 dias.
+A captura diária sempre baixa XML+PDF e sua primeira janela começa na data
+escolhida na tela.
 Certificados, senhas e sessões continuam fora dos comandos e da documentação.
 
 ## Preparacao do cofre

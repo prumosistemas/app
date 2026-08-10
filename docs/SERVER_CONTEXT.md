@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.81
+Versao: 1.0.82
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -450,8 +450,8 @@ O download individual e o ZIP so expoem `downloads/`, `logs/`, `indice.json` e `
 
 Captura automática:
 
-- Uma configuração é vinculada a um certificado enviado pelo colaborador e pode baixar recebidas, emitidas ou ambas em XML, PDF ou ambos.
-- A primeira captura consulta 123 dias. Depois, cada sucesso avança o checkpoint e o ciclo seguinte repete os dois últimos dias para absorver notas tardias sem perder documentos.
+- Uma configuração é vinculada a um certificado enviado pelo colaborador, consulta recebidas, emitidas ou ambas e sempre baixa XML+PDF.
+- A primeira captura começa na data selecionada. Depois, cada sucesso avança o checkpoint e o ciclo seguinte repete os dois últimos dias para absorver notas tardias sem perder documentos.
 - Os horários de todas as configurações habilitadas são espaçados uniformemente nas 24 horas. O scheduler consulta a cada 30 segundos e inicia no máximo uma captura automática global quando não existe outra run do Portal ativa.
 - `Capturar agora` é uma ação explícita: inicia imediatamente se aquele colaborador não tiver outra run ativa. O isolamento continua sendo empresa/colaborador.
 - Somente runs marcadas como automáticas são removidas após 123 dias. Runs manuais, certificados, sessão e arquivos do ISS não entram nessa limpeza.
@@ -527,8 +527,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.81 .
-docker push ryang20/prumo-api:1.0.81
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.82 .
+docker push ryang20/prumo-api:1.0.82
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -539,10 +539,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.81 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.82 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.81
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.82
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```
