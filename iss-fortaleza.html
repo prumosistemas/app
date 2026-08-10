@@ -1136,6 +1136,8 @@
               <div class="row">
                 <button id="btnStopClosureScan" type="button" class="danger sm hidden">Parar</button>
                 <button id="btnRetryClosureScan" type="button" class="secondary sm hidden">Tentar erros</button>
+                <button id="btnPrintClosureScan" type="button" class="secondary sm hidden">Imprimir</button>
+                <button id="btnExportClosureXlsx" type="button" class="secondary sm hidden">Exportar XLSX</button>
                 <button id="btnDownloadClosureScan" type="button" class="secondary sm hidden">Baixar CSV</button>
                 <button id="btnDeleteClosureScan" type="button" class="danger sm hidden">Excluir</button>
               </div>
@@ -1155,7 +1157,7 @@
           <div class="card-body stack">
             <div class="row">
               <div style="flex:1;min-width:220px;"><label>Buscar</label><input id="closureSearch" placeholder="CNPJ, empresa, conta ou mensagem..." /></div>
-              <div style="width:190px;"><label>Status</label><select id="closureStatusFilter"><option value="all">Todos</option><option value="ABERTO">Abertos</option><option value="FECHADO">Fechados</option><option value="ABERTO_MENSAGEM">Com mensagem</option><option value="ERRO">Erros</option></select></div>
+              <div style="width:190px;"><label>Status</label><select id="closureStatusFilter"><option value="all">Todos</option><option value="ABERTO">Abertos</option><option value="FECHADO">Fechados</option><option value="ERRO">Erros</option></select></div>
               <div style="width:190px;"><label>Conta</label><select id="closureAccountFilter"><option value="all">Todas</option></select></div>
             </div>
             <div class="table-wrap closure-results">
@@ -2240,7 +2242,8 @@ const CLOSURE_STATUS_LABELS = {
   cancelled:"Interrompida", failed:"Falhou", discovering:"Listando empresas"
 };
 function closureStatusTag(status){
-  const raw=String(status||"—");
+  const original=String(status||"—");
+  const raw=original==="ABERTO_MENSAGEM"?"ABERTO":original;
   const label=CLOSURE_STATUS_LABELS[raw]||raw;
   const cls=raw==="finished"||raw==="FECHADO"?"ok":CLOSURE_ACTIVE_STATUSES.has(raw)||raw==="discovering"?"run":raw==="ABERTO"||raw==="ABERTO_MENSAGEM"||raw==="finished_with_errors"?"warn":raw==="ERRO"||raw==="failed"||raw==="cancelled"?"err":"muted";
   return `<span class="tag ${cls}">${escapeHtml(label)}</span>`;
@@ -3713,7 +3716,7 @@ function renderClosureRuns(){
       <div class="item-line">
         <div>
           <div class="item-title">${escapeHtml((run.accounts||[]).map(item=>item.account_alias).join(", ")||"Verificação ISS")}</div>
-          <div class="item-sub">${formatClosureDate(run.created_at)} · ${Number(run.processed||0)}/${Number(run.total||0)} empresa(s)</div>
+          <div class="item-sub">${formatClosureDate(run.created_at)} · por ${escapeHtml(run.user_email||"usuário da empresa")} · ${Number(run.processed||0)}/${Number(run.total||0)} empresa(s)</div>
         </div>
         ${closureStatusTag(run.status)}
       </div>
@@ -3728,11 +3731,25 @@ function closureMessage(item){
   return parts.filter(Boolean).join(" | ");
 }
 
-function renderClosureResults(){
-  const run=selectedClosureScan||{};
+function closureDisplayStatus(item){
+  return String(item?.status||"")==="ABERTO_MENSAGEM"?"ABERTO":String(item?.status||"");
+}
+
+function getFilteredClosureResults(){
+  const all=Array.isArray(selectedClosureScan?.results)?selectedClosureScan.results:[];
   const query=normalizeText($("closureSearch")?.value||"");
   const status=$("closureStatusFilter")?.value||"all";
   const account=$("closureAccountFilter")?.value||"all";
+  return all.filter(item=>{
+    if(status!=="all"&&closureDisplayStatus(item)!==status)return false;
+    if(account!=="all"&&String(item.account_alias)!==account)return false;
+    if(!query)return true;
+    return normalizeText([item.account_alias,item.cnpj,item.inscricao,item.nome,closureDisplayStatus(item),closureMessage(item),(item.competencias_pendentes||[]).join(" ")].join(" ")).includes(query);
+  });
+}
+
+function renderClosureResults(){
+  const run=selectedClosureScan||{};
   const all=Array.isArray(run.results)?run.results:[];
   const aliases=[...new Set(all.map(item=>String(item.account_alias||"")).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
   const filter=$("closureAccountFilter");
@@ -3741,18 +3758,13 @@ function renderClosureResults(){
     filter.innerHTML=`<option value="all">Todas</option>${aliases.map(alias=>`<option value="${escapeHtml(alias)}">${escapeHtml(alias)}</option>`).join("")}`;
     filter.value=aliases.includes(current)?current:"all";
   }
-  const accountValue=filter?.value||account;
-  const filtered=all.filter(item=>{
-    if(status!=="all"&&String(item.status)!==status)return false;
-    if(accountValue!=="all"&&String(item.account_alias)!==accountValue)return false;
-    if(!query)return true;
-    return normalizeText([item.account_alias,item.cnpj,item.inscricao,item.nome,item.status,closureMessage(item),(item.competencias_pendentes||[]).join(" ")].join(" ")).includes(query);
-  });
+  const filtered=getFilteredClosureResults();
+  const filtersActive=Boolean(normalizeText($("closureSearch")?.value||""))||$("closureStatusFilter")?.value!=="all"||filter?.value!=="all";
   const pageSize=50;
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));
   closureResultsPage=Math.min(Math.max(1,closureResultsPage),pages);
   const visible=filtered.slice((closureResultsPage-1)*pageSize,closureResultsPage*pageSize);
-  $("closureResultCount").textContent=query||status!=="all"||accountValue!=="all"?`${filtered.length}/${all.length}`:String(all.length);
+  $("closureResultCount").textContent=filtersActive?`${filtered.length}/${all.length}`:String(all.length);
   $("closureResultsPageInfo").textContent=`Página ${closureResultsPage}/${pages}`;
   $("closureResultsPrev").disabled=closureResultsPage<=1;
   $("closureResultsNext").disabled=closureResultsPage>=pages;
@@ -3770,10 +3782,14 @@ function renderClosureResults(){
 function renderClosureDetail(){
   const run=selectedClosureScan;
   const hasRun=Boolean(run?.run_id);
-  $("btnStopClosureScan").classList.toggle("hidden",!hasRun||!CLOSURE_ACTIVE_STATUSES.has(run.status));
-  $("btnRetryClosureScan").classList.toggle("hidden",!hasRun||CLOSURE_ACTIVE_STATUSES.has(run.status)||!Number(run.errors||0));
+  const user=currentUser();
+  const canManage=hasRun&&(String(run.user_id||"")===String(user?.id||"")||["owner","master"].includes(String(user?.role||"")));
+  $("btnStopClosureScan").classList.toggle("hidden",!canManage||!CLOSURE_ACTIVE_STATUSES.has(run.status));
+  $("btnRetryClosureScan").classList.toggle("hidden",!canManage||CLOSURE_ACTIVE_STATUSES.has(run.status)||!Number(run.errors||0));
+  $("btnPrintClosureScan").classList.toggle("hidden",!hasRun);
+  $("btnExportClosureXlsx").classList.toggle("hidden",!hasRun);
   $("btnDownloadClosureScan").classList.toggle("hidden",!hasRun);
-  $("btnDeleteClosureScan").classList.toggle("hidden",!hasRun||CLOSURE_ACTIVE_STATUSES.has(run.status));
+  $("btnDeleteClosureScan").classList.toggle("hidden",!canManage||CLOSURE_ACTIVE_STATUSES.has(run.status));
   if(!hasRun){
     $("closureRunHeader").className="notice warn";
     $("closureRunHeader").textContent="← Selecione uma verificação no histórico.";
@@ -3786,7 +3802,7 @@ function renderClosureDetail(){
   const pct=total?Math.min(100,Math.round(processed*100/total)):(CLOSURE_ACTIVE_STATUSES.has(run.status)?3:100);
   $("closureProgress").style.width=`${pct}%`;
   $("closureRunHeader").className=`notice ${run.status==="failed"?"err":run.status==="finished"?"ok":"warn"}`;
-  $("closureRunHeader").innerHTML=`<b>${closureStatusTag(run.status)} ${escapeHtml(run.progress||"")}</b><br><span class="small">Competências ${escapeHtml(run.competencia_inicial||"—")} a ${escapeHtml(run.competencia_final||"—")} · ${processed}/${total} processadas · ${Number(run.open||0)} abertas · ${Number(run.closed||0)} fechadas · ${Number(run.errors||0)} erros</span>${run.error?`<br><span class="small">${escapeHtml(run.error)}</span>`:""}`;
+  $("closureRunHeader").innerHTML=`<b>${closureStatusTag(run.status)} ${escapeHtml(run.progress||"")}</b><br><span class="small">Executada por ${escapeHtml(run.user_email||"usuário da empresa")} · Competências ${escapeHtml(run.competencia_inicial||"—")} a ${escapeHtml(run.competencia_final||"—")} · ${processed}/${total} processadas · ${Number(run.open||0)} abertas · ${Number(run.closed||0)} fechadas · ${Number(run.errors||0)} erros</span>${run.error?`<br><span class="small">${escapeHtml(run.error)}</span>`:""}`;
   const summaries=Array.isArray(run.accounts)?run.accounts:[];
   $("closureAccountSummary").innerHTML=`<table><thead><tr><th>Conta</th><th>Status</th><th>Progresso</th><th>Abertas</th><th>Fechadas</th><th>Erros</th></tr></thead><tbody>${summaries.length?summaries.map(item=>`<tr><td>${escapeHtml(item.account_alias||"")}</td><td>${closureStatusTag(item.status)}</td><td>${Number(item.processed||0)}/${Number(item.total||0)}<br><span class="small">${escapeHtml(item.progress||"")}</span></td><td>${Number(item.open||0)}</td><td>${Number(item.closed||0)}</td><td>${Number(item.errors||0)}</td></tr>`).join(""):`<tr><td colspan="6" class="small">Preparando contas...</td></tr>`}</tbody></table>`;
   renderClosureResults();
@@ -3857,6 +3873,39 @@ async function retryClosureScan(){
   await loadClosureScans(true);
 }
 
+function closureExportRows(){
+  return getFilteredClosureResults().map(item=>({
+    Conta:item.account_alias||"",
+    CNPJ:item.cnpj||item.cnpj_digits||"",
+    "Inscrição":item.inscricao||"",
+    Empresa:item.nome||"",
+    Status:closureDisplayStatus(item),
+    "Qtd. pendências":Number(item.qtd_pendencias||0),
+    "Competências pendentes":(item.competencias_pendentes||[]).join(", "),
+    "Mensagem / erro":closureMessage(item),
+  }));
+}
+
+function exportClosureXlsx(){
+  const rows=closureExportRows();
+  if(!rows.length){toast("Nenhuma empresa corresponde aos filtros atuais.","warn");return;}
+  const runId=String(selectedClosureScanId||"encerramento").replace(/[^a-zA-Z0-9_-]+/g,"-");
+  downloadXlsxRows(`encerramento-${runId}-filtrado.xlsx`,rows);
+}
+
+function printClosureResults(){
+  const rows=closureExportRows();
+  if(!rows.length){toast("Nenhuma empresa corresponde aos filtros atuais.","warn");return;}
+  const run=selectedClosureScan||{};
+  const printWindow=window.open("","_blank");
+  if(!printWindow){toast("O navegador bloqueou a janela de impressão.","warn");return;}
+  const body=rows.map(row=>`<tr><td>${escapeHtml(row.Conta)}</td><td>${escapeHtml(row.CNPJ)}</td><td>${escapeHtml(row["Inscrição"])}</td><td>${escapeHtml(row.Empresa)}</td><td>${escapeHtml(row.Status)}</td><td>${escapeHtml(row["Competências pendentes"]||"—")}</td><td>${escapeHtml(row["Mensagem / erro"]||"—")}</td></tr>`).join("");
+  printWindow.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Encerramento ISS</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#111}h1{font-size:18px;margin:0 0 6px}.meta{margin:0 0 12px;color:#444}table{width:100%;border-collapse:collapse}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #bbb;padding:5px;text-align:left;vertical-align:top}th{background:#eee;font-size:10px}td:nth-child(2){white-space:nowrap;font-family:monospace}</style></head><body><h1>Checagem de encerramento ISS Fortaleza</h1><p class="meta">Run ${escapeHtml(run.run_id||"")} · executada por ${escapeHtml(run.user_email||"usuário da empresa")} · ${rows.length} resultado(s) conforme os filtros atuais · impresso em ${escapeHtml(new Date().toLocaleString("pt-BR"))}</p><table><thead><tr><th>Conta</th><th>CNPJ</th><th>Inscrição</th><th>Empresa</th><th>Status</th><th>Competências pendentes</th><th>Mensagem / erro</th></tr></thead><tbody>${body}</tbody></table></body></html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(()=>printWindow.print(),150);
+}
+
 async function deleteClosureScan(){
   if(!selectedClosureScanId)return;
   if(!await customConfirm("Excluir esta verificação do histórico?","Excluir verificação","danger"))return;
@@ -3871,6 +3920,8 @@ $("btnClearClosureAccounts").addEventListener("click",()=>$("closureAccountChoic
 $("btnStartClosureScan").addEventListener("click",startClosureScan);
 $("btnStopClosureScan").addEventListener("click",stopClosureScan);
 $("btnRetryClosureScan").addEventListener("click",retryClosureScan);
+$("btnPrintClosureScan").addEventListener("click",printClosureResults);
+$("btnExportClosureXlsx").addEventListener("click",exportClosureXlsx);
 $("btnDeleteClosureScan").addEventListener("click",deleteClosureScan);
 $("btnDownloadClosureScan").addEventListener("click",async()=>{
   if(!selectedClosureScanId)return;

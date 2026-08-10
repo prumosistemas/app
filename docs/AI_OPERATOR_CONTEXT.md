@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.84**
+Versao do app: **1.0.85**
 Atualizado em: **2026-08-10**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -83,8 +83,9 @@ Certificados, senhas e sessões continuam fora dos comandos e da documentação.
 No ISS Fortaleza, `Checar encerramento` usa `server/iss_closure_scan.py`. A API
 abre sessões HTTP diretamente no ThinkPad, limita o conjunto a seis sessões de
 rede globais e quatro por conta e não consome navegadores Modal. O estado fica
-no mesmo SQLite do colaborador, sob a chave `:closure_scans`, com no máximo
-cinco verificações; somente IDs/aliases são persistidos, nunca login ou senha.
+no SQLite sob uma chave da empresa, com no máximo cinco verificações visíveis
+a todos os seus usuários. Cada run mantém o email do executor; somente IDs e
+aliases de contas são persistidos, nunca login ou senha.
 
 ## Preparacao do cofre
 

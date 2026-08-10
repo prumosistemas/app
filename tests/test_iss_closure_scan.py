@@ -14,9 +14,9 @@ if str(SERVER_DIR) not in sys.path:
 import iss_closure_scan as scan  # noqa: E402
 
 
-def _ctx(user: str = "usuario"):
+def _ctx(user: str = "usuario", company: str = "empresa"):
     return SimpleNamespace(
-        company_id="empresa",
+        company_id=company,
         company_name="Empresa",
         user_id=user,
         user_email=f"{user}@example.com",
@@ -29,6 +29,7 @@ def _memory_storage(monkeypatch):
     storage = {}
     monkeypatch.setattr(scan, "db_get_json", lambda key, default: storage.get(key, default))
     monkeypatch.setattr(scan, "db_set_json", lambda key, value: storage.__setitem__(key, value))
+    monkeypatch.setattr(scan, "_legacy_company_runs", lambda _ctx: [])
     return storage
 
 
@@ -243,6 +244,11 @@ def test_retry_errors_preserves_successful_closure_results(monkeypatch) -> None:
         [
             {
                 "run_id": "scan-1",
+                "company_id": "empresa",
+                "company_name": "Empresa",
+                "user_id": "laryssa",
+                "user_email": "laryssa@example.com",
+                "user_role": "member",
                 "created_at": 1,
                 "status": "finished_with_errors",
                 "results": [
@@ -267,17 +273,28 @@ def test_retry_errors_preserves_successful_closure_results(monkeypatch) -> None:
     assert updated["accounts"][0]["errors"] == 0
 
 
-def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
+def test_history_is_shared_by_company_and_retained_at_five(monkeypatch) -> None:
     _memory_storage(monkeypatch)
-    alan, bia = _ctx("alan"), _ctx("bia")
+    alan, bia, outra = _ctx("alan"), _ctx("bia"), _ctx("bia", "outra-empresa")
     scan._save_runs(
         alan,
-        [{"run_id": f"run-{index}", "created_at": index, "status": "finished"} for index in range(8)],
+        [
+            {
+                "run_id": f"run-{index}",
+                "created_at": index,
+                "status": "finished",
+                "user_email": "alan@example.com",
+            }
+            for index in range(8)
+        ],
     )
-    scan._save_runs(bia, [{"run_id": "bia-1", "created_at": 1, "status": "finished"}])
 
     assert [item["run_id"] for item in scan._load_runs(alan)] == ["run-7", "run-6", "run-5", "run-4", "run-3"]
-    assert [item["run_id"] for item in scan._load_runs(bia)] == ["bia-1"]
+    assert [item["run_id"] for item in scan._load_runs(bia)] == ["run-7", "run-6", "run-5", "run-4", "run-3"]
+    assert scan._load_runs(bia)[0]["user_email"] == "alan@example.com"
+    assert scan._load_runs(outra) == []
+    assert scan._state_key(alan) == scan._state_key(bia)
+    assert scan._state_key(alan) != scan._state_key(outra)
 
 
 def test_create_scan_persists_references_but_not_credentials(monkeypatch) -> None:
@@ -296,6 +313,20 @@ def test_create_scan_persists_references_but_not_credentials(monkeypatch) -> Non
     assert "login-secreto" not in serialized
     assert "senha-secreta" not in serialized
     assert "results" not in created
+
+
+def test_other_company_member_can_view_but_not_delete_shared_run(monkeypatch) -> None:
+    _memory_storage(monkeypatch)
+    alan, bia = _ctx("alan"), _ctx("bia")
+    scan._save_runs(
+        alan,
+        [{"run_id": "scan-1", "created_at": 1, "status": "finished", "user_id": "alan"}],
+    )
+
+    assert asyncio.run(scan.get_closure_scan("scan-1", bia))["run_id"] == "scan-1"
+    with pytest.raises(Exception) as exc:
+        asyncio.run(scan.delete_closure_scan("scan-1", bia))
+    assert getattr(exc.value, "status_code", None) == 403
 
 
 def test_same_account_cannot_be_scanned_twice_concurrently(monkeypatch) -> None:
@@ -323,6 +354,11 @@ def test_closure_scan_ui_is_before_instructions_and_has_multi_account_controls()
     assert 'id="btnDownloadClosureScan"' in source
     assert 'id="closureResultsBody"' in source
     assert 'id="btnRetryClosureScan"' in source
+    assert 'id="btnPrintClosureScan"' in source
+    assert 'id="btnExportClosureXlsx"' in source
+    assert '<option value="ABERTO_MENSAGEM">' not in source
+    assert 'getFilteredClosureResults()' in source
+    assert 'Executada por ${escapeHtml(run.user_email' in source
     assert '"/retry-errors"' in source
     assert '"/py/api/closure-scans"' in source
 

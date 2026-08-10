@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.84 - checagem de encerramento ISS**
+Versao: **1.0.85 - histórico empresarial da checagem de encerramento ISS**
 
 ## Estado atual
 
@@ -17,7 +17,7 @@ Versao: **1.0.84 - checagem de encerramento ISS**
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas automáticas por 123 dias. Os horários são distribuídos ao longo das 24 horas e o agendador inicia somente uma captura automática quando o Portal está livre; `Capturar agora` permanece disponível.
 - A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
 - A exportação de escrituração do ISS é obtida pelo link gerado dentro do navegador autenticado. Arquivos vazios, HTML de erro e planilhas estruturalmente inválidas deixam de ser aceitos como sucesso; o log registra bytes e linhas físicas dos XMLs internos, contornando metadados de dimensão incorretos do portal.
-- `Checar encerramento` consulta uma ou mais contas ISS por requests diretos do ThinkPad, sem ocupar Browserless ou Modal. O backend limita seis sessões HTTP globais, até quatro por conta, permite usuários simultâneos e mantém as cinco verificações mais recentes de cada colaborador.
+- `Checar encerramento` consulta uma ou mais contas ISS por requests diretos do ThinkPad, sem ocupar Browserless ou Modal. O backend limita seis sessões HTTP globais, até quatro por conta, permite usuários simultâneos e compartilha as cinco verificações mais recentes com todos os usuários da mesma empresa, identificando quem executou cada uma.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -90,9 +90,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.84 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.85 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.84
+docker push ryang20/prumo-api:1.0.85
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.84.
+Este documento e a fonte de contexto operacional da versao 1.0.85.
 
 ## Estado desejado
 
@@ -21,7 +21,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.84.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
 - A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
-- `Checar encerramento` usa requests do ThinkPad, não Browserless. Aceita várias contas cadastradas, mantém cinco históricos por colaborador e compartilha um limite global de seis sessões HTTP para não prejudicar outras operações.
+- `Checar encerramento` usa requests do ThinkPad, não Browserless. Aceita várias contas cadastradas, mantém cinco históricos compartilhados pela empresa com identificação do executor e compartilha um limite global de seis sessões HTTP para não prejudicar outras operações.
 
 ## Onde fica cada coisa
 

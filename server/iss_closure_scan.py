@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from db import db_connect, db_get_json, db_set_json, now_ms
-from domain import WorkerContext, get_worker_context, kv_key, load_accounts_raw
+from domain import WorkerContext, get_worker_context, load_accounts_raw
 from flow_errors import LoginError
 from portal_bootstrap import (
     BASE,
@@ -64,11 +64,41 @@ def _task_id(ctx: WorkerContext, run_id: str) -> str:
 
 
 def _state_key(ctx: WorkerContext) -> str:
-    return kv_key(ctx, "closure_scans")
+    return f"empresa:{ctx.company_id}:closure_scans"
+
+
+def _legacy_company_runs(ctx: WorkerContext) -> List[Dict[str, Any]]:
+    escaped_company = str(ctx.company_id).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"empresa:{escaped_company}:membro:%:closure_scans"
+    with db_connect() as conn:
+        rows = conn.execute("SELECT value FROM kv WHERE key LIKE ? ESCAPE '\\'", (pattern,)).fetchall()
+    runs_by_id: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        try:
+            payload = __import__("json").loads(row["value"])
+        except Exception:
+            continue
+        for run in payload.get("runs", []) if isinstance(payload, dict) else []:
+            if not isinstance(run, dict) or not run.get("run_id"):
+                continue
+            current = runs_by_id.get(str(run["run_id"]))
+            if current is None or int(run.get("updated_at") or 0) >= int(current.get("updated_at") or 0):
+                runs_by_id[str(run["run_id"])] = run
+    migrated_sources = {
+        str(run.get("migrated_from_run_id"))
+        for run in runs_by_id.values()
+        if run.get("migrated_from_run_id")
+    }
+    return [run for run_id, run in runs_by_id.items() if run_id not in migrated_sources]
 
 
 def _load_runs(ctx: WorkerContext) -> List[Dict[str, Any]]:
-    payload = db_get_json(_state_key(ctx), {"runs": []})
+    payload = db_get_json(_state_key(ctx), None)
+    if not isinstance(payload, dict):
+        legacy = _legacy_company_runs(ctx)
+        if legacy:
+            _save_runs(ctx, legacy)
+        payload = {"runs": legacy}
     runs = payload.get("runs", []) if isinstance(payload, dict) else []
     return [item for item in runs if isinstance(item, dict)]
 
@@ -102,6 +132,23 @@ def _mutate_run(ctx: WorkerContext, run_id: str, mutator: Callable[[Dict[str, An
 
 def _public_summary(run: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in run.items() if key != "results"}
+
+
+def _context_from_run(run: Dict[str, Any]) -> WorkerContext:
+    return WorkerContext(
+        company_id=str(run.get("company_id", "")),
+        company_name=str(run.get("company_name", "")),
+        user_id=str(run.get("user_id", "")),
+        user_email=str(run.get("user_email", "")),
+        user_role=str(run.get("user_role", "member")),
+        via_worker=True,
+    )
+
+
+def _assert_can_manage(run: Dict[str, Any], ctx: WorkerContext) -> None:
+    if str(run.get("user_id") or "") == str(ctx.user_id) or ctx.user_role in {"owner", "master"}:
+        return
+    raise HTTPException(status_code=403, detail="Somente quem executou a verificação pode alterá-la.")
 
 
 def _new_run_id() -> str:
@@ -585,7 +632,7 @@ def _company_result(
         "cnpj_digits": company.get("cnpj_digits", ""),
         "inscricao": company.get("inscricao", ""),
         "nome": company.get("nome", ""),
-        "status": "ABERTO" if valid else result.get("status", "FECHADO"),
+        "status": "ABERTO" if valid or messages else "FECHADO",
         "qtd_pendencias": len(valid),
         "competencias_pendentes": sorted({item.get("competencia", "") for item in valid if item.get("competencia")}),
         "mensagens": messages[:5],
@@ -856,6 +903,7 @@ def _schedule(ctx: WorkerContext, run_id: str) -> None:
 def start_closure_scan_recovery() -> None:
     with db_connect() as conn:
         rows = conn.execute("SELECT value FROM kv WHERE key LIKE '%:closure_scans'").fetchall()
+    seen: set[str] = set()
     for row in rows:
         try:
             payload = __import__("json").loads(row["value"])
@@ -864,14 +912,11 @@ def start_closure_scan_recovery() -> None:
         for run in payload.get("runs", []) if isinstance(payload, dict) else []:
             if run.get("status") not in ACTIVE_STATUSES:
                 continue
-            ctx = WorkerContext(
-                company_id=str(run.get("company_id", "")),
-                company_name=str(run.get("company_name", "")),
-                user_id=str(run.get("user_id", "")),
-                user_email=str(run.get("user_email", "")),
-                user_role=str(run.get("user_role", "member")),
-                via_worker=True,
-            )
+            run_id = str(run.get("run_id") or "")
+            if not run_id or run_id in seen:
+                continue
+            seen.add(run_id)
+            ctx = _context_from_run(run)
             try:
                 _mutate_run(ctx, run["run_id"], lambda item: item.update(status="queued", progress="Retomando após reinício do servidor..."))
                 _schedule(ctx, run["run_id"])
@@ -984,11 +1029,13 @@ async def stop_closure_scan(run_id: str, ctx: WorkerContext = Depends(get_worker
     run = _find_run(_load_runs(ctx), run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Verificação não encontrada.")
+    _assert_can_manage(run, ctx)
     if run.get("status") not in ACTIVE_STATUSES:
         return {"stopped": False, "message": "A verificação já terminou."}
     _mutate_run(ctx, run_id, lambda item: item.update(status="stopping", stop_requested=True, progress="Parada solicitada..."))
+    owner_ctx = _context_from_run(run)
     with _TASKS_LOCK:
-        flag = _STOP_FLAGS.get(_task_id(ctx, run_id))
+        flag = _STOP_FLAGS.get(_task_id(owner_ctx, run_id))
         if flag:
             flag.set()
     return {"stopped": True, "message": "Parada solicitada. Resultados já concluídos serão preservados."}
@@ -999,6 +1046,7 @@ async def retry_closure_scan_errors(run_id: str, ctx: WorkerContext = Depends(ge
     run = _find_run(_load_runs(ctx), run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Verificação não encontrada.")
+    _assert_can_manage(run, ctx)
     if run.get("status") in ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="A verificação ainda está ativa.")
     failed = [item for item in run.get("results", []) if item.get("status") == "ERRO"]
@@ -1032,7 +1080,7 @@ async def retry_closure_scan_errors(run_id: str, ctx: WorkerContext = Depends(ge
         _recalculate_run(item)
 
     updated = _mutate_run(ctx, run_id, reset_errors)
-    _schedule(ctx, run_id)
+    _schedule(_context_from_run(updated), run_id)
     return {"retried": len(failed), "run": _public_summary(updated)}
 
 
@@ -1043,6 +1091,7 @@ async def delete_closure_scan(run_id: str, ctx: WorkerContext = Depends(get_work
         run = _find_run(runs, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Verificação não encontrada.")
+        _assert_can_manage(run, ctx)
         if run.get("status") in ACTIVE_STATUSES:
             raise HTTPException(status_code=409, detail="Pare a verificação antes de excluir.")
         _save_runs(ctx, [item for item in runs if item.get("run_id") != run_id])
