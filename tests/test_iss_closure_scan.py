@@ -162,6 +162,36 @@ def test_analysis_reuses_company_page_and_emits_incremental_batches(monkeypatch)
     assert [len(batch) for batch in batches] == [3, 2]
 
 
+def test_view_expired_on_final_consult_matches_reference_closed_semantics(monkeypatch) -> None:
+    class Response:
+        def __init__(self, text: str, url: str = "https://iss.example/?cid=1"):
+            self.text = text
+            self.url = url
+
+    class Client:
+        def __init__(self):
+            self.posts = 0
+
+        def ajax_headers(self, _referer):
+            return {}
+
+        def post(self, *_args, **_kwargs):
+            self.posts += 1
+            if self.posts == 1:
+                return Response('<a href="home.seam?cid=1">empresa</a>')
+            return Response("errorViewExpired.seam")
+
+        def get(self, _url):
+            return Response('<input name="javax.faces.ViewState" value="state" />')
+
+    result = scan._consult_company(
+        Client(),
+        "state",
+        {"idx": 1, "cnpj_digits": "12345678000190"},
+    )
+    assert result == {"pendencias": [], "status": "FECHADO"}
+
+
 def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
     _memory_storage(monkeypatch)
     alan, bia = _ctx("alan"), _ctx("bia")

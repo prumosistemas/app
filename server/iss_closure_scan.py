@@ -529,7 +529,9 @@ def _consult_company(client: PortalBootstrapClient, state: str, company: Dict[st
     if _is_login_page(consulted.text):
         raise RuntimeError("Sessão expirada ao consultar encerramentos.")
     if _is_view_expired(consulted.text):
-        raise RuntimeError("ViewExpired ao consultar encerramentos.")
+        # O ISS usa esta resposta para inscrições sem escrituração consultável.
+        # O projeto de varredura já validado classifica este caso como fechado.
+        return {"pendencias": [], "status": "FECHADO"}
 
     pending = [
         {
