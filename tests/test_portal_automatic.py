@@ -89,6 +89,9 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert "Capturar agora" in source
     assert 'data-edit-cert="' in source
 
+    worker = (Path(__file__).resolve().parents[1] / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+    assert 'htmlResponse(portalNacionalHtml, 200, "no-store")' in worker
+
 
 def test_run_list_can_skip_recursive_file_scan(monkeypatch, tmp_path: Path) -> None:
     _configure_storage(monkeypatch, tmp_path)

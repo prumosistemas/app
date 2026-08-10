@@ -34,7 +34,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - As configurações habilitadas são distribuídas uniformemente nas 24 horas. O agendador inicia apenas uma captura automática por vez e espera o Portal ficar sem runs ativas, reduzindo colisões entre empresas e consumo simultâneo de solver.
 - `Capturar agora` permite antecipar uma configuração. A run continua usando o mesmo isolamento por empresa/colaborador e o mesmo fluxo idempotente de recebidas/emitidas.
 - O certificado agora pode ser editado por clique na lista. A API nunca devolve o nome original do PFX; arquivo e senha existentes são mantidos quando não forem substituídos.
-- A tela ganhou `Voltar` acima de `Sair`, `Parar run` ficou restrito à aba de notas e a listagem deixou de varrer todos os arquivos das runs em cada atualização.
+- A tela ganhou `Voltar` acima de `Sair`, `Parar run` ficou restrito à aba de notas e a listagem deixou de varrer todos os arquivos das runs em cada atualização. A rota do Portal usa `Cache-Control: no-store`, evitando HTML antigo durante uma publicação.
 - Validação local: 168 testes, compilação Python e validação sintática do JavaScript inline.
 
 ### Atualização de cobrança em 2026-08-03

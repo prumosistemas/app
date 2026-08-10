@@ -113,7 +113,7 @@ export default {
       }
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/portal-nacional" || url.pathname === "/portal-nacional/")) {
-        return htmlResponse(portalNacionalHtml);
+        return htmlResponse(portalNacionalHtml, 200, "no-store");
       }
 
       if (["GET", "HEAD"].includes(request.method) && (url.pathname === "/iss-fortaleza" || url.pathname === "/iss-fortaleza/")) {
