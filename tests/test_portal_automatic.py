@@ -103,7 +103,9 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert 'id="automaticRunsTable"' in source
     assert 'id="automaticRunsCount"' in source
     assert "function renderAutomaticRuns(runs)" in source
-    assert 'data-download-auto-run="${esc(run.run_id)}"' in source
+    assert 'data-download-auto-job="${esc(jobId)}"' in source
+    assert 'run.status==="finalizado"' in source
+    assert 'automatic/download?${query}' in source
     assert "renderAutomaticRuns(state.runs)" in source
     assert 'switchSection("automaticSection"); setMsg("ok", "Captura automática iniciada.' in source
     assert source.count("groupRuns(manualPortalRuns(state.runs))") == 2
@@ -151,3 +153,33 @@ def test_scheduler_waits_while_any_portal_run_is_active(monkeypatch, tmp_path: P
     )
 
     assert result == {"started": False, "reason": "portal_busy"}
+
+
+def test_automatic_accumulated_download_deduplicates_and_honors_cutoff(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    for run_id, created, names in (
+        ("run-old", "2026-08-09T10:00:00-03:00", ["nota-1.xml"]),
+        ("run-new", "2026-08-10T10:00:00-03:00", ["nota-1.xml", "nota-2.xml"]),
+    ):
+        run_dir = portal_nacional._runs_root(ctx) / run_id
+        downloads = run_dir / "downloads"
+        downloads.mkdir(parents=True)
+        items = {}
+        for index, name in enumerate(names):
+            file_path = downloads / name
+            file_path.write_text(f"<NFSe>{run_id}-{index}</NFSe>", encoding="utf-8")
+            items[f"item-{index}"] = {"status": "baixado", "competencia": "2026-08", "files": [str(file_path)]}
+        portal_nacional._save_json(
+            run_dir / "run.json",
+            {"created_at": created, "config": {"automatic": True, "automatic_job_id": "cert-1", "modo": "recebidas"}},
+        )
+        portal_nacional._save_json(run_dir / "indice.json", {"items": items})
+
+    all_entries, all_runs = portal_nacional._automatic_accumulated_entries(ctx, "cert-1")
+    old_entries, old_runs = portal_nacional._automatic_accumulated_entries(ctx, "cert-1", date(2026, 8, 9))
+
+    assert sorted(entry["path"].name for entry in all_entries) == ["nota-1.xml", "nota-2.xml"]
+    assert [path.name for path in all_runs] == ["run-old", "run-new"]
+    assert [entry["path"].name for entry in old_entries] == ["nota-1.xml"]
+    assert [path.name for path in old_runs] == ["run-old"]

@@ -396,25 +396,29 @@
       $("automaticList").querySelectorAll("[data-delete-auto]").forEach(btn => btn.onclick = () => deleteAutomatic(btn.dataset.deleteAuto, btn));
     }
     function renderAutomaticRuns(runs){
-      latestAutomaticRuns = groupRuns(automaticPortalRuns(runs));
+      latestAutomaticRuns = groupRuns(automaticPortalRuns(runs)).filter(run=>run.status==="finalizado");
       $("automaticRunsCount").textContent = String(latestAutomaticRuns.length);
-      if(!latestAutomaticRuns.length){ $("automaticRunsTable").innerHTML = `<div class="small">Nenhuma captura automática executada ainda.</div>`; return; }
-      $("automaticRunsTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Certificado / período</th><th>Resultado</th><th>Quando apareceu</th><th>Ação</th></tr></thead><tbody>${latestAutomaticRuns.map(run => {
+      if(!latestAutomaticRuns.length){ $("automaticRunsTable").innerHTML = `<div class="small">Nenhuma captura automática concluída ainda.</div>`; return; }
+      const latestJobIds=new Set();
+      $("automaticRunsTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Captura</th><th>Certificado / período</th><th>O que entrou</th><th>Momento da captura</th><th>Downloads acumulados</th></tr></thead><tbody>${latestAutomaticRuns.map(run => {
         const summary=run.summary||{};
         const total=Number(summary.portal_registros||summary.capturados||0);
         const ready=Number(summary.baixados||0);
         const groups=Object.values(summary.competencias||{});
         const period=[run.config?.data_inicial,run.config?.data_final].filter(Boolean).join(" a ")||"Período não informado";
-        const completed=/finalizado|erro|interrompida|parado/.test(String(run.status||""));
+        const jobId=String(run.config?.automatic_job_id||run.config?.cert_id||"");
+        const isLatest=!latestJobIds.has(jobId); latestJobIds.add(jobId);
+        const captureDate=String(run.updated_at||run.created_at||"").slice(0,10);
+        const captureLabel=captureDate?captureDate.split("-").reverse().join("/"):"esta captura";
         return `<tr>
           <td>${statusPill(run.status)}</td>
           <td><strong>${esc(run.config?.certificate_alias||"Certificado")}</strong><div class="small">${esc(run.config?.modo||"-")} · XML e PDF<br>${esc(period)}</div></td>
-          <td><strong>${ready}/${total} nota(s) pronta(s)</strong><div class="small">${Number(summary.erros||0)} erro(s) · ${Number(summary.pendentes||0)} pendente(s)</div>${groups.length?`<div class="automatic-summary">${groups.map(group=>`<span class="pill">${esc(competenceLabel(group.competencia))}: ${Number(group.baixados||0)}</span>`).join("")}</div>`:""}</td>
-          <td>Criada em ${esc(formatTs(run.created_at))}<div class="small">${completed?"Finalizada":"Atualizada"} em ${esc(formatTs(run.updated_at))}</div></td>
-          <td><button class="secondary" data-download-auto-run="${esc(run.run_id)}" type="button" ${ready?"":"disabled"}>Baixar ZIP</button></td>
+          <td><strong>${ready}/${total} nota(s) nesta captura</strong><div class="small">${ready?"Novas ou ainda não armazenadas anteriormente":"Nenhuma nota nova"}</div>${groups.length?`<div class="automatic-summary">${groups.map(group=>`<span class="pill">${esc(competenceLabel(group.competencia))}: ${Number(group.baixados||0)}</span>`).join("")}</div>`:""}</td>
+          <td>${esc(formatTs(run.updated_at||run.created_at))}<div class="small">Iniciada em ${esc(formatTs(run.created_at))}</div></td>
+          <td><div class="actions">${isLatest?`<button data-download-auto-job="${esc(jobId)}" type="button">Baixar tudo</button>`:""}<button class="secondary" data-download-auto-job="${esc(jobId)}" data-download-auto-until="${esc(captureDate)}" type="button">Até ${esc(captureLabel)}</button></div></td>
         </tr>`;
       }).join("")}</tbody></table></div>`;
-      $("automaticRunsTable").querySelectorAll("[data-download-auto-run]").forEach(btn => btn.onclick = () => downloadAutomaticRun(btn.dataset.downloadAutoRun, btn));
+      $("automaticRunsTable").querySelectorAll("[data-download-auto-job]").forEach(btn => btn.onclick = () => downloadAutomaticAccumulated(btn.dataset.downloadAutoJob,btn.dataset.downloadAutoUntil||"",btn));
     }
     function renderRuns(runs){
       if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
@@ -603,17 +607,13 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading(btn, false, "Capturar agora"); }
     }
-    async function downloadAutomaticRun(runId, btn){
-      const run=latestAutomaticRuns.find(item=>item.run_id===runId);
-      if(!run){ setMsg("warn","Captura automática não encontrada."); return; }
-      const children=(run._children||[]).filter(child=>Number(child.summary?.baixados||0)>0);
-      if(!children.length){ setMsg("warn","Esta captura ainda não possui arquivos disponíveis."); return; }
-      const query=new URLSearchParams();
-      children.forEach(child=>query.append("run_id",child.run_id));
+    async function downloadAutomaticAccumulated(jobId, until, btn){
+      const query=new URLSearchParams({job_id:jobId});
+      if(until)query.set("ate",until);
       buttonLoading(btn,true,"Preparando");
-      try{ await downloadBlob(`/py/api/portal-nacional/download?${query}`,"portal-automatico.zip"); }
+      try{ await downloadBlob(`/py/api/portal-nacional/automatic/download?${query}`,"portal-automatico-acumulado.zip"); }
       catch(err){ setMsg("err",err.message); }
-      finally{ buttonLoading(btn,false,"Baixar ZIP"); }
+      finally{ buttonLoading(btn,false,until?"Baixar até a data":"Baixar tudo"); }
     }
     async function deleteAutomatic(jobId, btn){
       if(!confirm("Excluir esta automação? As notas já baixadas serão mantidas por quatro meses.")) return;

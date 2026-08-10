@@ -707,6 +707,35 @@ def _portal_download_entries(
     return entries
 
 
+def _automatic_accumulated_entries(
+    ctx: WorkerContext,
+    job_id: str,
+    until: date | None = None,
+) -> tuple[List[Dict[str, Any]], List[Path]]:
+    safe_job_id = safe_slug(job_id, "job")
+    entries_by_key: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+    run_dirs: List[Path] = []
+    for run_path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda path: path.stat().st_mtime):
+        run = _load_json(run_path, {})
+        cfg = dict(run.get("config") or {})
+        current_job = safe_slug(str(cfg.get("automatic_job_id") or cfg.get("cert_id") or ""), "job")
+        if not cfg.get("automatic") or current_job != safe_job_id:
+            continue
+        created = _parse_portal_datetime(run.get("created_at"))
+        if until and created and created.astimezone(PORTAL_TIMEZONE).date() > until:
+            continue
+        run_dir = run_path.parent
+        index = _load_json(_run_paths(run_dir)["index"], {})
+        modo = str(cfg.get("modo") or "").strip().lower()
+        found = _portal_download_entries(run_dir, index, set())
+        if found:
+            run_dirs.append(run_dir)
+        for entry in found:
+            key = (modo, str(entry.get("kind") or ""), entry["path"].name.casefold())
+            entries_by_key[key] = {**entry, "modo": modo}
+    return list(entries_by_key.values()), run_dirs
+
+
 def _modo_folder(value: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized == "recebidas":
@@ -1316,6 +1345,29 @@ async def import_session(payload: PortalSessionImportPayload, ctx: WorkerContext
 @router.get("/automatic")
 async def get_portal_automatic(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
     return {"ok": True, "automatic": _public_automatic_state(ctx)}
+
+
+@router.get("/automatic/download")
+async def download_portal_automatic_accumulated(
+    job_id: str = Query(...),
+    ate: str = Query(default=""),
+    ctx: WorkerContext = Depends(get_worker_context),
+):
+    cutoff = None
+    if str(ate or "").strip():
+        try:
+            cutoff = datetime.strptime(str(ate).strip(), "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Data limite inválida.") from exc
+    entries, run_dirs = _automatic_accumulated_entries(ctx, job_id, cutoff)
+    if not entries or not run_dirs:
+        raise HTTPException(status_code=404, detail="Nenhum arquivo automático disponível até esta data.")
+    zip_dir = _run_paths(run_dirs[-1])["zip"]
+    zip_dir.mkdir(parents=True, exist_ok=True)
+    cutoff_slug = cutoff.isoformat() if cutoff else "tudo"
+    zip_path = zip_dir / f"portal-automatico-{safe_slug(job_id, 'job')}-ate-{cutoff_slug}.zip"
+    _write_portal_zip(zip_path, entries, separate_competencias=True, separate_modos=True)
+    return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
 
 
 @router.post("/automatic")
