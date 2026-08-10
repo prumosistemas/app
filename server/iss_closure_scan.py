@@ -678,6 +678,24 @@ def _append_results(ctx: WorkerContext, run_id: str, account: Dict[str, Any], re
     _mutate_run(ctx, run_id, mutate)
 
 
+def _remaining_companies(
+    run: Dict[str, Any],
+    account_id: str,
+    companies: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    completed = {
+        str(item.get("cnpj_digits") or only_digits(item.get("cnpj", "")))
+        for item in run.get("results", [])
+        if str(item.get("account_id", "")) == account_id
+    }
+    completed.discard("")
+    return [
+        company
+        for company in companies
+        if str(company.get("cnpj_digits") or only_digits(company.get("cnpj", ""))) not in completed
+    ]
+
+
 def _scan_account(ctx: WorkerContext, run_id: str, account: Dict[str, Any], stop: threading.Event) -> None:
     account_id = str(account.get("id", ""))
     _update_account(ctx, run_id, account_id, status="discovering", progress="Listando empresas no ISS...")
@@ -707,7 +725,20 @@ def _scan_account(ctx: WorkerContext, run_id: str, account: Dict[str, Any], stop
         total=len(companies),
         progress=f"{len(companies)} empresa(s) encontradas. Iniciando análise...",
     )
-    chunks = [companies[index : index + COMPANIES_PER_SESSION] for index in range(0, len(companies), COMPANIES_PER_SESSION)]
+    latest = _find_run(_load_runs(ctx), run_id) or {}
+    pending_companies = _remaining_companies(latest, account_id, companies)
+    preserved = len(companies) - len(pending_companies)
+    if preserved:
+        _update_account(
+            ctx,
+            run_id,
+            account_id,
+            progress=f"Retomada: {preserved} preservada(s), {len(pending_companies)} restante(s).",
+        )
+    chunks = [
+        pending_companies[index : index + COMPANIES_PER_SESSION]
+        for index in range(0, len(pending_companies), COMPANIES_PER_SESSION)
+    ]
     workers = min(PER_ACCOUNT_WORKERS, len(chunks))
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="closure-account") as executor:
         futures = [

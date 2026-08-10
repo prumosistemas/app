@@ -192,6 +192,25 @@ def test_view_expired_on_final_consult_matches_reference_closed_semantics(monkey
     assert result == {"pendencias": [], "status": "FECHADO"}
 
 
+def test_restart_checkpoint_skips_companies_already_persisted() -> None:
+    run = {
+        "results": [
+            {"account_id": "conta-1", "cnpj_digits": "11111111000111", "status": "FECHADO"},
+            {"account_id": "outra-conta", "cnpj_digits": "22222222000122", "status": "FECHADO"},
+        ]
+    }
+    companies = [
+        {"cnpj_digits": "11111111000111"},
+        {"cnpj_digits": "22222222000122"},
+        {"cnpj_digits": "33333333000133"},
+    ]
+
+    assert scan._remaining_companies(run, "conta-1", companies) == [
+        {"cnpj_digits": "22222222000122"},
+        {"cnpj_digits": "33333333000133"},
+    ]
+
+
 def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
     _memory_storage(monkeypatch)
     alan, bia = _ctx("alan"), _ctx("bia")
