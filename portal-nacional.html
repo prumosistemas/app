@@ -133,6 +133,10 @@
             <div class="card-body" id="automaticList"><div class="small">Carregando...</div></div>
           </div>
         </div>
+        <div class="card" style="max-width:1220px;margin-top:16px;">
+          <div class="card-head"><h3>Capturas automáticas</h3><span class="pill" id="automaticRunsCount">0</span></div>
+          <div class="card-body" id="automaticRunsTable"><div class="small">Carregando...</div></div>
+        </div>
       </section>
 
       <section id="notesSection" class="section">
@@ -193,6 +197,7 @@
     let activeRunId = "";
     let latestState = null;
     let latestLogicalRuns = [];
+    let latestAutomaticRuns = [];
     let selectedRunSnapshot = null;
     let selectedRunLoadedAt = 0;
     let editingCertId = "";
@@ -243,7 +248,7 @@
     }
     function statusPill(status){
       const s=String(status||"-");
-      const cls = /finalizado/.test(s) ? "ok" : /erro|interrompida|parado|falha/.test(s) ? "bad" : /rodando|criada/.test(s) ? "warn" : "";
+      const cls = /erro|interrompida|parado|falha/.test(s) ? "bad" : /finalizado/.test(s) ? "ok" : /rodando|criada/.test(s) ? "warn" : "";
       return `<span class="pill ${cls}">${esc(s)}</span>`;
     }
     function buttonLoading(btn, loading, label){
@@ -309,6 +314,9 @@
     function manualPortalRuns(runs){
       return (runs || []).filter(run => !run?.config?.automatic);
     }
+    function automaticPortalRuns(runs){
+      return (runs || []).filter(run => Boolean(run?.config?.automatic));
+    }
     function mergeRunSummaries(children){
       const summary = {baixados:0, erros:0, pendentes:0, portal_registros:0, capturados:0, competencias:{}};
       children.forEach(child => {
@@ -338,7 +346,8 @@
         const status = statuses.some(value => /rodando|criada/.test(value)) ? "rodando"
           : statuses.some(value => /erro|parado|interrompida/.test(value)) ? "finalizado_com_erros"
           : statuses.every(value => value === "finalizado") ? "finalizado" : statuses[0] || "-";
-        return {...children[0], run_id:children.length > 1 ? key : children[0].run_id, status, config:{...children[0].config, modo:modes.size > 1 ? "ambos" : children[0].config?.modo}, summary:mergeRunSummaries(children), _children:children};
+        const timestamps = children.map(child => child.updated_at).filter(Boolean).sort();
+        return {...children[0], run_id:children.length > 1 ? key : children[0].run_id, updated_at:timestamps.at(-1)||children[0].updated_at, status, config:{...children[0].config, modo:modes.size > 1 ? "ambos" : children[0].config?.modo}, summary:mergeRunSummaries(children), _children:children};
       });
     }
     function renderCertificates(state){
@@ -385,6 +394,27 @@
       $("automaticList").querySelectorAll("[data-capture-auto]").forEach(btn => btn.onclick = () => captureAutomaticNow(btn.dataset.captureAuto, btn));
       $("automaticList").querySelectorAll("[data-edit-auto]").forEach(btn => btn.onclick = () => editAutomatic(btn.dataset.editAuto));
       $("automaticList").querySelectorAll("[data-delete-auto]").forEach(btn => btn.onclick = () => deleteAutomatic(btn.dataset.deleteAuto, btn));
+    }
+    function renderAutomaticRuns(runs){
+      latestAutomaticRuns = groupRuns(automaticPortalRuns(runs));
+      $("automaticRunsCount").textContent = String(latestAutomaticRuns.length);
+      if(!latestAutomaticRuns.length){ $("automaticRunsTable").innerHTML = `<div class="small">Nenhuma captura automática executada ainda.</div>`; return; }
+      $("automaticRunsTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Certificado / período</th><th>Resultado</th><th>Quando apareceu</th><th>Ação</th></tr></thead><tbody>${latestAutomaticRuns.map(run => {
+        const summary=run.summary||{};
+        const total=Number(summary.portal_registros||summary.capturados||0);
+        const ready=Number(summary.baixados||0);
+        const groups=Object.values(summary.competencias||{});
+        const period=[run.config?.data_inicial,run.config?.data_final].filter(Boolean).join(" a ")||"Período não informado";
+        const completed=/finalizado|erro|interrompida|parado/.test(String(run.status||""));
+        return `<tr>
+          <td>${statusPill(run.status)}</td>
+          <td><strong>${esc(run.config?.certificate_alias||"Certificado")}</strong><div class="small">${esc(run.config?.modo||"-")} · XML e PDF<br>${esc(period)}</div></td>
+          <td><strong>${ready}/${total} nota(s) pronta(s)</strong><div class="small">${Number(summary.erros||0)} erro(s) · ${Number(summary.pendentes||0)} pendente(s)</div>${groups.length?`<div class="automatic-summary">${groups.map(group=>`<span class="pill">${esc(competenceLabel(group.competencia))}: ${Number(group.baixados||0)}</span>`).join("")}</div>`:""}</td>
+          <td>Criada em ${esc(formatTs(run.created_at))}<div class="small">${completed?"Finalizada":"Atualizada"} em ${esc(formatTs(run.updated_at))}</div></td>
+          <td><button class="secondary" data-download-auto-run="${esc(run.run_id)}" type="button" ${ready?"":"disabled"}>Baixar ZIP</button></td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`;
+      $("automaticRunsTable").querySelectorAll("[data-download-auto-run]").forEach(btn => btn.onclick = () => downloadAutomaticRun(btn.dataset.downloadAutoRun, btn));
     }
     function renderRuns(runs){
       if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
@@ -486,7 +516,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const target = runs.find(run => run.run_id === selectedRunId) || runs[0] || null;
       const selectionChanged = Boolean(target && target.run_id !== selectedRunId);
       if(target) selectedRunId = target.run_id;
-      renderMetrics(state); renderCertificates(state); renderAutomatic(state.automatic); renderRuns(runs);
+      renderMetrics(state); renderCertificates(state); renderAutomatic(state.automatic); renderAutomaticRuns(state.runs); renderRuns(runs);
       if(!target){ selectedRunSnapshot=null; renderDetail(null); return; }
       if(selectedRunSnapshot?.run_id === target.run_id){
         selectedRunSnapshot = {...selectedRunSnapshot, ...target, files:selectedRunSnapshot.files || []};
@@ -569,10 +599,21 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       buttonLoading(btn, true, "Iniciando"); setMsg("", "");
       try{
         const data = await api(`/py/api/portal-nacional/automatic/${encodeURIComponent(jobId)}/capture-now`, {method:"POST", body:"{}"});
-        selectedRunId = logicalRunKey({run_id:data.run_id});
-        await loadState(true); switchSection("notesSection"); setMsg("ok", "Captura automática iniciada.");
+        await loadState(true); switchSection("automaticSection"); setMsg("ok", "Captura automática iniciada. O andamento aparece abaixo.");
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading(btn, false, "Capturar agora"); }
+    }
+    async function downloadAutomaticRun(runId, btn){
+      const run=latestAutomaticRuns.find(item=>item.run_id===runId);
+      if(!run){ setMsg("warn","Captura automática não encontrada."); return; }
+      const children=(run._children||[]).filter(child=>Number(child.summary?.baixados||0)>0);
+      if(!children.length){ setMsg("warn","Esta captura ainda não possui arquivos disponíveis."); return; }
+      const query=new URLSearchParams();
+      children.forEach(child=>query.append("run_id",child.run_id));
+      buttonLoading(btn,true,"Preparando");
+      try{ await downloadBlob(`/py/api/portal-nacional/download?${query}`,"portal-automatico.zip"); }
+      catch(err){ setMsg("err",err.message); }
+      finally{ buttonLoading(btn,false,"Baixar ZIP"); }
     }
     async function deleteAutomatic(jobId, btn){
       if(!confirm("Excluir esta automação? As notas já baixadas serão mantidas por quatro meses.")) return;

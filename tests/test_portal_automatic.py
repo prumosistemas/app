@@ -99,6 +99,13 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert "Capturar agora" in source
     assert 'data-edit-cert="' in source
     assert "function manualPortalRuns(runs)" in source
+    assert "function automaticPortalRuns(runs)" in source
+    assert 'id="automaticRunsTable"' in source
+    assert 'id="automaticRunsCount"' in source
+    assert "function renderAutomaticRuns(runs)" in source
+    assert 'data-download-auto-run="${esc(run.run_id)}"' in source
+    assert "renderAutomaticRuns(state.runs)" in source
+    assert 'switchSection("automaticSection"); setMsg("ok", "Captura automática iniciada.' in source
     assert source.count("groupRuns(manualPortalRuns(state.runs))") == 2
     assert "!run?.config?.automatic" in source
 
