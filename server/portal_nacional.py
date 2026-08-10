@@ -518,12 +518,52 @@ def _portal_download_entries(
     return entries
 
 
-def _zip_arcname(entry: Dict[str, Any], separate_competencias: bool) -> str:
+def _modo_folder(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == "recebidas":
+        return "Recebidas"
+    if normalized == "emitidas":
+        return "Emitidas"
+    raise HTTPException(status_code=400, detail="Tipo de nota inválido para o ZIP.")
+
+
+def _zip_arcname(
+    entry: Dict[str, Any],
+    separate_competencias: bool,
+    separate_modos: bool = False,
+) -> str:
     parts = []
+    if separate_modos:
+        parts.append(_modo_folder(entry.get("modo")))
     if separate_competencias:
         parts.append(_competencia_folder(entry["competencia"]))
     parts.extend([entry["kind"], entry["path"].name])
     return "/".join(parts)
+
+
+def _write_portal_zip(
+    zip_path: Path,
+    entries: List[Dict[str, Any]],
+    *,
+    separate_competencias: bool,
+    separate_modos: bool = False,
+) -> None:
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        used_names: set[str] = set()
+        for entry in entries:
+            arcname = _zip_arcname(entry, separate_competencias, separate_modos)
+            if arcname in used_names:
+                parent = Path(arcname).parent.as_posix()
+                stem = Path(arcname).stem
+                suffix = Path(arcname).suffix
+                counter = 2
+                candidate = f"{parent}/{stem}-{counter}{suffix}"
+                while candidate in used_names:
+                    counter += 1
+                    candidate = f"{parent}/{stem}-{counter}{suffix}"
+                arcname = candidate
+            used_names.add(arcname)
+            zf.write(entry["path"], arcname=arcname)
 
 
 def _runtime_key(ctx: WorkerContext) -> str:
@@ -915,6 +955,52 @@ async def delete_portal_run(run_id: str, ctx: WorkerContext = Depends(get_worker
     return {"ok": True, "run_id": run_id}
 
 
+@router.get("/download")
+async def download_portal_run_group(
+    run_id: List[str] = Query(default=[]),
+    competencia: List[str] = Query(default=[]),
+    ctx: WorkerContext = Depends(get_worker_context),
+):
+    run_ids = list(dict.fromkeys(str(value or "").strip() for value in run_id))
+    run_ids = [value for value in run_ids if value]
+    if not run_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos uma run.")
+    if len(run_ids) > 4:
+        raise HTTPException(status_code=400, detail="No máximo quatro partes podem ser baixadas juntas.")
+
+    selected = _selected_competencias(competencia)
+    entries: List[Dict[str, Any]] = []
+    run_dirs: List[Path] = []
+    modos: set[str] = set()
+    for current_id in run_ids:
+        run_dir = _safe_run_dir(ctx, current_id)
+        run_dirs.append(run_dir)
+        paths = _run_paths(run_dir)
+        run = _load_json(paths["run"], {})
+        modo = str((run.get("config") or {}).get("modo") or "").strip().lower()
+        _modo_folder(modo)
+        modos.add(modo)
+        index = _load_json(paths["index"], {})
+        for entry in _portal_download_entries(run_dir, index, selected):
+            entries.append({**entry, "modo": modo})
+
+    if not entries:
+        raise HTTPException(status_code=404, detail="Nenhum arquivo disponível para a competência selecionada.")
+
+    paths = _run_paths(run_dirs[0])
+    paths["zip"].mkdir(parents=True, exist_ok=True)
+    selection_slug = "-".join(sorted(selected)) if selected else "todas"
+    mode_slug = "recebidas-emitidas" if modos == {"recebidas", "emitidas"} else "-".join(sorted(modos))
+    zip_path = paths["zip"] / f"portal-{safe_slug(mode_slug)}-{safe_slug(selection_slug, 'todas')}.zip"
+    _write_portal_zip(
+        zip_path,
+        entries,
+        separate_competencias=True,
+        separate_modos=True,
+    )
+    return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
+
+
 @router.get("/runs/{run_id}/download")
 async def download_portal_run(
     run_id: str,
@@ -933,19 +1019,7 @@ async def download_portal_run(
     paths["zip"].mkdir(parents=True, exist_ok=True)
     selection_slug = "-".join(sorted(selected)) if selected else "todas"
     zip_path = paths["zip"] / f"{run_dir.name}-{safe_slug(selection_slug, 'todas')}.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        used_names: set[str] = set()
-        for entry in entries:
-            arcname = _zip_arcname(entry, separate_competencias)
-            if arcname in used_names:
-                stem = Path(arcname).stem
-                suffix = Path(arcname).suffix
-                counter = 2
-                while f"{Path(arcname).parent.as_posix()}/{stem}-{counter}{suffix}" in used_names:
-                    counter += 1
-                arcname = f"{Path(arcname).parent.as_posix()}/{stem}-{counter}{suffix}"
-            used_names.add(arcname)
-            zf.write(entry["path"], arcname=arcname)
+    _write_portal_zip(zip_path, entries, separate_competencias=separate_competencias)
     return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
 
 

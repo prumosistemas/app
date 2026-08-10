@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.79**
+Versao do app: **1.0.80**
 Atualizado em: **2026-08-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou

@@ -511,15 +511,10 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       buttonLoading($("btnDownloadRun"), true, "Preparando");
       try{
         const children = (selectedRunSnapshot?._children || []).filter(child => Number(child.summary?.baixados || 0) > 0);
-        for(const child of children){
-          const childCompetences = new Set(Object.keys(child.summary?.competencias || {}));
-          const childSelected = [...selected].filter(value => childCompetences.has(value));
-          if(selected.size && !childSelected.length) continue;
-          const childQuery = new URLSearchParams();
-          childSelected.forEach(value => childQuery.append("competencia", value));
-          const childSuffix = childQuery.toString() ? `?${childQuery}` : "";
-          await downloadBlob(`/py/api/portal-nacional/runs/${encodeURIComponent(child.run_id)}/download${childSuffix}`, `${child.run_id}.zip`);
-        }
+        const combinedQuery = new URLSearchParams();
+        children.forEach(child => combinedQuery.append("run_id", child.run_id));
+        [...selected].forEach(value => combinedQuery.append("competencia", value));
+        await downloadBlob(`/py/api/portal-nacional/download?${combinedQuery}`, "portal-recebidas-emitidas.zip");
       }catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading($("btnDownloadRun"), false, "Baixar ZIP"); }
     };

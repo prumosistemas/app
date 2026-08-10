@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.79
+Versao: 1.0.80
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 

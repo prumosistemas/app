@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.79.
+Este documento e a fonte de contexto operacional da versao 1.0.80.
 
 ## Estado desejado
 

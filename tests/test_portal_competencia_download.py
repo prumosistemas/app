@@ -1,4 +1,5 @@
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,30 @@ def test_portal_zip_entries_filter_and_separate_competencias(tmp_path: Path) -> 
     assert all(entry["path"].name != "private.log" for entry in all_entries)
 
 
+def test_combined_portal_zip_separates_mode_and_competencia(tmp_path: Path) -> None:
+    received = tmp_path / "recebida.xml"
+    issued = tmp_path / "emitida.xml"
+    received.write_bytes(xml_for_competencia("2026-06-10"))
+    issued.write_bytes(xml_for_competencia("2026-07-10"))
+    output = tmp_path / "combined.zip"
+
+    portal_nacional._write_portal_zip(
+        output,
+        [
+            {"path": received, "competencia": "2026-06", "kind": "XML", "modo": "recebidas"},
+            {"path": issued, "competencia": "2026-07", "kind": "XML", "modo": "emitidas"},
+        ],
+        separate_competencias=True,
+        separate_modos=True,
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        assert set(archive.namelist()) == {
+            "Recebidas/06-2026/XML/recebida.xml",
+            "Emitidas/07-2026/XML/emitida.xml",
+        }
+
+
 def test_invalid_competencia_filter_is_rejected() -> None:
     with pytest.raises(Exception):
         portal_nacional._selected_competencias(["../../segredo"])
@@ -110,4 +135,5 @@ def test_portal_frontend_uses_competence_selector_without_files_box() -> None:
     assert 'id="filesBox"' not in source
     assert 'id="competenceBox"' in source
     assert 'data-competence="todas"' in source
-    assert 'childQuery.append("competencia", value)' in source
+    assert 'combinedQuery.append("run_id", child.run_id)' in source
+    assert 'combinedQuery.append("competencia", value)' in source
