@@ -53,6 +53,7 @@ const AUTH_SESSION_TOUCH_INTERVAL_SECONDS = 60;
 const LIGHT_CLEANUP_INTERVAL_SECONDS = 60;
 const HEAVY_CLEANUP_INTERVAL_SECONDS = 3600;
 const BILLING_STATE_REFRESH_SECONDS = 60;
+const D1_TRANSIENT_MAX_ATTEMPTS = 3;
 
 // Estes arquivos vivem na origem estática (Netlify), mas os padrões
 // /login* e /iss-fortaleza* também os fazem passar por este Worker.
@@ -254,7 +255,16 @@ export default {
       return jsonResponse(request, env, { ok: false, error: "Rota não encontrada." }, 404);
     } catch (err) {
       const requestId = randomId();
-      console.error("Worker error:", requestId, err);
+      console.error(JSON.stringify({
+        event: "worker_request_failed",
+        request_id: requestId,
+        method: request.method,
+        route: url.pathname,
+        stage: String(err?.prumoStage || "request_handler"),
+        error_name: String(err?.name || "Error"),
+        error_message: String(err?.message || "Erro sem mensagem").slice(0, 500),
+        stack: String(err?.stack || "").slice(0, 2000),
+      }));
       return jsonResponse(request, env, {
         ok: false,
         error: "Erro interno no Worker.",
@@ -383,7 +393,6 @@ async function handleSetup(request, env) {
 ========================= */
 
 async function handleLoginPost(request, env, ctx) {
-  scheduleCleanup(env, ctx, { includeHeavy: false });
   const body = await readBody(request);
 
   const email = normalizeEmail(body.email || "");
@@ -404,20 +413,13 @@ async function handleLoginPost(request, env, ctx) {
     30,
     86400
   );
-  const [ipLimit, emailLimit] = await Promise.all([
-    checkRateLimit(
-      env.db,
-      `login:ip:${ip}`,
-      getIntEnv(env, "LOGIN_IP_LIMIT", DEFAULT_LOGIN_IP_LIMIT, 1, 1000),
-      loginWindowSeconds
-    ),
-    checkRateLimit(
-      env.db,
-      `login:email:${emailHash}`,
-      getIntEnv(env, "LOGIN_EMAIL_LIMIT", DEFAULT_LOGIN_EMAIL_LIMIT, 1, 1000),
-      loginWindowSeconds
-    ),
-  ]);
+  const [ipLimit, emailLimit] = await checkLoginRateLimits(env.db, {
+    ip,
+    emailHash,
+    ipLimit: getIntEnv(env, "LOGIN_IP_LIMIT", DEFAULT_LOGIN_IP_LIMIT, 1, 1000),
+    emailLimit: getIntEnv(env, "LOGIN_EMAIL_LIMIT", DEFAULT_LOGIN_EMAIL_LIMIT, 1, 1000),
+    windowSeconds: loginWindowSeconds,
+  });
 
   if (!ipLimit.ok) {
     await fakePasswordDelay(env);
@@ -437,23 +439,23 @@ async function handleLoginPost(request, env, ctx) {
     }, 429);
   }
 
-  let user = await env.db.prepare(`
-    SELECT
-      u.id,
-      u.email,
-      u.password_hash,
-      u.disabled,
-      u.manual_disabled,
-      u.billing_disabled,
-      u.company_id,
-      u.role,
-      u.must_change_password,
-      c.disabled AS company_disabled
-    FROM users u
-    JOIN companies c ON c.id = u.company_id
-    WHERE u.email = ?
-    LIMIT 1
-  `).bind(email).first();
+  let user = await withTransientD1Retry(() => env.db.prepare(`
+      SELECT
+        u.id,
+        u.email,
+        u.password_hash,
+        u.disabled,
+        u.manual_disabled,
+        u.billing_disabled,
+        u.company_id,
+        u.role,
+        u.must_change_password,
+        c.disabled AS company_disabled
+      FROM users u
+      JOIN companies c ON c.id = u.company_id
+      WHERE u.email = ?
+      LIMIT 1
+    `).bind(email).first(), "login_user_lookup");
 
   let billingState = null;
   if (!user) {
@@ -467,13 +469,14 @@ async function handleLoginPost(request, env, ctx) {
     return jsonResponse(request, env, { ok: false, error: "Email ou senha inválidos." }, 401);
   }
 
-  billingState = await maybeApplyBillingStateForCompany(env.db, user.company_id);
+  billingState = await withTransientD1Retry(
+    () => maybeApplyBillingStateForCompany(env.db, user.company_id),
+    "login_billing_state"
+  );
   if (user.role === "member") {
     user.disabled = Number(user.manual_disabled) === 1 || !billingState.active ? 1 : 0;
     user.billing_disabled = billingState.active ? 0 : 1;
   }
-
-  await clearLoginRateLimits(env.db, ip, emailHash);
 
   if (user.role === "member") {
     const ownerEmail = await getCompanyOwnerEmail(env.db, user.company_id);
@@ -491,13 +494,14 @@ async function handleLoginPost(request, env, ctx) {
   }
 
   const ts = now();
-
-  await env.db.prepare(`
-    UPDATE users
-    SET last_login_at = current_login_at,
-        current_login_at = ?
-    WHERE id = ?
-  `).bind(ts, user.id).run();
+  const session = await buildSession(request, env);
+  await persistSuccessfulLogin(env.db, {
+    userId: user.id,
+    ip,
+    emailHash,
+    timestamp: ts,
+    session,
+  });
 
   scheduleLogEvent(env, request, ctx, {
     actor: {
@@ -513,12 +517,10 @@ async function handleLoginPost(request, env, ctx) {
     message: `Login realizado: ${user.email}`,
   });
 
-  const session = await createSession(request, env, user.id);
   const cfg = getConfig(env);
   const cookie = makeSessionCookie(env, session.rawToken, cfg.absoluteTtlSeconds);
 
-  // createSession ja persiste o hash deste token. Evita uma segunda escrita D1
-  // no caminho critico do login.
+  // A transação anterior já persistiu o hash; não há uma segunda escrita D1.
   const csrf = session.csrfToken;
 
   return jsonResponse(
@@ -2194,47 +2196,93 @@ async function runScheduledCleanup(db, options = {}) {
   await cleanupTemporaryData(db, { force: true, includeHeavy: heavyDue });
 }
 
-function scheduleCleanup(env, ctx, options = {}) {
-  const task = runScheduledCleanup(env.db, options).catch((err) => {
-    console.error("cleanupTemporaryData failed:", err);
-  });
-
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(task);
-  }
-}
-
 /* =========================
    RATE LIMIT
 ========================= */
 
-async function checkRateLimit(db, key, limit, windowSeconds) {
-  const nowTs = now();
-  const resetAt = nowTs + windowSeconds;
-  const row = await db.prepare(`
+function isRetryableD1Error(err) {
+  const message = String(err?.message || err || "");
+  return [
+    "Network connection lost",
+    "storage caused object to be reset",
+    "reset because its code was updated",
+  ].some((fragment) => message.includes(fragment));
+}
+
+function markWorkerErrorStage(err, stage) {
+  if (err && typeof err === "object") {
+    try {
+      err.prumoStage = stage;
+    } catch (_ignored) {
+      // Alguns erros internos do runtime podem ser imutáveis.
+    }
+  }
+  return err;
+}
+
+async function withTransientD1Retry(operation, stage) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= D1_TRANSIENT_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= D1_TRANSIENT_MAX_ATTEMPTS || !isRetryableD1Error(err)) {
+        throw markWorkerErrorStage(err, stage);
+      }
+
+      const delayMs = 20 * (2 ** (attempt - 1)) + Math.floor(Math.random() * 20);
+      console.warn(JSON.stringify({
+        event: "d1_transient_retry",
+        stage,
+        attempt,
+        delay_ms: delayMs,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw markWorkerErrorStage(lastError, stage);
+}
+
+function buildRateLimitStatement(db, key, resetAt, nowTs) {
+  return db.prepare(`
     INSERT INTO rate_limits (key, count, reset_at)
     VALUES (?, 1, ?)
     ON CONFLICT(key) DO UPDATE SET
       count = CASE WHEN rate_limits.reset_at <= ? THEN 1 ELSE rate_limits.count + 1 END,
       reset_at = CASE WHEN rate_limits.reset_at <= ? THEN ? ELSE rate_limits.reset_at END
     RETURNING count, reset_at
-  `).bind(key, resetAt, nowTs, nowTs, resetAt).first();
+  `).bind(key, resetAt, nowTs, nowTs, resetAt);
+}
 
+function rateLimitResult(result, limit, resetAt, nowTs) {
+  const row = Array.isArray(result?.results) ? result.results[0] : null;
+  if (!row) {
+    throw markWorkerErrorStage(new Error("D1 não retornou o contador do rate limit."), "login_rate_limit_result");
+  }
   if (Number(row?.count || 0) > limit) {
     return {
       ok: false,
       retryAfter: Math.max(1, Number(row?.reset_at || resetAt) - nowTs),
     };
   }
-
   return { ok: true };
 }
 
-async function clearLoginRateLimits(db, ip, emailHash) {
-  await db.batch([
-    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:ip:${ip}`),
-    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:email:${emailHash}`),
-  ]);
+async function checkLoginRateLimits(db, options) {
+  const nowTs = now();
+  const resetAt = nowTs + options.windowSeconds;
+  const results = await withTransientD1Retry(() => db.batch([
+    buildRateLimitStatement(db, `login:ip:${options.ip}`, resetAt, nowTs),
+    buildRateLimitStatement(db, `login:email:${options.emailHash}`, resetAt, nowTs),
+  ]), "login_rate_limit");
+
+  return [
+    rateLimitResult(results[0], options.ipLimit, resetAt, nowTs),
+    rateLimitResult(results[1], options.emailLimit, resetAt, nowTs),
+  ];
 }
 
 /* =========================
@@ -2319,10 +2367,8 @@ function requireWritableOwnerCompany(request, env, auth) {
   return null;
 }
 
-async function createSession(request, env, userId) {
+async function buildSession(request, env) {
   const cfg = getConfig(env);
-
-  await pruneOldSessionsForUser(env.db, userId, MAX_SESSIONS_PER_USER - 1);
 
   const rawToken = randomBase64Url(32);
   const sessionHash = await sha256Hex(rawToken);
@@ -2336,47 +2382,65 @@ async function createSession(request, env, userId) {
   const ts = now();
   const absoluteExpiresAt = ts + cfg.absoluteTtlSeconds;
 
-  await env.db.prepare(`
-    INSERT INTO sessions (
-      session_hash,
-      user_id,
-      created_at,
-      last_seen_at,
-      absolute_expires_at,
-      revoked_at,
-      user_agent_hash,
-      csrf_hash
-    )
-    VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-  `).bind(
-    sessionHash,
-    userId,
-    ts,
-    ts,
-    absoluteExpiresAt,
-    userAgentHash,
-    csrfHash
-  ).run();
-
   return {
     rawToken,
     sessionHash,
     csrfToken,
+    csrfHash,
+    userAgentHash,
+    createdAt: ts,
+    absoluteExpiresAt,
   };
 }
 
-async function pruneOldSessionsForUser(db, userId, keepCount) {
-  await db.prepare(`
-    DELETE FROM sessions
-    WHERE user_id = ?
-      AND session_hash NOT IN (
-        SELECT session_hash
-        FROM sessions
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-        LIMIT ?
+async function persistSuccessfulLogin(db, options) {
+  const session = options.session;
+  await withTransientD1Retry(() => db.batch([
+    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:ip:${options.ip}`),
+    db.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(`login:email:${options.emailHash}`),
+    db.prepare(`
+      UPDATE users
+      SET last_login_at = CASE
+            WHEN current_login_at = ? THEN last_login_at
+            ELSE current_login_at
+          END,
+          current_login_at = ?
+      WHERE id = ?
+    `).bind(options.timestamp, options.timestamp, options.userId),
+    db.prepare(`
+      DELETE FROM sessions
+      WHERE user_id = ?
+        AND session_hash NOT IN (
+          SELECT session_hash
+          FROM sessions
+          WHERE user_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+    `).bind(options.userId, options.userId, MAX_SESSIONS_PER_USER - 1),
+    db.prepare(`
+      INSERT INTO sessions (
+        session_hash,
+        user_id,
+        created_at,
+        last_seen_at,
+        absolute_expires_at,
+        revoked_at,
+        user_agent_hash,
+        csrf_hash
       )
-  `).bind(userId, userId, keepCount).run();
+      VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+      ON CONFLICT(session_hash) DO NOTHING
+    `).bind(
+      session.sessionHash,
+      options.userId,
+      session.createdAt,
+      session.createdAt,
+      session.absoluteExpiresAt,
+      session.userAgentHash,
+      session.csrfHash
+    ),
+  ]), "login_session_persist");
 }
 
 async function getAuth(request, env, options = {}) {

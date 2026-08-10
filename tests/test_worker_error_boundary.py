@@ -20,3 +20,24 @@ def test_login_does_not_expose_infrastructure_html_as_error_text() -> None:
     assert "looksLikeHtml" in source
     assert "Serviço temporariamente indisponível" in source
     assert 'res.headers.get("cf-ray")' in source
+
+
+def test_login_serializes_d1_writes_and_leaves_cleanup_to_cron() -> None:
+    source = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+    login = source.split("async function handleLoginPost", 1)[1].split("async function handleLogout", 1)[0]
+
+    assert "scheduleCleanup" not in login
+    assert "Promise.all" not in login
+    assert "checkLoginRateLimits" in login
+    assert "persistSuccessfulLogin" in login
+    assert '"login_rate_limit"' in source
+    assert '"login_session_persist"' in source
+    assert "D1_TRANSIENT_MAX_ATTEMPTS = 3" in source
+
+
+def test_worker_errors_are_searchable_by_support_code_and_stage() -> None:
+    source = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+
+    assert 'event: "worker_request_failed"' in source
+    assert "request_id: requestId" in source
+    assert 'stage: String(err?.prumoStage || "request_handler")' in source

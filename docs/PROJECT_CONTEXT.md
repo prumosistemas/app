@@ -19,6 +19,14 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-18
 
+### Estabilidade e latência do login em 2026-08-10
+
+- O código de suporte `Lr_8bPQTpimKraUHpYYFHQ` foi localizado no Workers Logs: a exceção veio do D1 em `checkRateLimit`, dentro das duas gravações que o login executava em `Promise.all`. O segundo código informado não havia sido retido pela amostragem antiga de 25%.
+- O login não inicia mais a limpeza periódica do D1. Essa limpeza já pertence ao cron de um minuto e, antes desta correção, podia concorrer com o rate limit no caminho crítico.
+- Os limites por IP e email agora são avaliados em um único `db.batch`, sequencial e transacional. No login aceito, limpeza dos limites, atualização dos horários, poda de sessões e criação da nova sessão também usam um único batch idempotente.
+- Falhas transitórias documentadas pelo D1 recebem no máximo três tentativas, com backoff exponencial curto e jitter. Erros definitivos continuam falhando imediatamente, sem esconder defeitos nem reduzir PBKDF2 ou os limites de segurança.
+- A observabilidade do Worker passou a 100% e registra rota e etapa sem corpo, senha, cookie ou token. Após o deploy, dois logins sintéticos simultâneos responderam JSON 401 em 931-959 ms, sem erro interno e sem retry; a suíte completa passou com 163 testes.
+
 ### Atualização de cobrança em 2026-08-03
 
 - O Worker separa bloqueio financeiro (`billing_disabled`) de desativação feita pelo administrador (`manual_disabled`). Pagamento pendente bloqueia os colaboradores e informa o email do administrador somente depois de a senha correta ser validada; a confirmação do pagamento remove apenas o bloqueio financeiro.

@@ -6,6 +6,7 @@ Versao: **1.0.80 - ZIP combinado por tipo e competência**
 
 - HTMLs criticos servidos pelo Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicacao complementar ligada ao GitHub.
 - Worker Cloudflare de producao: `morning-credit-8a59`.
+- Login: rate limits e persistencia de sessao usam batches D1 sequenciais; limpeza fica somente no cron e falhas transitórias recebem retry curto sem reduzir a seguranca do PBKDF2.
 - D1 de producao: `db`.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
