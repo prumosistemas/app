@@ -31,7 +31,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 ### Captura automática do Portal em 2026-08-10
 
 - A versão 1.0.83 mantém `Notas automático` por colaborador e certificado com uma interface simplificada: a execução é sempre diária, sempre baixa XML+PDF e começa na data inicial selecionada. As seguintes usam checkpoint com dois dias de sobreposição e permanecem disponíveis por 123 dias.
-- No ISS Fortaleza, a exportação de escrituração usa o link autenticado gerado pelo próprio portal, pois o clique AJAX do RichFaces produzia artefatos locais de zero bytes. O arquivo agora é salvo atomicamente e validado como XLSX/XLS antes de a tarefa ser concluída.
+- No ISS Fortaleza, a exportação de escrituração usa o link autenticado gerado pelo próprio portal, pois o clique AJAX do RichFaces produzia artefatos locais de zero bytes. O arquivo agora é salvo atomicamente e validado como XLSX/XLS antes de a tarefa ser concluída; a auditoria conta as linhas físicas dos XMLs internos porque o portal pode informar dimensões incorretas.
 - As configurações habilitadas são distribuídas uniformemente nas 24 horas. O agendador inicia apenas uma captura automática por vez e espera o Portal ficar sem runs ativas, reduzindo colisões entre empresas e consumo simultâneo de solver.
 - `Capturar agora` permite antecipar uma configuração. A run continua usando o mesmo isolamento por empresa/colaborador e o mesmo fluxo idempotente de recebidas/emitidas.
 - O certificado agora pode ser editado por clique na lista. A API nunca devolve o nome original do PFX; arquivo e senha existentes são mantidos quando não forem substituídos.

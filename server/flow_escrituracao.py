@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import zipfile
+from xml.etree import ElementTree
 from datetime import datetime
 from typing import Any, Callable, Dict, Tuple
 
@@ -99,21 +100,27 @@ def _validate_exportacao_excel(data: bytes) -> tuple[str, int]:
         if not zipfile.is_zipfile(io.BytesIO(data)):
             raise ValueError("conteúdo ZIP inválido")
 
-        from openpyxl import load_workbook
-
-        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        try:
-            if not workbook.worksheets:
+        # Alguns XLSX do ISS possuem metadados de dimensão incorretos. Bibliotecas
+        # em modo read-only enxergam só A1, embora os XMLs das abas tenham centenas
+        # de linhas. Contar os elementos <row> físicos evita o falso "arquivo vazio".
+        with zipfile.ZipFile(io.BytesIO(data)) as workbook:
+            worksheets = [
+                name
+                for name in workbook.namelist()
+                if name.startswith("xl/worksheets/") and name.endswith(".xml")
+            ]
+            if not worksheets:
                 raise ValueError("planilha sem abas")
-            nonempty_rows = sum(
-                1
-                for sheet in workbook.worksheets
-                for row in sheet.iter_rows(values_only=True)
-                if any(value not in (None, "") for value in row)
-            )
-        finally:
-            workbook.close()
-        return ".xlsx", nonempty_rows
+
+            physical_rows = 0
+            for worksheet in worksheets:
+                with workbook.open(worksheet) as source:
+                    for _event, element in ElementTree.iterparse(source, events=("start",)):
+                        if element.tag.rsplit("}", 1)[-1] == "row":
+                            physical_rows += 1
+                        element.clear()
+
+        return ".xlsx", physical_rows
 
     # Compatibilidade caso o ISS volte a entregar o XLS binário antigo.
     if data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") and len(data) >= 512:
@@ -1092,7 +1099,7 @@ async def baixar_exportacao(page, cnpj: str, cnpj_dir: str, ctx: FlowContext) ->
     rows_text = "não aferível no XLS legado" if nonempty_rows < 0 else str(nonempty_rows)
     await log_flow(
         ctx,
-        f"Exportação salva e validada: {len(data)} bytes; linhas não vazias: {rows_text}.",
+        f"Exportação salva e validada: {len(data)} bytes; linhas físicas: {rows_text}.",
         event="INFO",
         code="EXPORTACAO_VALIDADA",
     )
