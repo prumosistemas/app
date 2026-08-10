@@ -49,6 +49,8 @@
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);background:var(--panel2)}tr:last-child td{border-bottom:0}tbody tr{transition:background .15s}tbody tr:hover{background:#fafbff}tbody tr.selected{background:#eef2ff;box-shadow:inset 3px 0 var(--accent)}
     .dropzone{min-height:118px;border:1px dashed var(--border2);border-radius:8px;background:#fff;display:grid;place-items:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .15s,background .15s}
     .dropzone:hover,.dropzone.dragover{border-color:var(--accent2);background:#f8faff}.dropzone strong{display:block;color:var(--text);font-size:13px}.dropzone span{display:block;margin-top:4px;color:var(--text3);font-size:12px}.dropzone input{display:none}
+    .check-row{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text2);font-weight:700}.check-row input{width:18px;height:18px;accent-color:var(--accent)}
+    .clickable-row{cursor:pointer}.clickable-row:focus-visible{outline:3px solid rgba(99,102,241,.25);outline-offset:-3px}.automatic-summary{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
     code{color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:2px 6px;font-family:var(--mono);font-size:11.5px}.small{color:var(--text3);font-size:12px}.hidden{display:none!important}.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:980px){.app{grid-template-columns:1fr}aside{position:static;height:auto}main{padding:18px}.grid.two,.grid.cards{grid-template-columns:1fr}.topline{flex-direction:column}.form-grid{grid-template-columns:1fr}button,.button,.nav-btn{min-height:44px}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
@@ -66,8 +68,12 @@
         <div class="nav-label">Portal Nacional</div>
         <button class="nav-btn active" data-section="certificatesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 7a2 2 0 1 1 2 2"/><path d="M4 20l7-7"/><path d="M8 16l3 3"/><path d="M12.5 11.5A5 5 0 1 0 10 14"/></svg>Certificados</button>
         <button class="nav-btn" data-section="notesSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>Notas</button>
+        <button class="nav-btn" data-section="automaticSection" type="button"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><circle cx="12" cy="12" r="4"/></svg>Notas automático</button>
       </nav>
-      <div class="sidebar-footer"><button class="nav-btn" id="btnLogout" type="button">Sair</button></div>
+      <div class="sidebar-footer">
+        <a class="nav-btn" id="btnBack" href="/"><span aria-hidden="true">←</span>Voltar</a>
+        <button class="nav-btn" id="btnLogout" type="button">Sair</button>
+      </div>
     </aside>
     <main id="mainContent" tabindex="-1">
       <div class="topline">
@@ -77,7 +83,7 @@
         </div>
         <div class="actions">
           <button class="secondary" id="btnRefresh" type="button">Atualizar</button>
-          <button class="secondary" id="btnStop" type="button">Parar run</button>
+          <button class="secondary hidden" id="btnStop" type="button">Parar run</button>
         </div>
       </div>
       <div id="msg" aria-live="polite"></div>
@@ -85,13 +91,13 @@
       <section id="certificatesSection" class="section active">
         <div class="grid two">
           <div class="card">
-            <div class="card-head"><h3>Novo certificado</h3></div>
+            <div class="card-head"><h3 id="certFormTitle">Novo certificado</h3><button class="secondary hidden" id="btnCancelCertEdit" type="button">Cancelar edição</button></div>
             <div class="card-body">
               <form id="certForm" class="stack" autocomplete="off">
                 <label class="dropzone" id="certDropzone">
                   <input id="certFile" name="file" type="file" accept=".pfx,.p12">
                   <strong id="certFileName">Selecionar arquivo .pfx</strong>
-                  <span>Arraste o arquivo aqui ou clique para escolher.</span>
+                  <span id="certFileHint">Arraste o arquivo aqui ou clique para escolher.</span>
                 </label>
                 <div>
                   <label>Alias</label>
@@ -108,6 +114,30 @@
           <div class="card">
             <div class="card-head"><h3>Certificados</h3><span class="pill" id="certCount">0</span></div>
             <div class="card-body" id="certList"><div class="small">Carregando...</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="automaticSection" class="section">
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head"><h3>Captura diária</h3><span class="pill ok">Automático</span></div>
+            <div class="card-body stack">
+              <form id="automaticForm" class="stack">
+                <div><label>Certificado</label><select id="automaticCertSelect" name="cert_id"></select></div>
+                <div class="form-grid">
+                  <div><label>Notas</label><select id="automaticModo" name="modo"><option value="ambos">Recebidas e emitidas</option><option value="recebidas">Recebidas</option><option value="emitidas">Emitidas</option></select></div>
+                  <div><label>Arquivos</label><select id="automaticTipo" name="tipo_download"><option value="ambos">XML e PDF</option><option value="xml">Só XML</option><option value="pdf">Só PDF</option></select></div>
+                </div>
+                <label class="check-row"><input id="automaticEnabled" type="checkbox" checked> Capturar uma vez por dia</label>
+                <div class="notice">A primeira captura cobre os últimos quatro meses. Depois, o sistema verifica diariamente com sobreposição de segurança. Os horários são distribuídos automaticamente entre empresas para reduzir concorrência.</div>
+                <div class="actions"><button id="btnSaveAutomatic" type="submit">Salvar automação</button><button class="secondary hidden" id="btnCancelAutomaticEdit" type="button">Cancelar</button></div>
+              </form>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Automações configuradas</h3><span class="pill" id="automaticCount">0</span></div>
+            <div class="card-body" id="automaticList"><div class="small">Carregando...</div></div>
           </div>
         </div>
       </section>
@@ -172,6 +202,8 @@
     let latestLogicalRuns = [];
     let selectedRunSnapshot = null;
     let selectedRunLoadedAt = 0;
+    let editingCertId = "";
+    let editingAutomaticId = "";
     const selectedCompetencesByRun = new Map();
 
     const $ = id => document.getElementById(id);
@@ -240,9 +272,15 @@
     function switchSection(sectionId){
       document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === sectionId));
       document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.classList.toggle("active", btn.dataset.section === sectionId));
-      const notes = sectionId === "notesSection";
-      $("pageTitle").textContent = notes ? "Notas" : "Certificados";
-      $("pageSubtitle").textContent = notes ? "XML e DANFSe de notas recebidas e emitidas." : "Certificados digitais usados para acessar o Portal Nacional.";
+      const pages = {
+        certificatesSection:["Certificados","Certificados digitais usados para acessar o Portal Nacional."],
+        notesSection:["Notas","XML e DANFSe de notas recebidas e emitidas."],
+        automaticSection:["Notas automático","Capturas diárias distribuídas e disponíveis por quatro meses."]
+      };
+      const page = pages[sectionId] || pages.certificatesSection;
+      $("pageTitle").textContent = page[0];
+      $("pageSubtitle").textContent = page[1];
+      $("btnStop").classList.toggle("hidden", sectionId !== "notesSection");
     }
     function formPayload(){
       const fd = new FormData($("runForm"));
@@ -310,20 +348,48 @@
     }
     function renderCertificates(state){
       const certs = state.certificates || [];
+      const uploaded = certs.filter(cert => cert.source === "upload");
       $("certCount").textContent = String(certs.length);
       $("certSelect").innerHTML = certs.length
         ? certs.map(c => `<option value="${esc(c.id || `runtime:${c.index || 0}`)}">${esc(c.label || c.subject || "Certificado")}</option>`).join("")
         : `<option value="">Cadastre um certificado</option>`;
+      const previousAutomaticCert = $("automaticCertSelect").value;
+      $("automaticCertSelect").innerHTML = uploaded.length
+        ? uploaded.map(c => `<option value="${esc(c.id)}">${esc(c.label || c.alias || "Certificado")}</option>`).join("")
+        : `<option value="">Cadastre um certificado enviado</option>`;
+      if(uploaded.some(cert => cert.id === previousAutomaticCert)) $("automaticCertSelect").value = previousAutomaticCert;
       $("certNotice").innerHTML = certs.length ? "" : `<div class="notice warn">Nenhum certificado disponível.</div>`;
       if(!certs.length){ $("certList").innerHTML = `<div class="small">Nenhum certificado cadastrado.</div>`; return; }
       $("certList").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Alias</th><th>Validade</th><th>Origem</th><th></th></tr></thead><tbody>${certs.map(cert => `
-        <tr>
+        <tr class="${cert.source === "upload" ? "clickable-row" : ""}" ${cert.source === "upload" ? `data-edit-cert="${esc(cert.id)}" tabindex="0" title="Clique para editar"` : ""}>
           <td><strong>${esc(cert.alias || cert.subject || "Certificado")}</strong></td>
           <td>${esc((cert.not_after || "").slice(0,10) || "-")}</td>
           <td>${esc(cert.source === "runtime" ? "Runtime" : "Upload")}</td>
-          <td>${cert.source === "upload" ? `<button class="danger" data-delete-cert="${esc(cert.id)}" type="button">Excluir</button>` : ""}</td>
+          <td>${cert.source === "upload" ? `<div class="actions"><button class="secondary" data-edit-cert-button="${esc(cert.id)}" type="button">Editar</button><button class="danger" data-delete-cert="${esc(cert.id)}" type="button">Excluir</button></div>` : ""}</td>
         </tr>`).join("")}</tbody></table></div>`;
-      $("certList").querySelectorAll("[data-delete-cert]").forEach(btn => btn.onclick = () => deleteCertificate(btn.dataset.deleteCert, btn));
+      $("certList").querySelectorAll("[data-edit-cert]").forEach(row => {
+        row.onclick = ev => { if(!ev.target.closest("button")) editCertificate(row.dataset.editCert); };
+        row.onkeydown = ev => { if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); editCertificate(row.dataset.editCert); } };
+      });
+      $("certList").querySelectorAll("[data-edit-cert-button]").forEach(btn => btn.onclick = () => editCertificate(btn.dataset.editCertButton));
+      $("certList").querySelectorAll("[data-delete-cert]").forEach(btn => btn.onclick = ev => { ev.stopPropagation(); deleteCertificate(btn.dataset.deleteCert, btn); });
+    }
+
+    function renderAutomatic(automatic){
+      const jobs = automatic?.jobs || [];
+      $("automaticCount").textContent = String(jobs.length);
+      if(!jobs.length){ $("automaticList").innerHTML = `<div class="small">Nenhuma captura automática configurada.</div>`; return; }
+      $("automaticList").innerHTML = `<div class="table-wrap"><table><thead><tr><th>Certificado</th><th>Agenda</th><th>Última captura</th><th>Status</th><th>Ações</th></tr></thead><tbody>${jobs.map(job => `
+        <tr>
+          <td><strong>${esc(job.certificate_alias)}</strong><div class="small">${esc(job.modo)} · ${esc(job.tipo_download)}</div></td>
+          <td>${job.enabled ? `<span class="pill ok">Diária · ${esc(job.schedule_label)}</span><div class="small">Próxima: ${esc(formatTs(job.next_run_at))}</div>` : `<span class="pill">Pausada</span>`}</td>
+          <td>${esc(formatTs(job.last_started_at))}<div class="small">${job.last_capture_start ? `${esc(job.last_capture_start)} a ${esc(job.last_capture_end)}` : "Ainda não executada"}</div></td>
+          <td>${statusPill(job.last_status)}${job.last_error ? `<div class="small">${esc(job.last_error)}</div>` : ""}</td>
+          <td><div class="actions"><button data-capture-auto="${esc(job.id)}" type="button">Capturar agora</button><button class="secondary" data-edit-auto="${esc(job.id)}" type="button">Editar</button><button class="danger" data-delete-auto="${esc(job.id)}" type="button">Excluir</button></div></td>
+        </tr>`).join("")}</tbody></table></div>`;
+      $("automaticList").querySelectorAll("[data-capture-auto]").forEach(btn => btn.onclick = () => captureAutomaticNow(btn.dataset.captureAuto, btn));
+      $("automaticList").querySelectorAll("[data-edit-auto]").forEach(btn => btn.onclick = () => editAutomatic(btn.dataset.editAuto));
+      $("automaticList").querySelectorAll("[data-delete-auto]").forEach(btn => btn.onclick = () => deleteAutomatic(btn.dataset.deleteAuto, btn));
     }
     function renderRuns(runs){
       if(!runs?.length){ $("runsTable").innerHTML = "Nenhuma run."; return; }
@@ -425,7 +491,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const target = runs.find(run => run.run_id === selectedRunId) || runs[0] || null;
       const selectionChanged = Boolean(target && target.run_id !== selectedRunId);
       if(target) selectedRunId = target.run_id;
-      renderMetrics(state); renderCertificates(state); renderRuns(runs);
+      renderMetrics(state); renderCertificates(state); renderAutomatic(state.automatic); renderRuns(runs);
       if(!target){ selectedRunSnapshot=null; renderDetail(null); return; }
       if(selectedRunSnapshot?.run_id === target.run_id){
         selectedRunSnapshot = {...selectedRunSnapshot, ...target, files:selectedRunSnapshot.files || []};
@@ -445,30 +511,108 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       }
       catch(err){ if(showErr) setMsg("err", err.message); }
     }
+    function resetCertificateForm(){
+      editingCertId = "";
+      $("certForm").reset();
+      $("certFormTitle").textContent = "Novo certificado";
+      $("btnUploadCert").textContent = "Salvar certificado";
+      $("btnCancelCertEdit").classList.add("hidden");
+      $("certFileName").textContent = "Selecionar arquivo .pfx";
+      $("certFileHint").textContent = "Arraste o arquivo aqui ou clique para escolher.";
+      $("certAlias").placeholder = "Nome curto para identificar";
+      $("certPassword").placeholder = "";
+      $("certAlias").readOnly = true;
+      $("certPassword").readOnly = true;
+      guardOperationalCredentials("certAlias", "certPassword");
+    }
+    function editCertificate(certId){
+      const cert = (latestState?.certificates || []).find(item => item.id === certId && item.source === "upload");
+      if(!cert) return;
+      editingCertId = certId;
+      $("certFormTitle").textContent = "Editar certificado";
+      $("btnUploadCert").textContent = "Salvar alterações";
+      $("btnCancelCertEdit").classList.remove("hidden");
+      $("certAlias").readOnly = false;
+      $("certPassword").readOnly = false;
+      $("certAlias").value = cert.alias || "";
+      $("certPassword").value = "";
+      $("certPassword").placeholder = "Deixe em branco para manter a senha";
+      $("certFileName").textContent = "Substituir arquivo .pfx (opcional)";
+      $("certFileHint").textContent = "Escolha outro arquivo somente se quiser substituir o certificado.";
+      $("certForm").scrollIntoView({behavior:"smooth",block:"start"});
+    }
     async function deleteCertificate(certId, btn){
       if(!confirm("Excluir este certificado?")) return;
       buttonLoading(btn, true, "Excluindo");
-      try{ await api(`/py/api/portal-nacional/certificates/${encodeURIComponent(certId)}`, {method:"DELETE"}); await loadState(); setMsg("ok", "Certificado excluído."); }
+      try{ await api(`/py/api/portal-nacional/certificates/${encodeURIComponent(certId)}`, {method:"DELETE"}); if(editingCertId===certId) resetCertificateForm(); await loadState(); setMsg("ok", "Certificado excluído."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading(btn, false, "Excluir"); }
+    }
+    function resetAutomaticForm(){
+      editingAutomaticId = "";
+      $("automaticForm").reset();
+      $("automaticCertSelect").disabled = false;
+      $("automaticEnabled").checked = true;
+      $("btnSaveAutomatic").textContent = "Salvar automação";
+      $("btnCancelAutomaticEdit").classList.add("hidden");
+    }
+    function editAutomatic(jobId){
+      const job = (latestState?.automatic?.jobs || []).find(item => item.id === jobId);
+      if(!job) return;
+      editingAutomaticId = jobId;
+      $("automaticCertSelect").value = job.cert_id;
+      $("automaticCertSelect").disabled = true;
+      $("automaticModo").value = job.modo;
+      $("automaticTipo").value = job.tipo_download;
+      $("automaticEnabled").checked = Boolean(job.enabled);
+      $("btnSaveAutomatic").textContent = "Salvar alterações";
+      $("btnCancelAutomaticEdit").classList.remove("hidden");
+      switchSection("automaticSection");
+    }
+    async function captureAutomaticNow(jobId, btn){
+      buttonLoading(btn, true, "Iniciando"); setMsg("", "");
+      try{
+        const data = await api(`/py/api/portal-nacional/automatic/${encodeURIComponent(jobId)}/capture-now`, {method:"POST", body:"{}"});
+        selectedRunId = logicalRunKey({run_id:data.run_id});
+        await loadState(true); switchSection("notesSection"); setMsg("ok", "Captura automática iniciada.");
+      }catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading(btn, false, "Capturar agora"); }
+    }
+    async function deleteAutomatic(jobId, btn){
+      if(!confirm("Excluir esta automação? As notas já baixadas serão mantidas por quatro meses.")) return;
+      buttonLoading(btn, true, "Excluindo");
+      try{ await api(`/py/api/portal-nacional/automatic/${encodeURIComponent(jobId)}`, {method:"DELETE"}); resetAutomaticForm(); await loadState(); setMsg("ok", "Automação excluída. As capturas existentes foram preservadas."); }
       catch(err){ setMsg("err", err.message); }
       finally{ buttonLoading(btn, false, "Excluir"); }
     }
     $("certForm").onsubmit = async ev => {
       ev.preventDefault(); setMsg("", "");
       const file = $("certFile").files[0];
-      if(!file){ setMsg("warn", "Selecione um certificado."); return; }
+      if(!editingCertId && !file){ setMsg("warn", "Selecione um certificado."); return; }
       const fd = new FormData();
-      fd.set("file", file);
+      if(file) fd.set("file", file);
       fd.set("alias", $("certAlias").value.trim());
       fd.set("password", $("certPassword").value);
+      fd.set("password_changed", editingCertId && $("certPassword").value !== "" ? "true" : "false");
+      const wasEditing = Boolean(editingCertId);
+      const target = wasEditing ? `/py/api/portal-nacional/certificates/${encodeURIComponent(editingCertId)}` : "/py/api/portal-nacional/certificates";
       buttonLoading($("btnUploadCert"), true, "Salvando");
+      let saved = false;
       try{
-        await api("/py/api/portal-nacional/certificates", {method:"POST", body:fd});
-        $("certForm").reset(); $("certFileName").textContent = "Selecionar arquivo .pfx";
-        $("certAlias").readOnly = true; $("certPassword").readOnly = true;
-        guardOperationalCredentials("certAlias", "certPassword");
-        await loadState(); setMsg("ok", "Certificado salvo.");
+        await api(target, {method:wasEditing ? "PUT" : "POST", body:fd});
+        await loadState(); saved = true; setMsg("ok", wasEditing ? "Certificado atualizado." : "Certificado salvo.");
       }catch(err){ setMsg("err", err.message); }
-      finally{ buttonLoading($("btnUploadCert"), false, "Salvar certificado"); }
+      finally{ buttonLoading($("btnUploadCert"), false, wasEditing ? "Salvar alterações" : "Salvar certificado"); if(saved) resetCertificateForm(); }
+    };
+    $("automaticForm").onsubmit = async ev => {
+      ev.preventDefault(); setMsg("", "");
+      const certId = $("automaticCertSelect").value;
+      if(!certId){ setMsg("warn", "Cadastre e selecione um certificado enviado."); switchSection("certificatesSection"); return; }
+      const payload = {cert_id:certId, modo:$("automaticModo").value, tipo_download:$("automaticTipo").value, enabled:$("automaticEnabled").checked};
+      buttonLoading($("btnSaveAutomatic"), true, "Salvando");
+      try{ await api("/py/api/portal-nacional/automatic", {method:"POST", body:JSON.stringify(payload)}); resetAutomaticForm(); await loadState(); setMsg("ok", "Automação salva. A primeira captura será iniciada quando o Portal estiver livre."); }
+      catch(err){ setMsg("err", err.message); }
+      finally{ buttonLoading($("btnSaveAutomatic"), false, "Salvar automação"); }
     };
     $("runForm").onsubmit = async ev => {
       ev.preventDefault(); setMsg("", "");
@@ -531,6 +675,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       finally{ buttonLoading($("btnDeleteRun"), false, "Excluir run"); }
     };
     $("btnRefresh").onclick = () => loadState(true).catch(err => setMsg("err", err.message));
+    $("btnCancelCertEdit").onclick = resetCertificateForm;
+    $("btnCancelAutomaticEdit").onclick = resetAutomaticForm;
     $("btnLogout").onclick = async () => { try{ await api("/api/logout", {method:"POST", body:"{}"}); } finally { toLogin(); } };
     document.querySelectorAll(".nav-btn[data-section]").forEach(btn => btn.onclick = () => switchSection(btn.dataset.section));
     $("certFile").addEventListener("change", () => {
@@ -546,6 +692,8 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       $("certFile").files = dt.files;
       $("certFileName").textContent = "Arquivo selecionado";
     });
+    resetCertificateForm();
+    resetAutomaticForm();
     guardOperationalCredentials("certAlias", "certPassword");
     (() => {
       const now = new Date();

@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.80.
+Este documento e a fonte de contexto operacional da versao 1.0.81.
 
 ## Estado desejado
 
@@ -15,6 +15,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.80.
 - Modal `prumo-browserless` com 30 sessoes turbo pela API.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
 - Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
+- Captura automática diária do Portal distribuída pelas 24 horas, com uma execução automática global por vez, primeira janela de 123 dias, sobreposição de dois dias e retenção de 123 dias.
 - GitHub, pasta local e servidor na mesma versao.
 - Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
@@ -152,6 +153,22 @@ O app aparece ao lado do `ISS Fortaleza` no `index.html`. Ele usa:
 - Modal `prumo-portal-nacional-google-solver` apenas para hCaptcha;
 - upload de certificado `.pfx`/`.p12` por colaborador, com senha validada e protegida no servidor;
 - sessao gerada diretamente pelo PFX no runtime atual, sem depender da store Windows no Linux.
+- aba `Notas automático`, com configuração por certificado, primeira busca de quatro meses, captura diária, botão `Capturar agora` e retenção móvel de 123 dias;
+- agenda global espalhada pelas 24 horas e execução automática serializada para não disputar o Portal e os solvers com outra run ativa.
+
+O agendador nasce e encerra junto com o FastAPI. A configuração fica em
+`portal_nacional/automatic.json` dentro do diretório do colaborador. Uma run
+automática é uma run normal com checkpoint e os campos `automatic` e
+`automatic_job_id`; por isso continua visível, baixável e retomável. A limpeza
+de 123 dias seleciona somente essas runs e nunca remove capturas manuais.
+
+Operação da tela:
+
+1. Em `Certificados`, clique numa linha ou em `Editar` para alterar o alias, a senha ou substituir o PFX. Arquivo e senha em branco são preservados.
+2. Em `Notas automático`, escolha o certificado e os tipos de nota/arquivo. Salvar habilitado torna a primeira captura imediatamente elegível.
+3. O horário mostrado é administrado pelo servidor e redistribuído quando configurações são incluídas ou excluídas.
+4. `Capturar agora` ignora a espera da agenda, mas recusa se o mesmo colaborador já estiver executando outra run.
+5. `Parar run` aparece somente na aba `Notas`. `Voltar` retorna à central da Prumo e fica acima de `Sair`.
 
 Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A central `/` e a rota limpa `/portal-nacional` foram mantidas ativas por rotas especificas do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`), que entregam `index.html` e `portal-nacional.html` diretamente.
 

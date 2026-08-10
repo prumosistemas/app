@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.80**
-Atualizado em: **2026-08-07**
+Versao do app: **1.0.81**
+Atualizado em: **2026-08-10**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -71,6 +71,12 @@ Modal; a análise Google Modo IA tenta os dois Spaces privados HF, depois o
 egress da conta Modal que hospeda o navegador. O ThinkPad permanece como
 último fallback residencial. A API espelha no ThinkPad imagens-resumo, MP4 e
 eventos de auditoria dos Volumes Modal, com retenção de sete dias.
+
+No Portal Nacional, `Notas automático` persiste somente configuração e IDs em
+`automatic.json`, dentro do escopo do colaborador. O agendador do contêiner
+distribui os horários ao longo do dia, não inicia captura automática enquanto
+outra run do Portal estiver ativa e retém apenas runs automáticas por 123 dias.
+Certificados, senhas e sessões continuam fora dos comandos e da documentação.
 
 ## Preparacao do cofre
 

@@ -28,6 +28,15 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A observabilidade do Worker passou a 100% e registra rota e etapa sem corpo, senha, cookie ou token. Após o deploy, dois logins sintéticos simultâneos responderam JSON 401 em 931-959 ms, sem erro interno e sem retry; a suíte completa passou com 163 testes.
 - O D1 `db` recebeu replicação global de leitura em modo `auto`. Cada requisição da API usa a Sessions API com `first-primary`: a primeira consulta confirma o estado mais recente de autenticação e as seguintes podem aproveitar réplicas mantendo consistência sequencial. Escritas continuam no primário; a replicação não tem custo adicional e não altera as cotas do plano Free.
 
+### Captura automática do Portal em 2026-08-10
+
+- A versão 1.0.81 adiciona `Notas automático` por colaborador e certificado. A primeira execução cobre 123 dias; as seguintes usam checkpoint com dois dias de sobreposição e permanecem disponíveis por 123 dias.
+- As configurações habilitadas são distribuídas uniformemente nas 24 horas. O agendador inicia apenas uma captura automática por vez e espera o Portal ficar sem runs ativas, reduzindo colisões entre empresas e consumo simultâneo de solver.
+- `Capturar agora` permite antecipar uma configuração. A run continua usando o mesmo isolamento por empresa/colaborador e o mesmo fluxo idempotente de recebidas/emitidas.
+- O certificado agora pode ser editado por clique na lista. A API nunca devolve o nome original do PFX; arquivo e senha existentes são mantidos quando não forem substituídos.
+- A tela ganhou `Voltar` acima de `Sair`, `Parar run` ficou restrito à aba de notas e a listagem deixou de varrer todos os arquivos das runs em cada atualização.
+- Validação local: 168 testes, compilação Python e validação sintática do JavaScript inline.
+
 ### Atualização de cobrança em 2026-08-03
 
 - O Worker separa bloqueio financeiro (`billing_disabled`) de desativação feita pelo administrador (`manual_disabled`). Pagamento pendente bloqueia os colaboradores e informa o email do administrador somente depois de a senha correta ser validada; a confirmação do pagamento remove apenas o bloqueio financeiro.
@@ -66,7 +75,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A prova Loquicenter entrou pelo certificado na segunda tentativa, mas a primeira janela de recebidas recebeu HTTP 503 no endpoint oficial. A causa foi classificada como `portal_indisponivel_temporario`, distinta de certificado, captcha e erro de nota.
 - A API 1.0.60 repete a indexação para HTTP 429/500/502/503/504 e falhas de rede em até oito tentativas, com intervalos crescentes de 15, 30, 60, 120, 240 e até 300 segundos. A run permanece ativa e a tela informa a causa e a próxima espera.
 
-- API alvo: 1.0.73, com autenticação mTLS direta no ThinkPad, seleção adaptativa entre duas contas Modal antes do fallback residencial do solver.
+- API alvo atual: 1.0.81, preservando autenticação direta no ThinkPad e seleção adaptativa entre as rotas de resolução antes do fallback residencial.
 - Portal 1.0.72: a ação visível `Continuar` retoma emitidas e recebidas incompletas em sequência, preserva índice e arquivos válidos e mantém indisponibilidades transitórias em espera. Outage do solver não consome tentativas da nota; após falha, a concorrência cai para um probe e o Modal com sucesso recente passa a ser preferido. Respostas HTTP 503 agora preservam `reason/error` do JSON; `google_ai_request_failed`, `unusual traffic` e `/sorry/index` aplicam cooldown de 300 segundos somente ao endpoint Modal explicitamente bloqueado, enquanto 5xx genérico mantém cooldown curto para aproveitar outros containers do pool.
 - Portal 1.0.73: a recuperação de sessão do Modo IA cria um grupo de processos próprio no Linux e encerra toda a árvore do Chromium ao terminar. Isso impede o acúmulo observado na Loquicenter (8.438 tarefas no contêiner), que degradava o solver residencial até `Resource temporarily unavailable`.
 - Portal Alan/Loquicenter em 07/08/2026: recebidas preservadas em 72 XML/72 PDFs; emitidas retomadas somente em XML, sem reindexar e preservando 274 PDFs existentes. Backup local anterior à retomada em `Downloads/Prumo-Alan-Loquicenter-20260807`, contendo arquivos e os quatro JSONs de índice/estado, sem certificado, senha ou sessão.
@@ -85,7 +94,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Login/Worker: o incidente `1101` de 2026-07-17 revelou rejeições assíncronas escapando do `try/catch` porque os handlers eram retornados sem `await`. Todas as rotas assíncronas agora são aguardadas dentro da barreira de erro; respostas HTML de infraestrutura são reduzidas a uma mensagem segura com código de suporte, sem inserir o documento da Cloudflare no formulário.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
-- Imagem alvo do servidor: `ryang20/prumo-api:1.0.73`; manter a 1.0.72 como rollback local.
+- Imagem alvo do servidor: `ryang20/prumo-api:1.0.81`; a imagem em produção imediatamente anterior deve ser mantida como rollback local até a validação do deploy.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.

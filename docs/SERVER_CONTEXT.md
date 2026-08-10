@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.80
+Versao: 1.0.81
 Data: 2026-08-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -415,7 +415,12 @@ Endpoints Python:
 
 - `GET /api/portal-nacional/state`
 - `POST /api/portal-nacional/certificates`
+- `PUT /api/portal-nacional/certificates/{cert_id}`
 - `DELETE /api/portal-nacional/certificates/{cert_id}`
+- `GET /api/portal-nacional/automatic`
+- `POST /api/portal-nacional/automatic`
+- `DELETE /api/portal-nacional/automatic/{job_id}`
+- `POST /api/portal-nacional/automatic/{job_id}/capture-now`
 - `POST /api/portal-nacional/sessions/import`
 - `POST /api/portal-nacional/runs`
 - `GET /api/portal-nacional/runs`
@@ -431,6 +436,7 @@ Arvore de dados:
 /opt/prumo/data/empresas/<empresa>/colaboradores/<usuario>/portal_nacional/
   certificates/<cert_id>/cert.pfx
   certificates/<cert_id>/meta.json
+  automatic.json
   sessions/sessao_nfse.txt
   runs/<run_id>/run.json
   runs/<run_id>/indice.json
@@ -441,6 +447,16 @@ Arvore de dados:
 ```
 
 O download individual e o ZIP so expoem `downloads/`, `logs/`, `indice.json` e `run.json`. O arquivo `sessions/sessao_nfse.txt`, os PFX e o arquivo interno de senha nao sao servidos para download pela API.
+
+Captura automática:
+
+- Uma configuração é vinculada a um certificado enviado pelo colaborador e pode baixar recebidas, emitidas ou ambas em XML, PDF ou ambos.
+- A primeira captura consulta 123 dias. Depois, cada sucesso avança o checkpoint e o ciclo seguinte repete os dois últimos dias para absorver notas tardias sem perder documentos.
+- Os horários de todas as configurações habilitadas são espaçados uniformemente nas 24 horas. O scheduler consulta a cada 30 segundos e inicia no máximo uma captura automática global quando não existe outra run do Portal ativa.
+- `Capturar agora` é uma ação explícita: inicia imediatamente se aquele colaborador não tiver outra run ativa. O isolamento continua sendo empresa/colaborador.
+- Somente runs marcadas como automáticas são removidas após 123 dias. Runs manuais, certificados, sessão e arquivos do ISS não entram nessa limpeza.
+- `automatic.json` não contém senha nem conteúdo do certificado; armazena IDs, tipo da captura, agenda e checkpoint.
+- A listagem de runs devolve resumo sem percorrer os arquivos. XML/PDF/logs são enumerados apenas no detalhe de uma run, evitando degradação conforme o histórico cresce.
 
 Certificado digital:
 
@@ -511,8 +527,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.72 .
-docker push ryang20/prumo-api:1.0.72
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.81 .
+docker push ryang20/prumo-api:1.0.81
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -523,10 +539,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.72 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.81 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.72
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.81
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

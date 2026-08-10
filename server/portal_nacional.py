@@ -7,9 +7,10 @@ import sys
 import threading
 import time
 import zipfile
-from datetime import datetime
+from datetime import date, datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -25,6 +26,7 @@ from domain import (
     safe_slug,
     unprotect_secret,
 )
+from db import OUTPUT_ROOT
 from portal_nacional_session import list_certificates, load_pfx_identity
 from portal_nacional_competencia import (
     UNKNOWN_COMPETENCIA,
@@ -44,11 +46,22 @@ PORTAL_DOWNLOAD_CONCURRENCY = max(
     1,
     min(8, int(os.getenv("PORTAL_NACIONAL_DOWNLOAD_CONCURRENCY", "4"))),
 )
+PORTAL_AUTOMATIC_RETENTION_DAYS = 123
+PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS = 123
+PORTAL_AUTOMATIC_OVERLAP_DAYS = 2
+PORTAL_AUTOMATIC_POLL_SECONDS = max(
+    10,
+    min(300, int(os.getenv("PORTAL_AUTOMATIC_POLL_SECONDS", "30"))),
+)
+PORTAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 router = APIRouter(prefix="/api/portal-nacional", tags=["portal-nacional"])
 
 _LOCK = threading.RLock()
 _RUNTIME: Dict[str, Dict[str, Any]] = {}
+_AUTOMATIC_LOCK = threading.RLock()
+_AUTOMATIC_STOP = threading.Event()
+_AUTOMATIC_THREAD: threading.Thread | None = None
 
 
 class PortalRunPayload(BaseModel):
@@ -77,6 +90,13 @@ class PortalContinuePayload(PortalRetryPayload):
 
 class PortalSessionImportPayload(BaseModel):
     session: Dict[str, Any]
+
+
+class PortalAutomaticPayload(BaseModel):
+    cert_id: str
+    modo: str = "ambos"
+    tipo_download: str = "ambos"
+    enabled: bool = True
 
 
 def _retry_config(cfg: Dict[str, Any], payload: PortalRetryPayload) -> Dict[str, Any]:
@@ -135,6 +155,173 @@ def _session_path(ctx: WorkerContext) -> Path:
     return sessions / "sessao_nfse.txt"
 
 
+def _automatic_path(ctx: WorkerContext) -> Path:
+    return _portal_root(ctx) / "automatic.json"
+
+
+def _load_automatic_state(ctx: WorkerContext) -> Dict[str, Any]:
+    state = _load_json(_automatic_path(ctx), {})
+    jobs = state.get("jobs") if isinstance(state, dict) else None
+    return {
+        "version": 1,
+        "updated_at": state.get("updated_at") if isinstance(state, dict) else None,
+        "jobs": [dict(job) for job in jobs if isinstance(job, dict)] if isinstance(jobs, list) else [],
+    }
+
+
+def _save_automatic_state(ctx: WorkerContext, state: Dict[str, Any]) -> None:
+    payload = {
+        "version": 1,
+        "updated_at": _now_iso(),
+        "jobs": list(state.get("jobs") or []),
+    }
+    _save_json(_automatic_path(ctx), payload)
+
+
+def _automatic_context_from_path(path: Path) -> WorkerContext | None:
+    try:
+        relative = path.resolve().relative_to(Path(OUTPUT_ROOT).resolve())
+        parts = relative.parts
+        if len(parts) != 6 or parts[0] != "empresas" or parts[2] != "colaboradores":
+            return None
+        if parts[4] != "portal_nacional" or parts[5] != "automatic.json":
+            return None
+        return WorkerContext(
+            company_id=safe_slug(parts[1]),
+            company_name=parts[1],
+            user_id=safe_slug(parts[3]),
+            user_email="",
+            user_role="member",
+            via_worker=True,
+        )
+    except Exception:
+        return None
+
+
+def _automatic_records() -> List[tuple[WorkerContext, Dict[str, Any], Dict[str, Any]]]:
+    records: List[tuple[WorkerContext, Dict[str, Any], Dict[str, Any]]] = []
+    root = Path(OUTPUT_ROOT) / "empresas"
+    if not root.exists():
+        return records
+    for path in root.glob("*/colaboradores/*/portal_nacional/automatic.json"):
+        ctx = _automatic_context_from_path(path)
+        if not ctx:
+            continue
+        state = _load_automatic_state(ctx)
+        for job in state["jobs"]:
+            records.append((ctx, state, job))
+    return records
+
+
+def _parse_portal_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=PORTAL_TIMEZONE) if parsed.tzinfo is None else parsed.astimezone(PORTAL_TIMEZONE)
+    except ValueError:
+        return None
+
+
+def _next_daily_schedule(schedule_minute: int, *, after: datetime | None = None, force_next_day: bool = False) -> datetime:
+    current = (after or datetime.now(PORTAL_TIMEZONE)).astimezone(PORTAL_TIMEZONE)
+    minute = max(0, min(1439, int(schedule_minute)))
+    target_date = current.date() + timedelta(days=1 if force_next_day else 0)
+    target = datetime.combine(
+        target_date,
+        datetime_time(hour=minute // 60, minute=minute % 60),
+        tzinfo=PORTAL_TIMEZONE,
+    )
+    if target <= current:
+        target += timedelta(days=1)
+    return target
+
+
+def _rebalance_automatic_schedules(now: datetime | None = None) -> None:
+    current = now or datetime.now(PORTAL_TIMEZONE)
+    with _AUTOMATIC_LOCK:
+        grouped: Dict[str, tuple[WorkerContext, Dict[str, Any]]] = {}
+        enabled: List[tuple[WorkerContext, Dict[str, Any], Dict[str, Any]]] = []
+        for ctx, state, job in _automatic_records():
+            grouped[_runtime_key(ctx)] = (ctx, state)
+            if bool(job.get("enabled", True)):
+                enabled.append((ctx, state, job))
+
+        enabled.sort(key=lambda item: (_runtime_key(item[0]), str(item[2].get("id") or "")))
+        count = len(enabled)
+        changed_scopes: set[str] = set()
+        for index, (ctx, _state, job) in enumerate(enabled):
+            minute = int(index * 1440 / count) if count else 0
+            previous_minute = job.get("schedule_minute")
+            job["schedule_minute"] = minute
+            # Uma configuração nova fica vencida para iniciar assim que o Portal
+            # estiver livre. Rebalanceamentos posteriores preservam essa primeira captura.
+            if not job.get("next_run_at"):
+                job["next_run_at"] = current.isoformat(timespec="seconds")
+            elif previous_minute is not None and int(previous_minute) != minute and job.get("last_started_at"):
+                job["next_run_at"] = _next_daily_schedule(minute, after=current).isoformat(timespec="seconds")
+            changed_scopes.add(_runtime_key(ctx))
+
+        for ctx, state in grouped.values():
+            if _runtime_key(ctx) in changed_scopes:
+                _save_automatic_state(ctx, state)
+
+
+def _automatic_capture_range(job: Dict[str, Any], today: date | None = None) -> tuple[str, str]:
+    end = today or datetime.now(PORTAL_TIMEZONE).date()
+    last_success = str(job.get("last_success_date") or "").strip()
+    try:
+        start = datetime.strptime(last_success, "%Y-%m-%d").date() - timedelta(days=PORTAL_AUTOMATIC_OVERLAP_DAYS)
+    except ValueError:
+        start = end - timedelta(days=PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS)
+    if start > end:
+        start = end
+    return start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y")
+
+
+def _automatic_run_state(ctx: WorkerContext, job: Dict[str, Any]) -> tuple[str, bool]:
+    run_ids = [safe_slug(value, "run") for value in list(job.get("last_run_ids") or []) if str(value or "").strip()]
+    if not run_ids:
+        return str(job.get("last_status") or "aguardando"), False
+    statuses: List[str] = []
+    for run_id in run_ids:
+        run_path = _runs_root(ctx) / run_id / "run.json"
+        run = _load_json(run_path, {})
+        if run:
+            statuses.append(str(run.get("status") or "criada"))
+    if not statuses:
+        return "run_removida", False
+    active = any(value in {"criada", "rodando"} for value in statuses)
+    if active:
+        return "rodando", True
+    if all(value == "finalizado" for value in statuses):
+        return "finalizado", False
+    if any("erro" in value or value in {"interrompida", "parado"} for value in statuses):
+        return "finalizado_com_erros", False
+    return statuses[0], False
+
+
+def _reconcile_automatic_state(ctx: WorkerContext, state: Dict[str, Any]) -> bool:
+    changed = False
+    for job in state.get("jobs") or []:
+        status, active = _automatic_run_state(ctx, job)
+        if job.get("last_status") != status:
+            job["last_status"] = status
+            changed = True
+        if status == "finalizado" and job.get("last_capture_end") and job.get("last_success_date") != job.get("last_capture_end"):
+            job["last_success_date"] = job["last_capture_end"]
+            job["last_completed_at"] = _now_iso()
+            job["last_error"] = None
+            changed = True
+        elif not active and status == "finalizado_com_erros" and not job.get("last_error"):
+            job["last_error"] = "A captura terminou com pendências. O próximo ciclo retomará o período não confirmado."
+            changed = True
+    if changed:
+        _save_automatic_state(ctx, state)
+    return changed
+
+
 def _safe_run_dir(ctx: WorkerContext, run_id: str) -> Path:
     run_id = safe_slug(run_id, "run")
     run_dir = _runs_root(ctx) / run_id
@@ -187,7 +374,6 @@ def _public_certificate_meta(cert_id: str, meta: Dict[str, Any]) -> Dict[str, An
         "source": "upload",
         "label": f"{alias}{label_tail}",
         "alias": alias,
-        "filename": meta.get("filename"),
         "subject": meta.get("subject"),
         "issuer": meta.get("issuer"),
         "thumbprint": meta.get("thumbprint"),
@@ -592,14 +778,15 @@ def _update_run(run_dir: Path, **updates: Any) -> Dict[str, Any]:
     return data
 
 
-def _compact_run(ctx: WorkerContext, run_dir: Path) -> Dict[str, Any]:
+def _compact_run(ctx: WorkerContext, run_dir: Path, *, include_files: bool = True) -> Dict[str, Any]:
     paths = _run_paths(run_dir)
     data = _load_json(paths["run"], {})
     if data.get("status") == "rodando" and not _active_runtime(ctx):
         data = _update_run(run_dir, status="interrompida", last_error=data.get("last_error") or "Processo não está mais ativo.")
     if paths["index"].exists():
         data["summary"] = _summarize_index(paths["index"])
-    data["files"] = _list_files(run_dir)
+    if include_files:
+        data["files"] = _list_files(run_dir)
     return data
 
 
@@ -759,6 +946,162 @@ def _start_jobs(ctx: WorkerContext, run_dirs: List[Path], retry_only: bool = Fal
     thread.start()
 
 
+def _start_automatic_job(ctx: WorkerContext, job: Dict[str, Any], *, reason: str) -> List[Path]:
+    cert_id = safe_slug(str(job.get("cert_id") or ""), "cert")
+    cert = _get_uploaded_certificate(ctx, cert_id)
+    data_inicial, data_final = _automatic_capture_range(job)
+    cfg = _normalize_cfg(
+        {
+            "modo": job.get("modo") or "ambos",
+            "tipo_download": job.get("tipo_download") or "ambos",
+            "data_inicial": data_inicial,
+            "data_final": data_final,
+            "cert_id": cert_id,
+            "renovar_sessao": True,
+            "max_items": 0,
+            "retries": 8,
+        }
+    )
+    cfg.update(
+        {
+            "automatic": True,
+            "automatic_job_id": str(job.get("id") or cert_id),
+            "automatic_reason": reason,
+            "automatic_retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
+            "certificate_alias": str(cert["meta"].get("alias") or "Certificado"),
+        }
+    )
+    modos = ["recebidas", "emitidas"] if cfg["modo"] == "ambos" else [cfg["modo"]]
+    run_dirs = [_create_run(ctx, cfg, modo) for modo in modos]
+    _start_jobs(ctx, run_dirs, retry_only=False)
+    return run_dirs
+
+
+def _cleanup_automatic_runs(ctx: WorkerContext, *, now: datetime | None = None) -> int:
+    current = now or datetime.now(PORTAL_TIMEZONE)
+    cutoff = current - timedelta(days=PORTAL_AUTOMATIC_RETENTION_DAYS)
+    active = _active_runtime(ctx)
+    removed = 0
+    for run_path in list(_runs_root(ctx).glob("*/run.json")):
+        run = _load_json(run_path, {})
+        cfg = dict(run.get("config") or {})
+        if not cfg.get("automatic"):
+            continue
+        if active and active.get("run_id") == run_path.parent.name:
+            continue
+        created = _parse_portal_datetime(run.get("created_at"))
+        if created and created < cutoff:
+            target = run_path.parent.resolve()
+            root = _runs_root(ctx).resolve()
+            if root in target.parents:
+                shutil.rmtree(target)
+                removed += 1
+    return removed
+
+
+def _any_portal_runtime_active() -> bool:
+    with _LOCK:
+        stale = [key for key, runtime in _RUNTIME.items() if not runtime.get("thread") or not runtime["thread"].is_alive()]
+        for key in stale:
+            _RUNTIME.pop(key, None)
+        return bool(_RUNTIME)
+
+
+def _record_automatic_started(
+    ctx: WorkerContext,
+    state: Dict[str, Any],
+    job: Dict[str, Any],
+    run_dirs: List[Path],
+    *,
+    current: datetime,
+) -> None:
+    run_cfg = dict((_load_json(run_dirs[0] / "run.json", {}).get("config") or {}))
+    job["last_started_at"] = current.isoformat(timespec="seconds")
+    job["last_capture_start"] = datetime.strptime(run_cfg["data_inicial"], "%d/%m/%Y").date().isoformat()
+    job["last_capture_end"] = datetime.strptime(run_cfg["data_final"], "%d/%m/%Y").date().isoformat()
+    job["last_run_ids"] = [path.name for path in run_dirs]
+    job["last_status"] = "rodando"
+    job["last_error"] = None
+    job["next_run_at"] = _next_daily_schedule(
+        int(job.get("schedule_minute") or 0),
+        after=current,
+        force_next_day=True,
+    ).isoformat(timespec="seconds")
+    _save_automatic_state(ctx, state)
+
+
+def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any]:
+    current = now or datetime.now(PORTAL_TIMEZONE)
+    _rebalance_automatic_schedules(current)
+    records = _automatic_records()
+    scopes_cleaned: set[str] = set()
+    for ctx, state, _job in records:
+        scope = _runtime_key(ctx)
+        if scope not in scopes_cleaned:
+            _reconcile_automatic_state(ctx, state)
+            _cleanup_automatic_runs(ctx, now=current)
+            scopes_cleaned.add(scope)
+
+    if _any_portal_runtime_active():
+        return {"started": False, "reason": "portal_busy"}
+
+    due = []
+    for ctx, state, job in _automatic_records():
+        if not bool(job.get("enabled", True)):
+            continue
+        next_run = _parse_portal_datetime(job.get("next_run_at"))
+        if next_run and next_run <= current:
+            due.append((next_run, _runtime_key(ctx), str(job.get("id") or ""), ctx, state, job))
+    if not due:
+        return {"started": False, "reason": "nothing_due"}
+
+    _next_run, _scope, _job_id, ctx, state, job = min(due, key=lambda item: item[:3])
+    try:
+        run_dirs = _start_automatic_job(ctx, job, reason="schedule")
+        _record_automatic_started(ctx, state, job, run_dirs, current=current)
+        return {"started": True, "scope": _runtime_key(ctx), "job_id": job.get("id"), "run_ids": job["last_run_ids"]}
+    except Exception as exc:
+        job["last_status"] = "erro_ao_iniciar"
+        job["last_error"] = str(getattr(exc, "detail", None) or exc)
+        job["next_run_at"] = (current + timedelta(minutes=30)).isoformat(timespec="seconds")
+        _save_automatic_state(ctx, state)
+        return {"started": False, "reason": "start_failed", "scope": _runtime_key(ctx), "job_id": job.get("id")}
+
+
+def _automatic_scheduler_loop() -> None:
+    while not _AUTOMATIC_STOP.is_set():
+        try:
+            result = _run_automatic_scheduler_cycle()
+            if result.get("started"):
+                print(f"[portal-automatic] captura iniciada scope={result.get('scope')} job={result.get('job_id')}", flush=True)
+        except Exception as exc:
+            print(f"[portal-automatic] ciclo falhou: {type(exc).__name__}: {exc}", flush=True)
+        _AUTOMATIC_STOP.wait(PORTAL_AUTOMATIC_POLL_SECONDS)
+
+
+def start_portal_automatic_scheduler() -> None:
+    global _AUTOMATIC_THREAD
+    with _AUTOMATIC_LOCK:
+        if _AUTOMATIC_THREAD and _AUTOMATIC_THREAD.is_alive():
+            return
+        _AUTOMATIC_STOP.clear()
+        _AUTOMATIC_THREAD = threading.Thread(
+            target=_automatic_scheduler_loop,
+            name="portal-automatic-scheduler",
+            daemon=True,
+        )
+        _AUTOMATIC_THREAD.start()
+
+
+def stop_portal_automatic_scheduler() -> None:
+    global _AUTOMATIC_THREAD
+    _AUTOMATIC_STOP.set()
+    thread = _AUTOMATIC_THREAD
+    if thread and thread.is_alive():
+        thread.join(timeout=3)
+    _AUTOMATIC_THREAD = None
+
+
 def _session_status(ctx: WorkerContext) -> Dict[str, Any]:
     path = _session_path(ctx)
     data = _load_json(path, {}) if path.exists() else {}
@@ -774,6 +1117,46 @@ def _session_status(ctx: WorkerContext) -> Dict[str, Any]:
     }
 
 
+def _public_automatic_state(ctx: WorkerContext) -> Dict[str, Any]:
+    with _AUTOMATIC_LOCK:
+        state = _load_automatic_state(ctx)
+        _reconcile_automatic_state(ctx, state)
+        certs = {cert["id"]: cert for cert in _list_uploaded_certificates(ctx)}
+        jobs = []
+        for job in state.get("jobs") or []:
+            cert = certs.get(str(job.get("cert_id") or ""), {})
+            minute = max(0, min(1439, int(job.get("schedule_minute") or 0)))
+            jobs.append(
+                {
+                    "id": str(job.get("id") or ""),
+                    "cert_id": str(job.get("cert_id") or ""),
+                    "certificate_alias": cert.get("alias") or job.get("certificate_alias") or "Certificado",
+                    "certificate_available": bool(cert),
+                    "enabled": bool(job.get("enabled", True)),
+                    "modo": str(job.get("modo") or "ambos"),
+                    "tipo_download": str(job.get("tipo_download") or "ambos"),
+                    "schedule_minute": minute,
+                    "schedule_label": f"{minute // 60:02d}:{minute % 60:02d}",
+                    "next_run_at": job.get("next_run_at"),
+                    "last_started_at": job.get("last_started_at"),
+                    "last_completed_at": job.get("last_completed_at"),
+                    "last_status": job.get("last_status") or "aguardando",
+                    "last_error": job.get("last_error"),
+                    "last_run_ids": list(job.get("last_run_ids") or []),
+                    "last_capture_start": job.get("last_capture_start"),
+                    "last_capture_end": job.get("last_capture_end"),
+                }
+            )
+        return {
+            "enabled_jobs": sum(1 for job in jobs if job["enabled"]),
+            "jobs": jobs,
+            "retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
+            "initial_lookback_days": PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS,
+            "overlap_days": PORTAL_AUTOMATIC_OVERLAP_DAYS,
+            "timezone": str(PORTAL_TIMEZONE),
+        }
+
+
 @router.get("/state")
 async def portal_state(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
     runtime_certificates, certificate_error = await asyncio.to_thread(_runtime_certificates)
@@ -786,8 +1169,12 @@ async def portal_state(ctx: WorkerContext = Depends(get_worker_context)) -> Dict
         "session": _session_status(ctx),
         "certificates": certificates,
         "certificate_error": certificate_error,
+        "automatic": _public_automatic_state(ctx),
         "active_run_id": (_active_runtime(ctx) or {}).get("run_id"),
-        "runs": [_compact_run(ctx, path.parent) for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)],
+        "runs": [
+            _compact_run(ctx, path.parent, include_files=False)
+            for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        ],
         "limits": {
             "concorrencia": PORTAL_DOWNLOAD_CONCURRENCY,
             "concorrencia_automatica": True,
@@ -847,7 +1234,69 @@ async def upload_certificate(
 async def delete_certificate(cert_id: str, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
     cert = _get_uploaded_certificate(ctx, cert_id)
     shutil.rmtree(cert["dir"], ignore_errors=True)
+    with _AUTOMATIC_LOCK:
+        state = _load_automatic_state(ctx)
+        changed = False
+        for job in state["jobs"]:
+            if str(job.get("cert_id") or "") == cert["id"]:
+                job["enabled"] = False
+                job["next_run_at"] = None
+                job["last_status"] = "certificado_removido"
+                job["last_error"] = "Certificado removido. Cadastre-o novamente para reativar a captura."
+                changed = True
+        if changed:
+            _save_automatic_state(ctx, state)
     return {"ok": True}
+
+
+@router.put("/certificates/{cert_id}")
+async def update_certificate(
+    cert_id: str,
+    file: UploadFile | None = File(default=None),
+    password: str = Form(default=""),
+    password_changed: bool = Form(default=False),
+    alias: str = Form(default=""),
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> Dict[str, Any]:
+    cert = _get_uploaded_certificate(ctx, cert_id)
+    meta = dict(cert["meta"])
+    raw = await file.read() if file is not None else b""
+    if file is not None:
+        filename = Path(file.filename or "certificado.pfx").name
+        if Path(filename).suffix.lower() not in {".pfx", ".p12"}:
+            raise HTTPException(status_code=400, detail="Envie um arquivo .pfx ou .p12.")
+        if not raw or len(raw) > 12 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Certificado vazio ou maior que 12 MB.")
+        temp_path = cert["dir"] / f"replace_{os.getpid()}_{threading.get_ident()}.tmp"
+        try:
+            cert_info = await asyncio.to_thread(_validate_pfx_bytes, raw, password or "", temp_path)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        replacement = cert["dir"] / "cert.pfx.new"
+        replacement.write_bytes(raw)
+        os.replace(replacement, cert["file"])
+        meta.update(
+            {
+                "filename": filename,
+                "size": len(raw),
+                "password": protect_secret(password or ""),
+                **cert_info,
+            }
+        )
+    elif password_changed:
+        try:
+            cert_info = await asyncio.to_thread(load_pfx_identity, cert["file"], password or "")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="A nova senha não abre este certificado.") from exc
+        meta["password"] = protect_secret(password or "")
+        meta.update({key: cert_info.get(key) for key in ("subject", "issuer", "thumbprint", "not_after")})
+
+    clean_alias = str(alias or "").strip()
+    if clean_alias:
+        meta["alias"] = clean_alias[:120]
+    meta["updated_at"] = _now_iso()
+    _save_json(cert["dir"] / "meta.json", meta)
+    return {"ok": True, "certificate": _public_certificate_meta(cert["id"], meta)}
 
 
 @router.post("/sessions/import")
@@ -858,6 +1307,94 @@ async def import_session(payload: PortalSessionImportPayload, ctx: WorkerContext
         raise HTTPException(status_code=400, detail="Sessão inválida: cookies ausentes.")
     _save_json(_session_path(ctx), session)
     return {"ok": True, "session": _session_status(ctx)}
+
+
+@router.get("/automatic")
+async def get_portal_automatic(ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    return {"ok": True, "automatic": _public_automatic_state(ctx)}
+
+
+@router.post("/automatic")
+async def save_portal_automatic(
+    payload: PortalAutomaticPayload,
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> Dict[str, Any]:
+    cert_id = safe_slug(payload.cert_id, "cert")
+    cert = _get_uploaded_certificate(ctx, cert_id)
+    today = datetime.now(PORTAL_TIMEZONE).strftime("%d/%m/%Y")
+    normalized = _normalize_cfg(
+        {
+            "cert_id": cert_id,
+            "modo": payload.modo,
+            "tipo_download": payload.tipo_download,
+            "data_inicial": today,
+            "data_final": today,
+        }
+    )
+    with _AUTOMATIC_LOCK:
+        state = _load_automatic_state(ctx)
+        job = next((item for item in state["jobs"] if str(item.get("id") or "") == cert_id), None)
+        if job is None:
+            job = {
+                "id": cert_id,
+                "cert_id": cert_id,
+                "created_at": _now_iso(),
+                "next_run_at": datetime.now(PORTAL_TIMEZONE).isoformat(timespec="seconds"),
+                "last_status": "aguardando",
+                "last_run_ids": [],
+            }
+            state["jobs"].append(job)
+        job.update(
+            {
+                "cert_id": cert_id,
+                "certificate_alias": str(cert["meta"].get("alias") or "Certificado"),
+                "modo": normalized["modo"],
+                "tipo_download": normalized["tipo_download"],
+                "enabled": bool(payload.enabled),
+                "retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
+                "updated_at": _now_iso(),
+            }
+        )
+        if not job["enabled"]:
+            job["next_run_at"] = None
+        elif not job.get("next_run_at"):
+            job["next_run_at"] = datetime.now(PORTAL_TIMEZONE).isoformat(timespec="seconds")
+        _save_automatic_state(ctx, state)
+        _rebalance_automatic_schedules()
+    return {"ok": True, "automatic": _public_automatic_state(ctx)}
+
+
+@router.delete("/automatic/{job_id}")
+async def delete_portal_automatic(job_id: str, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    safe_id = safe_slug(job_id, "job")
+    with _AUTOMATIC_LOCK:
+        state = _load_automatic_state(ctx)
+        kept = [job for job in state["jobs"] if str(job.get("id") or "") != safe_id]
+        if len(kept) == len(state["jobs"]):
+            raise HTTPException(status_code=404, detail="Automação não encontrada.")
+        state["jobs"] = kept
+        _save_automatic_state(ctx, state)
+        _rebalance_automatic_schedules()
+    return {"ok": True, "automatic": _public_automatic_state(ctx)}
+
+
+@router.post("/automatic/{job_id}/capture-now")
+async def capture_portal_automatic_now(
+    job_id: str,
+    ctx: WorkerContext = Depends(get_worker_context),
+) -> Dict[str, Any]:
+    if _active_runtime(ctx):
+        raise HTTPException(status_code=409, detail="Já existe uma captura do Portal rodando para este colaborador.")
+    safe_id = safe_slug(job_id, "job")
+    with _AUTOMATIC_LOCK:
+        state = _load_automatic_state(ctx)
+        job = next((item for item in state["jobs"] if str(item.get("id") or "") == safe_id), None)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Automação não encontrada.")
+        current = datetime.now(PORTAL_TIMEZONE)
+        run_dirs = _start_automatic_job(ctx, job, reason="capture_now")
+        _record_automatic_started(ctx, state, job, run_dirs, current=current)
+    return {"ok": True, "run_id": run_dirs[0].name, "run_ids": [path.name for path in run_dirs]}
 
 
 @router.post("/runs")
@@ -878,7 +1415,10 @@ async def list_portal_runs(ctx: WorkerContext = Depends(get_worker_context)) -> 
     return {
         "ok": True,
         "active_run_id": (_active_runtime(ctx) or {}).get("run_id"),
-        "runs": [_compact_run(ctx, path.parent) for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)],
+        "runs": [
+            _compact_run(ctx, path.parent, include_files=False)
+            for path in sorted(_runs_root(ctx).glob("*/run.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        ],
     }
 
 

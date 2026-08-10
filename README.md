@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.80 - ZIP combinado por tipo e competência**
+Versao: **1.0.81 - captura diária do Portal Nacional**
 
 ## Estado atual
 
@@ -14,6 +14,8 @@ Versao: **1.0.80 - ZIP combinado por tipo e competência**
 - Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; os frames brutos permanecem somente nos Volumes Modal.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
+- `Notas automático` consulta cada certificado diariamente, cobre quatro meses na primeira captura, repete dois dias para segurança e conserva as capturas automáticas por 123 dias. Os horários são distribuídos ao longo das 24 horas e o agendador inicia somente uma captura automática quando o Portal está livre; `Capturar agora` permanece disponível.
+- A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -85,9 +87,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.80 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.81 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.80
+docker push ryang20/prumo-api:1.0.81
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
