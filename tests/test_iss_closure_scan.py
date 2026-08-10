@@ -128,6 +128,40 @@ def test_company_discovery_paginates_in_parallel_and_reports_progress(monkeypatc
     assert progress[-1] == (5, 5)
 
 
+def test_analysis_reuses_company_page_and_emits_incremental_batches(monkeypatch) -> None:
+    html = """
+      <input name="javax.faces.ViewState" value="state-2" />
+      <tbody id="alteraInscricaoForm:empresaDataTable:tb"><tr>
+        <td><a id="alteraInscricaoForm:empresaDataTable:2:linkDocumento">12.345.678/0001-90</a></td>
+        <td><a id="alteraInscricaoForm:empresaDataTable:2:linkInscricao">123</a></td>
+        <td><a id="alteraInscricaoForm:empresaDataTable:2:linkNome">Empresa</a></td>
+      </tr></tbody>
+    """
+    fetches = []
+    monkeypatch.setattr(scan, "_fetch_companies_page", lambda *_args: fetches.append(1) or html)
+    company = {"page": 2, "idx": 2, "cnpj_digits": "12345678000190", "nome": "Empresa"}
+    cache = {}
+    scan._resolve_company(object(), "modal", "state-1", company, cache)
+    scan._resolve_company(object(), "modal", "state-1", company, cache)
+    assert len(fetches) == 1
+
+    monkeypatch.setattr(scan, "_open_analysis_session", lambda _account: (object(), "modal", "state"))
+    monkeypatch.setattr(
+        scan,
+        "_company_result",
+        lambda _client, _html, _state, item, _cache: {**item, "status": "FECHADO"},
+    )
+    batches = []
+    remaining = scan._analyze_chunk(
+        {"usuario": "u", "senha": "s"},
+        [{"cnpj_digits": str(index)} for index in range(5)],
+        scan.threading.Event(),
+        lambda batch: batches.append(batch),
+    )
+    assert remaining == []
+    assert [len(batch) for batch in batches] == [3, 2]
+
+
 def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
     _memory_storage(monkeypatch)
     alan, bia = _ctx("alan"), _ctx("bia")

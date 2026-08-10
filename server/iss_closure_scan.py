@@ -433,16 +433,22 @@ def _resolve_company(
     modal_html: str,
     modal_state: str,
     original: Dict[str, Any],
+    page_cache: Optional[Dict[int, tuple[str, str]]] = None,
 ) -> tuple[Dict[str, Any], str]:
     page = int(original.get("page") or 0)
     if page > 0 and original.get("idx") is not None:
-        page_html = modal_html if page == 1 else _fetch_companies_page(
-            client,
-            modal_state,
-            page,
-            _find_scroller_id(modal_html),
-        )
-        state = extract_view_state(page_html) or modal_state
+        cache = page_cache if page_cache is not None else {}
+        if page in cache:
+            page_html, state = cache[page]
+        else:
+            page_html = modal_html if page == 1 else _fetch_companies_page(
+                client,
+                modal_state,
+                page,
+                _find_scroller_id(modal_html),
+            )
+            state = extract_view_state(page_html) or modal_state
+            cache[page] = (page_html, state)
         listed = _parse_companies(page_html, page)
         resolved = next(
             (item for item in listed if item.get("cnpj_digits") == original.get("cnpj_digits")),
@@ -557,8 +563,9 @@ def _company_result(
     modal_html: str,
     modal_state: str,
     company: Dict[str, Any],
+    page_cache: Optional[Dict[int, tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
-    resolved, state = _resolve_company(client, modal_html, modal_state, company)
+    resolved, state = _resolve_company(client, modal_html, modal_state, company, page_cache)
     result = _consult_company(client, state, resolved)
     valid = [item for item in result["pendencias"] if item.get("origem") != "mensagem_tela"]
     messages = [item.get("situacao", "") for item in result["pendencias"] if item.get("origem") == "mensagem_tela"]
@@ -581,7 +588,12 @@ def _open_analysis_session(account: Dict[str, Any]) -> tuple[PortalBootstrapClie
     return client, modal_html, modal_state
 
 
-def _analyze_chunk(account: Dict[str, Any], companies: List[Dict[str, Any]], stop: threading.Event) -> List[Dict[str, Any]]:
+def _analyze_chunk(
+    account: Dict[str, Any],
+    companies: List[Dict[str, Any]],
+    stop: threading.Event,
+    emit: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
+) -> List[Dict[str, Any]]:
     with _NETWORK_SLOTS:
         if stop.is_set():
             return []
@@ -589,24 +601,40 @@ def _analyze_chunk(account: Dict[str, Any], companies: List[Dict[str, Any]], sto
             client, modal_html, modal_state = _open_analysis_session(account)
         except Exception as exc:
             message = _safe_error(exc)
-            return [{**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": message} for company in companies]
+            failures = [{**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": message} for company in companies]
+            if emit:
+                emit(failures)
+                return []
+            return failures
 
         results: List[Dict[str, Any]] = []
+        page_cache: Dict[int, tuple[str, str]] = {1: (modal_html, modal_state)}
+
+        def append_result(result: Dict[str, Any]) -> None:
+            results.append(result)
+            if emit and len(results) >= 3:
+                emit(list(results))
+                results.clear()
+
         for company in companies:
             if stop.is_set():
                 break
             try:
-                results.append(_company_result(client, modal_html, modal_state, company))
+                append_result(_company_result(client, modal_html, modal_state, company, page_cache))
                 continue
             except Exception as first_error:
                 if not _is_recoverable_error(first_error):
-                    results.append({**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": _safe_error(first_error)})
+                    append_result({**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": _safe_error(first_error)})
                     continue
             try:
                 client, modal_html, modal_state = _open_analysis_session(account)
-                results.append(_company_result(client, modal_html, modal_state, company))
+                page_cache = {1: (modal_html, modal_state)}
+                append_result(_company_result(client, modal_html, modal_state, company, page_cache))
             except Exception as second_error:
-                results.append({**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": _safe_error(second_error)})
+                append_result({**company, "status": "ERRO", "qtd_pendencias": 0, "competencias_pendentes": [], "erro": _safe_error(second_error)})
+        if emit and results:
+            emit(list(results))
+            results.clear()
         return results
 
 
@@ -680,14 +708,25 @@ def _scan_account(ctx: WorkerContext, run_id: str, account: Dict[str, Any], stop
     chunks = [companies[index : index + COMPANIES_PER_SESSION] for index in range(0, len(companies), COMPANIES_PER_SESSION)]
     workers = min(PER_ACCOUNT_WORKERS, len(chunks))
     with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="closure-account") as executor:
-        futures = [executor.submit(_analyze_chunk, account, chunk, stop) for chunk in chunks]
+        futures = [
+            executor.submit(
+                _analyze_chunk,
+                account,
+                chunk,
+                stop,
+                lambda batch: _append_results(ctx, run_id, account, batch),
+            )
+            for chunk in chunks
+        ]
         for future in as_completed(futures):
             if stop.is_set():
                 for pending in futures:
                     pending.cancel()
                 break
             try:
-                _append_results(ctx, run_id, account, future.result())
+                remaining = future.result()
+                if remaining:
+                    _append_results(ctx, run_id, account, remaining)
             except Exception as exc:
                 logger.exception("Falha ao consolidar lote da varredura: %s", _safe_error(exc))
 
