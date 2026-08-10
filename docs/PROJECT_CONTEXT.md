@@ -26,6 +26,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Os limites por IP e email agora são avaliados em um único `db.batch`, sequencial e transacional. No login aceito, limpeza dos limites, atualização dos horários, poda de sessões e criação da nova sessão também usam um único batch idempotente.
 - Falhas transitórias documentadas pelo D1 recebem no máximo três tentativas, com backoff exponencial curto e jitter. Erros definitivos continuam falhando imediatamente, sem esconder defeitos nem reduzir PBKDF2 ou os limites de segurança.
 - A observabilidade do Worker passou a 100% e registra rota e etapa sem corpo, senha, cookie ou token. Após o deploy, dois logins sintéticos simultâneos responderam JSON 401 em 931-959 ms, sem erro interno e sem retry; a suíte completa passou com 163 testes.
+- O D1 `db` recebeu replicação global de leitura em modo `auto`. Cada requisição da API usa a Sessions API com `first-primary`: a primeira consulta confirma o estado mais recente de autenticação e as seguintes podem aproveitar réplicas mantendo consistência sequencial. Escritas continuam no primário; a replicação não tem custo adicional e não altera as cotas do plano Free.
 
 ### Atualização de cobrança em 2026-08-03
 

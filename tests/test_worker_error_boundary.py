@@ -41,3 +41,11 @@ def test_worker_errors_are_searchable_by_support_code_and_stage() -> None:
     assert 'event: "worker_request_failed"' in source
     assert "request_id: requestId" in source
     assert 'stage: String(err?.prumoStage || "request_handler")' in source
+
+
+def test_worker_uses_safe_d1_session_for_read_replication() -> None:
+    source = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+
+    assert "env = withRequestD1Session(env);" in source
+    assert 'env.db.withSession("first-primary")' in source
+    assert "async scheduled(_event, env, ctx)" in source

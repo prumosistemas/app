@@ -8,6 +8,7 @@ Versao: **1.0.80 - ZIP combinado por tipo e competência**
 - Worker Cloudflare de producao: `morning-credit-8a59`.
 - Login: rate limits e persistencia de sessao usam batches D1 sequenciais; limpeza fica somente no cron e falhas transitórias recebem retry curto sem reduzir a seguranca do PBKDF2.
 - D1 de producao: `db`.
+- D1 com replicacao global de leitura `auto` e Sessions API `first-primary`; leituras posteriores podem usar replicas sem perder consistencia da autenticacao.
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
 - Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.

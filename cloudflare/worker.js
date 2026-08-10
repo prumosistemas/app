@@ -132,6 +132,10 @@ export default {
         return jsonResponse(request, env, { ok: false, error: "Binding D1 'db' não configurado." }, 500);
       }
 
+      // Uma sessão por requisição mantém consistência sequencial e permite que
+      // leituras posteriores usem réplicas sem arriscar sessão/auth desatualizada.
+      env = withRequestD1Session(env);
+
       if (hasRequestBody(request.method)) {
         const maxBytes = getMaxPostBytes(url.pathname);
 
@@ -281,6 +285,14 @@ export default {
     })());
   },
 };
+
+function withRequestD1Session(env) {
+  if (!env?.db || typeof env.db.withSession !== "function") return env;
+  return {
+    ...env,
+    db: env.db.withSession("first-primary"),
+  };
+}
 
 /* =========================
    SETUP
