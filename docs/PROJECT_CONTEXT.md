@@ -11,13 +11,21 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Frontend | `iss-fortaleza.html`, `portal-nacional.html` |
 | Worker de borda | `cloudflare/worker.js` |
 | API e filas | `server/main.py`, `server/run_queue.py` |
-| ISS Fortaleza | `server/flow_*.py` |
+| ISS Fortaleza | `server/flow_*.py`, `server/iss_closure_scan.py` |
 | Portal Nacional | `server/portal_nacional.py`, `server/portal_nacional_automation.py` |
 | Deploy Modal | `deploy/` |
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
 ## Estado validado em 2026-07-18
+
+### Checagem de encerramento ISS em 2026-08-10
+
+- A versão 1.0.84 adiciona `Checar encerramento` antes de `Instruções` no ISS Fortaleza. O colaborador seleciona uma ou mais contas já cadastradas e acompanha progresso, abertas, fechadas, mensagens, erros e competências pendentes; o resultado pode ser baixado em CSV.
+- A implementação reaproveita o protocolo JSF validado do projeto `varreduracompletaissfortaleza`, mas não usa Executor Worker, Modal ou navegador. Login, listagem de empresas e consultas saem por requests diretamente do ThinkPad.
+- A concorrência é controlada no servidor: seis sessões HTTP globais entre todos os usuários/runs, no máximo quatro por conta e até duas contas coordenadas em paralelo. O mecanismo é separado da fila Browserless, portanto uma checagem não ocupa slots do ISS normal nem dos solvers do Portal.
+- Cada colaborador tem estado isolado na chave SQLite `:closure_scans`. São preservadas exatamente as cinco verificações mais recentes; runs interrompidas mantêm resultados concluídos e runs ativas são retomadas após reinício do contêiner.
+- Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A suíte local da versão passou com 180 testes.
 
 ### Estabilidade e latência do login em 2026-08-10
 

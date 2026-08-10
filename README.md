@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.83 - exportação de escrituração validada**
+Versao: **1.0.84 - checagem de encerramento ISS**
 
 ## Estado atual
 
@@ -17,6 +17,7 @@ Versao: **1.0.83 - exportação de escrituração validada**
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas automáticas por 123 dias. Os horários são distribuídos ao longo das 24 horas e o agendador inicia somente uma captura automática quando o Portal está livre; `Capturar agora` permanece disponível.
 - A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
 - A exportação de escrituração do ISS é obtida pelo link gerado dentro do navegador autenticado. Arquivos vazios, HTML de erro e planilhas estruturalmente inválidas deixam de ser aceitos como sucesso; o log registra bytes e linhas físicas dos XMLs internos, contornando metadados de dimensão incorretos do portal.
+- `Checar encerramento` consulta uma ou mais contas ISS por requests diretos do ThinkPad, sem ocupar Browserless ou Modal. O backend limita seis sessões HTTP globais, até quatro por conta, permite usuários simultâneos e mantém as cinco verificações mais recentes de cada colaborador.
 - Browserless local: desligado por padrao, documentado como fallback.
 - Homologacao: removida do codigo.
 
@@ -32,6 +33,7 @@ Versao: **1.0.83 - exportação de escrituração validada**
 | `master-company.html` | Detalhe de empresa para master |
 | `cloudflare/worker.js` | Auth, empresas, usuarios, pagamentos, D1 e proxy da API |
 | `server/` | API FastAPI, filas e fluxos Playwright |
+| `server/iss_closure_scan.py` | Varredura HTTP de encerramento da escrituração ISS |
 | `deploy/modal_browserless.py` | Browserless no Modal |
 | `solver/google_ai_mode/` | Código versionado do único resolvedor do Portal |
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
@@ -88,9 +90,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.83 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.84 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.83
+docker push ryang20/prumo-api:1.0.84
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

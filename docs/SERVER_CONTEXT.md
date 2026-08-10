@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.83
+Versao: 1.0.84
 Data: 2026-08-10
 Modo atual: producao unica, sem homologacao ativa
 
@@ -13,6 +13,8 @@ A Prumo roda em cinco partes:
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
 5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback. A segunda conta HF esta protegida no cofre, mas ainda sem compute por inelegibilidade ZeroGPU da conta nova.
+
+A checagem de encerramento da escrituração é uma exceção intencional ao caminho Browserless do ISS: `server/iss_closure_scan.py` faz requests diretos do ThinkPad. O limite global padrão é seis sessões HTTP, com até quatro por conta e duas contas orquestradas em paralelo. Assim, usuários diferentes podem verificar ao mesmo tempo sem criar concorrência ilimitada nem ocupar Modal.
 
 Nao existe mais homologacao configurada no codigo. Os HTMLs sempre apontam para producao. O antigo Worker/D1 de homologacao deve ser considerado legado/removivel.
 
@@ -527,8 +529,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.83 .
-docker push ryang20/prumo-api:1.0.83
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.84 .
+docker push ryang20/prumo-api:1.0.84
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -539,10 +541,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.83 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.84 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.83
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.84
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

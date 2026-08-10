@@ -129,6 +129,11 @@ from solver_audit import (
     resolve_audit_file,
     start_solver_audit_sync,
 )
+from iss_closure_scan import (
+    router as iss_closure_scan_router,
+    start_closure_scan_recovery,
+    stop_closure_scan_tasks,
+)
 
 
 @asynccontextmanager
@@ -136,20 +141,23 @@ async def lifespan(_: FastAPI):
     await startup_queue_workers()
     start_solver_audit_sync()
     start_portal_automatic_scheduler()
+    start_closure_scan_recovery()
     try:
         yield
     finally:
         stop_portal_automatic_scheduler()
+        stop_closure_scan_tasks()
 
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.83",
+    version="1.0.84",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
     lifespan=lifespan,
 )
 
 app.include_router(portal_nacional_router)
+app.include_router(iss_closure_scan_router)
 
 MONITOR_ROOT = os.path.join(OUTPUT_ROOT, "_monitor")
 MONITOR_DB_FILE = os.path.join(MONITOR_ROOT, "metrics.sqlite3")
@@ -490,7 +498,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "Prumo API",
-        "version": "1.0.83",
+        "version": "1.0.84",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,

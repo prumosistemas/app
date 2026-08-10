@@ -501,6 +501,27 @@
     }
     .summary-pill span { color: var(--text3); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 
+    .closure-account-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 7px;
+    }
+    .closure-account-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg3);
+      cursor: pointer;
+    }
+    .closure-account-option:hover { border-color: var(--border2); background: var(--bg2); }
+    .closure-account-option input { width: 16px; height: 16px; flex: 0 0 auto; }
+    .closure-account-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .closure-results { max-height: 58vh; }
+
     .flow-status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
     .flow-status {
       border: 1px solid var(--border);
@@ -849,6 +870,10 @@
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Contas
       </button>
+      <button class="nav-btn" data-area="iss" data-section="closureScanSection">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Checar encerramento
+      </button>
       <button class="nav-btn" data-area="iss" data-section="instructionsSection">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
         Instruções
@@ -1068,6 +1093,80 @@
                   <tbody id="accountLinkedRows"><tr><td colspan="5" class="small" style="padding:12px 10px;">Nenhum CNPJ atrelado.</td></tr></tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="closureScanSection" class="section">
+      <div class="stack">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>Nova verificação</h3>
+              <div class="small" style="margin-top:3px;">Selecione uma ou mais contas já cadastradas. A consulta roda por requests no ThinkPad.</div>
+            </div>
+            <button id="btnStartClosureScan" type="button" class="success">Verificar agora</button>
+          </div>
+          <div class="card-body stack">
+            <div class="row">
+              <button id="btnSelectAllClosureAccounts" type="button" class="secondary sm">Selecionar todas</button>
+              <button id="btnClearClosureAccounts" type="button" class="secondary sm">Limpar seleção</button>
+              <span class="small">São mantidas as 5 verificações mais recentes por usuário.</span>
+            </div>
+            <div id="closureAccountChoices" class="closure-account-grid">
+              <div class="empty-state">Carregando contas...</div>
+            </div>
+            <div id="closureCreateMsg" class="notice hidden"></div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h3>Histórico</h3><span id="closureHistoryCount" class="tag muted">0/5</span></div>
+            <div class="card-body">
+              <div id="closureRunsList" class="list runs-list-scroll"><div class="empty-state">Nenhuma verificação.</div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>Verificação selecionada</h3>
+              <div class="row">
+                <button id="btnStopClosureScan" type="button" class="danger sm hidden">Parar</button>
+                <button id="btnDownloadClosureScan" type="button" class="secondary sm hidden">Baixar CSV</button>
+                <button id="btnDeleteClosureScan" type="button" class="danger sm hidden">Excluir</button>
+              </div>
+            </div>
+            <div class="card-body stack">
+              <div id="closureRunHeader" class="notice warn">← Selecione uma verificação no histórico.</div>
+              <div class="progress"><div id="closureProgress"></div></div>
+              <div id="closureAccountSummary" class="table-wrap">
+                <table><tbody><tr><td class="small">Nenhum detalhe.</td></tr></tbody></table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Empresas verificadas</h3><span id="closureResultCount" class="tag muted">0</span></div>
+          <div class="card-body stack">
+            <div class="row">
+              <div style="flex:1;min-width:220px;"><label>Buscar</label><input id="closureSearch" placeholder="CNPJ, empresa, conta ou mensagem..." /></div>
+              <div style="width:190px;"><label>Status</label><select id="closureStatusFilter"><option value="all">Todos</option><option value="ABERTO">Abertos</option><option value="FECHADO">Fechados</option><option value="ABERTO_MENSAGEM">Com mensagem</option><option value="ERRO">Erros</option></select></div>
+              <div style="width:190px;"><label>Conta</label><select id="closureAccountFilter"><option value="all">Todas</option></select></div>
+            </div>
+            <div class="table-wrap closure-results">
+              <table>
+                <thead><tr><th>Conta</th><th>CNPJ</th><th>Empresa</th><th>Status</th><th>Competências pendentes</th><th>Mensagem / erro</th></tr></thead>
+                <tbody id="closureResultsBody"><tr><td colspan="6" class="small">Nenhum resultado.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <button id="closureResultsPrev" type="button" class="secondary sm">Anterior</button>
+              <span id="closureResultsPageInfo" class="small">Página 1/1</span>
+              <button id="closureResultsNext" type="button" class="secondary sm">Próxima</button>
             </div>
           </div>
         </div>
@@ -1448,6 +1547,8 @@ let accounts=[], datasets=[], runs=[], selectedRunId=null, selectedAccountId=nul
     pendingRunDetailRefresh=false, pendingRunDetailForce=false,
     loadingState=false, pendingStateLoad=false,
     logsTailTimer=null, logsTailInFlight=false, pollingTimer=null, mePayload=null, CSRF_TOKEN="", loadingCount=0;
+let closureScans=[], selectedClosureScanId=null, selectedClosureScan=null,
+    closurePollTimer=null, closureLoading=false, closureResultsPage=1;
 const SESSION_TOKEN_KEY = "session_token";
 let SESSION_TOKEN = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY) || "";
 if(SESSION_TOKEN) sessionStorage.setItem(SESSION_TOKEN_KEY, SESSION_TOKEN);
@@ -1750,7 +1851,7 @@ function companyUsersDetails(c) {
 function applyRoleUI(user) {
   const role = user?.role || "";
   const issAllowed = isIssRole(role);
-  const issSections = ["runsSection", "datasetsSection", "accountsSection", "instructionsSection"];
+  const issSections = ["runsSection", "datasetsSection", "accountsSection", "closureScanSection", "instructionsSection"];
   const adminSections = ["adminOverviewSection", "masterCompaniesSection", "masterLogsSection", "usersSection", "billingSection"];
 
   document.querySelectorAll("[data-area='iss']").forEach(el => el.classList.toggle("hidden", !issAllowed));
@@ -1944,6 +2045,7 @@ function switchSection(sectionId){
     runsSection:"Runs",
     datasetsSection:"Conjuntos",
     accountsSection:"Contas",
+    closureScanSection:"Checar encerramento",
     instructionsSection:"Instruções",
     adminOverviewSection:"Visão geral",
     masterCompaniesSection:"Empresas",
@@ -1956,6 +2058,8 @@ function switchSection(sectionId){
   if(sectionId === "masterLogsSection") loadLogs();
   if(sectionId === "usersSection") loadUsers();
   if(sectionId === "billingSection") loadBilling();
+  if(sectionId === "closureScanSection") loadClosureScans(true);
+  else clearTimeout(closurePollTimer);
 }
 document.querySelectorAll(".nav-btn").forEach(btn=>btn.addEventListener("click",()=>switchSection(btn.dataset.section)));
 $("btnReloadBilling")?.addEventListener("click", loadBilling);
@@ -2072,6 +2176,7 @@ async function loadStateOnce(){
     runs = state.runs || [];
     if(!userIsSelectingText()){
       renderAccounts();
+      renderClosureAccountChoices();
       renderDatasets();
       renderRunDatasetsSelect(false);
       renderRuns();
@@ -2125,6 +2230,25 @@ async function loadStateOnce(){
       setTimeout(()=>loadStateOnce(), 80);
     }
   }
+}
+
+const CLOSURE_ACTIVE_STATUSES = new Set(["queued","running","stopping"]);
+const CLOSURE_STATUS_LABELS = {
+  queued:"Aguardando", running:"Executando", stopping:"Parando",
+  finished:"Concluída", finished_with_errors:"Concluída com erros",
+  cancelled:"Interrompida", failed:"Falhou", discovering:"Listando empresas"
+};
+function closureStatusTag(status){
+  const raw=String(status||"—");
+  const label=CLOSURE_STATUS_LABELS[raw]||raw;
+  const cls=raw==="finished"||raw==="FECHADO"?"ok":CLOSURE_ACTIVE_STATUSES.has(raw)||raw==="discovering"?"run":raw==="ABERTO"||raw==="ABERTO_MENSAGEM"||raw==="finished_with_errors"?"warn":raw==="ERRO"||raw==="failed"||raw==="cancelled"?"err":"muted";
+  return `<span class="tag ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function formatClosureDate(value){
+  const stamp=Number(value||0);
+  if(!stamp)return "—";
+  return new Intl.DateTimeFormat("pt-BR",{dateStyle:"short",timeStyle:"short"}).format(new Date(stamp));
 }
 
 function adminStatusError(data, fallback) {
@@ -3559,6 +3683,194 @@ $("btnDeleteDataset").addEventListener("click",async()=>{
     toast("Conjunto excluído.","ok");
   } catch(err){ toast(err.message,"err"); }
 });
+
+function renderClosureAccountChoices(){
+  const box=$("closureAccountChoices");
+  if(!box)return;
+  const selected=new Set([...box.querySelectorAll("input:checked")].map(input=>String(input.value)));
+  if(!accounts.length){
+    box.innerHTML=`<div class="empty-state">Cadastre ao menos uma conta na aba Contas.</div>`;
+    return;
+  }
+  box.innerHTML=accounts.map(account=>`
+    <label class="closure-account-option">
+      <input type="checkbox" value="${escapeHtml(account.id)}" ${selected.has(String(account.id))?"checked":""} />
+      <span><b>${escapeHtml(account.alias||account.id)}</b><br><small>${escapeHtml(account.usuario||"")}</small></span>
+    </label>`).join("");
+}
+
+function renderClosureRuns(){
+  const box=$("closureRunsList");
+  if(!box)return;
+  $("closureHistoryCount").textContent=`${closureScans.length}/5`;
+  if(!closureScans.length){
+    box.innerHTML=`<div class="empty-state">Nenhuma verificação executada.</div>`;
+    return;
+  }
+  box.innerHTML=closureScans.map(run=>`
+    <div class="item ${run.run_id===selectedClosureScanId?"active":""}" data-closure-run="${escapeHtml(run.run_id)}">
+      <div class="item-line">
+        <div>
+          <div class="item-title">${escapeHtml((run.accounts||[]).map(item=>item.account_alias).join(", ")||"Verificação ISS")}</div>
+          <div class="item-sub">${formatClosureDate(run.created_at)} · ${Number(run.processed||0)}/${Number(run.total||0)} empresa(s)</div>
+        </div>
+        ${closureStatusTag(run.status)}
+      </div>
+    </div>`).join("");
+  box.querySelectorAll("[data-closure-run]").forEach(item=>item.addEventListener("click",()=>selectClosureScan(item.dataset.closureRun)));
+}
+
+function closureMessage(item){
+  const parts=[];
+  if(item.erro)parts.push(item.erro);
+  if(Array.isArray(item.mensagens))parts.push(...item.mensagens);
+  return parts.filter(Boolean).join(" | ");
+}
+
+function renderClosureResults(){
+  const run=selectedClosureScan||{};
+  const query=normalizeText($("closureSearch")?.value||"");
+  const status=$("closureStatusFilter")?.value||"all";
+  const account=$("closureAccountFilter")?.value||"all";
+  const all=Array.isArray(run.results)?run.results:[];
+  const aliases=[...new Set(all.map(item=>String(item.account_alias||"")).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
+  const filter=$("closureAccountFilter");
+  if(filter){
+    const current=filter.value||"all";
+    filter.innerHTML=`<option value="all">Todas</option>${aliases.map(alias=>`<option value="${escapeHtml(alias)}">${escapeHtml(alias)}</option>`).join("")}`;
+    filter.value=aliases.includes(current)?current:"all";
+  }
+  const accountValue=filter?.value||account;
+  const filtered=all.filter(item=>{
+    if(status!=="all"&&String(item.status)!==status)return false;
+    if(accountValue!=="all"&&String(item.account_alias)!==accountValue)return false;
+    if(!query)return true;
+    return normalizeText([item.account_alias,item.cnpj,item.inscricao,item.nome,item.status,closureMessage(item),(item.competencias_pendentes||[]).join(" ")].join(" ")).includes(query);
+  });
+  const pageSize=50;
+  const pages=Math.max(1,Math.ceil(filtered.length/pageSize));
+  closureResultsPage=Math.min(Math.max(1,closureResultsPage),pages);
+  const visible=filtered.slice((closureResultsPage-1)*pageSize,closureResultsPage*pageSize);
+  $("closureResultCount").textContent=query||status!=="all"||accountValue!=="all"?`${filtered.length}/${all.length}`:String(all.length);
+  $("closureResultsPageInfo").textContent=`Página ${closureResultsPage}/${pages}`;
+  $("closureResultsPrev").disabled=closureResultsPage<=1;
+  $("closureResultsNext").disabled=closureResultsPage>=pages;
+  $("closureResultsBody").innerHTML=visible.length?visible.map(item=>`
+    <tr class="${item.status==="ERRO"?"invalid":item.status!=="FECHADO"?"result-attention":""}">
+      <td>${escapeHtml(item.account_alias||"")}</td>
+      <td style="font-family:var(--mono);font-size:11px;">${escapeHtml(item.cnpj||item.cnpj_digits||"")}</td>
+      <td>${escapeHtml(item.nome||"")}</td>
+      <td>${closureStatusTag(item.status)}</td>
+      <td>${escapeHtml((item.competencias_pendentes||[]).join(", ")||"—")}</td>
+      <td class="small">${escapeHtml(closureMessage(item)||"—")}</td>
+    </tr>`).join(""):`<tr><td colspan="6" class="small">Nenhum resultado para este filtro.</td></tr>`;
+}
+
+function renderClosureDetail(){
+  const run=selectedClosureScan;
+  const hasRun=Boolean(run?.run_id);
+  $("btnStopClosureScan").classList.toggle("hidden",!hasRun||!CLOSURE_ACTIVE_STATUSES.has(run.status));
+  $("btnDownloadClosureScan").classList.toggle("hidden",!hasRun);
+  $("btnDeleteClosureScan").classList.toggle("hidden",!hasRun||CLOSURE_ACTIVE_STATUSES.has(run.status));
+  if(!hasRun){
+    $("closureRunHeader").className="notice warn";
+    $("closureRunHeader").textContent="← Selecione uma verificação no histórico.";
+    $("closureProgress").style.width="0%";
+    $("closureAccountSummary").innerHTML=`<table><tbody><tr><td class="small">Nenhum detalhe.</td></tr></tbody></table>`;
+    renderClosureResults();
+    return;
+  }
+  const total=Number(run.total||0), processed=Number(run.processed||0);
+  const pct=total?Math.min(100,Math.round(processed*100/total)):(CLOSURE_ACTIVE_STATUSES.has(run.status)?3:100);
+  $("closureProgress").style.width=`${pct}%`;
+  $("closureRunHeader").className=`notice ${run.status==="failed"?"err":run.status==="finished"?"ok":"warn"}`;
+  $("closureRunHeader").innerHTML=`<b>${closureStatusTag(run.status)} ${escapeHtml(run.progress||"")}</b><br><span class="small">Competências ${escapeHtml(run.competencia_inicial||"—")} a ${escapeHtml(run.competencia_final||"—")} · ${processed}/${total} processadas · ${Number(run.open||0)} abertas · ${Number(run.closed||0)} fechadas · ${Number(run.errors||0)} erros</span>${run.error?`<br><span class="small">${escapeHtml(run.error)}</span>`:""}`;
+  const summaries=Array.isArray(run.accounts)?run.accounts:[];
+  $("closureAccountSummary").innerHTML=`<table><thead><tr><th>Conta</th><th>Status</th><th>Progresso</th><th>Abertas</th><th>Fechadas</th><th>Erros</th></tr></thead><tbody>${summaries.length?summaries.map(item=>`<tr><td>${escapeHtml(item.account_alias||"")}</td><td>${closureStatusTag(item.status)}</td><td>${Number(item.processed||0)}/${Number(item.total||0)}<br><span class="small">${escapeHtml(item.progress||"")}</span></td><td>${Number(item.open||0)}</td><td>${Number(item.closed||0)}</td><td>${Number(item.errors||0)}</td></tr>`).join(""):`<tr><td colspan="6" class="small">Preparando contas...</td></tr>`}</tbody></table>`;
+  renderClosureResults();
+}
+
+async function loadClosureScans(fetchDetail=true){
+  if(closureLoading)return;
+  closureLoading=true;
+  try{
+    const payload=await apiFetch("/py/api/closure-scans",{__showLoader:false});
+    closureScans=payload.runs||[];
+    if(selectedClosureScanId&&!closureScans.some(run=>run.run_id===selectedClosureScanId)){
+      selectedClosureScanId=null; selectedClosureScan=null;
+    }
+    if(!selectedClosureScanId&&closureScans.length)selectedClosureScanId=closureScans[0].run_id;
+    renderClosureRuns();
+    if(fetchDetail&&selectedClosureScanId){
+      selectedClosureScan=await apiFetch("/py/api/closure-scans/"+encodeURIComponent(selectedClosureScanId),{__showLoader:false});
+    }
+    renderClosureDetail();
+  }catch(err){
+    showBox($("closureCreateMsg"),"err",err.message);
+  }finally{
+    closureLoading=false;
+    clearTimeout(closurePollTimer);
+    if($("closureScanSection")?.classList.contains("active")){
+      const active=closureScans.some(run=>CLOSURE_ACTIVE_STATUSES.has(run.status));
+      closurePollTimer=setTimeout(()=>loadClosureScans(true),active?2500:10000);
+    }
+  }
+}
+
+async function selectClosureScan(runId){
+  selectedClosureScanId=runId;
+  closureResultsPage=1;
+  renderClosureRuns();
+  selectedClosureScan=await apiFetch("/py/api/closure-scans/"+encodeURIComponent(runId),{__showLoader:false});
+  renderClosureDetail();
+}
+
+async function startClosureScan(){
+  const accountIds=[...$("closureAccountChoices").querySelectorAll("input:checked")].map(input=>input.value);
+  if(!accountIds.length){ showBox($("closureCreateMsg"),"warn","Selecione ao menos uma conta."); return; }
+  $("btnStartClosureScan").disabled=true;
+  try{
+    const run=await apiFetch("/py/api/closure-scans",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({account_ids:accountIds})});
+    selectedClosureScanId=run.run_id;
+    selectedClosureScan=run;
+    closureResultsPage=1;
+    hideBox($("closureCreateMsg"));
+    toast("Verificação iniciada no ThinkPad.","ok");
+    await loadClosureScans(true);
+  }catch(err){ showBox($("closureCreateMsg"),"err",err.message); }
+  finally{$("btnStartClosureScan").disabled=false;}
+}
+
+async function stopClosureScan(){
+  if(!selectedClosureScanId)return;
+  await apiFetch("/py/api/closure-scans/"+encodeURIComponent(selectedClosureScanId)+"/stop",{method:"POST"});
+  toast("Parada solicitada. Os resultados concluídos serão preservados.","warn");
+  await loadClosureScans(true);
+}
+
+async function deleteClosureScan(){
+  if(!selectedClosureScanId)return;
+  if(!await customConfirm("Excluir esta verificação do histórico?","Excluir verificação","danger"))return;
+  await apiFetch("/py/api/closure-scans/"+encodeURIComponent(selectedClosureScanId),{method:"DELETE"});
+  selectedClosureScanId=null; selectedClosureScan=null; closureResultsPage=1;
+  await loadClosureScans(true);
+  toast("Verificação excluída.","ok");
+}
+
+$("btnSelectAllClosureAccounts").addEventListener("click",()=>$("closureAccountChoices").querySelectorAll("input[type='checkbox']").forEach(input=>input.checked=true));
+$("btnClearClosureAccounts").addEventListener("click",()=>$("closureAccountChoices").querySelectorAll("input[type='checkbox']").forEach(input=>input.checked=false));
+$("btnStartClosureScan").addEventListener("click",startClosureScan);
+$("btnStopClosureScan").addEventListener("click",stopClosureScan);
+$("btnDeleteClosureScan").addEventListener("click",deleteClosureScan);
+$("btnDownloadClosureScan").addEventListener("click",async()=>{
+  if(!selectedClosureScanId)return;
+  await downloadBlob(API_BASE+"/py/api/closure-scans/"+encodeURIComponent(selectedClosureScanId)+"/download","encerramento.csv");
+});
+$("closureSearch").addEventListener("input",debounce(()=>{closureResultsPage=1;renderClosureResults();},220));
+$("closureStatusFilter").addEventListener("change",()=>{closureResultsPage=1;renderClosureResults();});
+$("closureAccountFilter").addEventListener("change",()=>{closureResultsPage=1;renderClosureResults();});
+$("closureResultsPrev").addEventListener("click",()=>{closureResultsPage=Math.max(1,closureResultsPage-1);renderClosureResults();});
+$("closureResultsNext").addEventListener("click",()=>{closureResultsPage+=1;renderClosureResults();});
 
 function renderAccounts(){
   const box=$("accountsList");
