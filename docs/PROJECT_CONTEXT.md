@@ -25,7 +25,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A implementação reaproveita o protocolo JSF validado do projeto `varreduracompletaissfortaleza`, mas não usa Executor Worker, Modal ou navegador. Login, listagem de empresas e consultas saem por requests diretamente do ThinkPad.
 - A concorrência é controlada no servidor: seis sessões HTTP globais entre todos os usuários/runs, no máximo quatro por conta e até duas contas coordenadas em paralelo. O mecanismo é separado da fila Browserless, portanto uma checagem não ocupa slots do ISS normal nem dos solvers do Portal.
 - Cada colaborador tem estado isolado na chave SQLite `:closure_scans`. São preservadas exatamente as cinco verificações mais recentes; runs interrompidas mantêm resultados concluídos e runs ativas são retomadas após reinício do contêiner.
-- Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A suíte local da versão passou com 180 testes.
+- Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A descoberta pagina a grade com até quatro sessões reutilizáveis e informa o avanço por página. A suíte local da versão passou com 182 testes.
 
 ### Estabilidade e latência do login em 2026-08-10
 

@@ -84,6 +84,50 @@ def test_listed_company_position_avoids_three_call_cnpj_search(monkeypatch) -> N
     assert state == "state-1"
 
 
+def test_company_discovery_paginates_in_parallel_and_reports_progress(monkeypatch) -> None:
+    def page_html(page: int, active: int | None = None) -> str:
+        active_html = f'<td class="rich-datascr-act">{active}</td>' if active else ""
+        return f"""
+          <input name="javax.faces.ViewState" value="state-{page}" />
+          <table><tr>{active_html}</tr></table>
+          <tbody id="alteraInscricaoForm:empresaDataTable:tb"><tr>
+            <td><a id="alteraInscricaoForm:empresaDataTable:{page}:linkDocumento">12.345.678/000{page}-90</a></td>
+            <td><a id="alteraInscricaoForm:empresaDataTable:{page}:linkInscricao">{page}</a></td>
+            <td><a id="alteraInscricaoForm:empresaDataTable:{page}:linkNome">Empresa {page}</a></td>
+          </tr></tbody>
+        """
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def login(self, *_args):
+            return "state"
+
+    called_pages = []
+    monkeypatch.setattr(scan, "PortalBootstrapClient", FakeClient)
+    monkeypatch.setattr(scan, "_open_company_modal", lambda _client: (page_html(1), "state-1"))
+
+    def fake_fetch(_client, _state, page, _scroller):
+        if page == "last":
+            return page_html(5, active=5)
+        called_pages.append(int(page))
+        return page_html(int(page))
+
+    monkeypatch.setattr(scan, "_fetch_companies_page", fake_fetch)
+    progress = []
+    companies = scan._discover_companies(
+        {"usuario": "u", "senha": "s"},
+        scan.threading.Event(),
+        lambda done, total: progress.append((done, total)),
+    )
+
+    assert [item["page"] for item in companies] == [1, 2, 3, 4, 5]
+    assert sorted(called_pages) == [2, 3, 4]
+    assert progress[0] == (2, 5)
+    assert progress[-1] == (5, 5)
+
+
 def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
     _memory_storage(monkeypatch)
     alan, bia = _ctx("alan"), _ctx("bia")

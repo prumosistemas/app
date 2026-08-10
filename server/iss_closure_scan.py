@@ -255,29 +255,89 @@ def _active_page(text: str) -> int:
         return 0
 
 
-def _discover_companies(account: Dict[str, Any], stop: threading.Event) -> List[Dict[str, Any]]:
+def _fetch_discovery_chunk(
+    account: Dict[str, Any],
+    pages: List[int],
+    stop: threading.Event,
+    page_done: Callable[[], None],
+    existing: Optional[tuple[PortalBootstrapClient, str, str]] = None,
+) -> List[Dict[str, Any]]:
+    with _NETWORK_SLOTS:
+        if stop.is_set():
+            return []
+        if existing is None:
+            client = PortalBootstrapClient(timeout=PORTAL_TIMEOUT_SECONDS)
+            client.login(account.get("usuario", ""), account.get("senha", ""))
+            modal_html, view_state = _open_company_modal(client)
+        else:
+            client, modal_html, view_state = existing
+        scroller = _find_scroller_id(modal_html)
+        companies: List[Dict[str, Any]] = []
+        for page in pages:
+            if stop.is_set():
+                break
+            page_html = _fetch_companies_page(client, view_state, page, scroller)
+            companies.extend(_parse_companies(page_html, page))
+            page_done()
+        return companies
+
+
+def _discover_companies(
+    account: Dict[str, Any],
+    stop: threading.Event,
+    progress: Optional[Callable[[int, int], None]] = None,
+) -> List[Dict[str, Any]]:
     last_error: Optional[BaseException] = None
     for attempt in range(3):
         if stop.is_set():
             return []
         try:
-            client = PortalBootstrapClient(timeout=PORTAL_TIMEOUT_SECONDS)
-            client.login(account.get("usuario", ""), account.get("senha", ""))
-            first_html, view_state = _open_company_modal(client)
-            scroller = _find_scroller_id(first_html)
-            last_html = _fetch_companies_page(client, view_state, "last", scroller)
+            with _NETWORK_SLOTS:
+                client = PortalBootstrapClient(timeout=PORTAL_TIMEOUT_SECONDS)
+                client.login(account.get("usuario", ""), account.get("senha", ""))
+                first_html, view_state = _open_company_modal(client)
+                scroller = _find_scroller_id(first_html)
+                last_html = _fetch_companies_page(client, view_state, "last", scroller)
             last_page = max(1, _active_page(last_html))
             seen: set[str] = set()
-            companies: List[Dict[str, Any]] = []
-            for page in range(1, last_page + 1):
-                if stop.is_set():
-                    break
-                page_html = first_html if page == 1 else (last_html if page == last_page else _fetch_companies_page(client, view_state, page, scroller))
-                for company in _parse_companies(page_html, page):
-                    key = company["cnpj_digits"]
-                    if key not in seen:
-                        seen.add(key)
-                        companies.append(company)
+            companies = _parse_companies(first_html, 1)
+            if last_page > 1:
+                companies.extend(_parse_companies(last_html, last_page))
+
+            middle_pages = list(range(2, last_page))
+            completed_pages = 1 if last_page == 1 else 2
+            progress_lock = threading.Lock()
+            last_progress_at = 0.0
+
+            def page_done() -> None:
+                nonlocal completed_pages, last_progress_at
+                with progress_lock:
+                    completed_pages += 1
+                    now = time.monotonic()
+                    if progress and (now - last_progress_at >= 2.0 or completed_pages >= last_page):
+                        last_progress_at = now
+                        progress(completed_pages, last_page)
+
+            if progress:
+                progress(completed_pages, last_page)
+            if middle_pages:
+                worker_count = min(PER_ACCOUNT_WORKERS, len(middle_pages))
+                page_groups = [middle_pages[index::worker_count] for index in range(worker_count)]
+                with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="closure-discovery") as executor:
+                    futures = []
+                    for index, pages in enumerate(page_groups):
+                        existing = (client, first_html, view_state) if index == 0 else None
+                        futures.append(executor.submit(_fetch_discovery_chunk, account, pages, stop, page_done, existing))
+                    for future in as_completed(futures):
+                        companies.extend(future.result())
+
+            unique: List[Dict[str, Any]] = []
+            for company in sorted(companies, key=lambda item: (int(item.get("page") or 0), int(item.get("idx") or 0))):
+                key = company["cnpj_digits"]
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(company)
+            companies = unique
             if not companies:
                 raise RuntimeError("Nenhuma empresa foi encontrada nesta conta do ISS.")
             return companies
@@ -592,8 +652,16 @@ def _scan_account(ctx: WorkerContext, run_id: str, account: Dict[str, Any], stop
     account_id = str(account.get("id", ""))
     _update_account(ctx, run_id, account_id, status="discovering", progress="Listando empresas no ISS...")
     try:
-        with _NETWORK_SLOTS:
-            companies = _discover_companies(account, stop)
+        companies = _discover_companies(
+            account,
+            stop,
+            lambda completed, total: _update_account(
+                ctx,
+                run_id,
+                account_id,
+                progress=f"Listando empresas: {completed}/{total} página(s)...",
+            ),
+        )
     except Exception as exc:
         _update_account(ctx, run_id, account_id, status="failed", errors=1, error=_safe_error(exc), progress="Falha ao listar empresas.")
         return
