@@ -135,7 +135,7 @@ def _is_view_expired(text: str) -> bool:
 def _is_recoverable_error(exc: BaseException) -> bool:
     return bool(
         re.search(
-            r"ViewExpired|sess[aã]o|login|ViewState|HTTP 5\d\d|timeout|temporar|connection|reset|portal",
+            r"ViewExpired|sess[aã]o|login|ViewState|HTTP 5\d\d|timeout|temporar|connection|reset|redirect|CID da empresa|portal",
             str(exc or ""),
             re.I,
         )
@@ -568,7 +568,16 @@ def _company_result(
     page_cache: Optional[Dict[int, tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
     resolved, state = _resolve_company(client, modal_html, modal_state, company, page_cache)
-    result = _consult_company(client, state, resolved)
+    try:
+        result = _consult_company(client, state, resolved)
+    except RuntimeError as exc:
+        if "CID da empresa" not in str(exc):
+            raise
+        # Uma linha paginada pode ficar com índice JSF obsoleto mesmo com o
+        # CNPJ correto. Refazer a busca pelo CNPJ obtém o índice da sessão
+        # atual antes de considerar a empresa como erro.
+        searched, searched_state = _search_company(client, modal_state, company["cnpj_digits"])
+        result = _consult_company(client, searched_state, searched)
     valid = [item for item in result["pendencias"] if item.get("origem") != "mensagem_tela"]
     messages = [item.get("situacao", "") for item in result["pendencias"] if item.get("origem") == "mensagem_tela"]
     return {
@@ -983,6 +992,48 @@ async def stop_closure_scan(run_id: str, ctx: WorkerContext = Depends(get_worker
         if flag:
             flag.set()
     return {"stopped": True, "message": "Parada solicitada. Resultados já concluídos serão preservados."}
+
+
+@router.post("/{run_id}/retry-errors")
+async def retry_closure_scan_errors(run_id: str, ctx: WorkerContext = Depends(get_worker_context)) -> Dict[str, Any]:
+    run = _find_run(_load_runs(ctx), run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Verificação não encontrada.")
+    if run.get("status") in ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="A verificação ainda está ativa.")
+    failed = [item for item in run.get("results", []) if item.get("status") == "ERRO"]
+    if not failed:
+        return {"retried": 0, "run": _public_summary(run)}
+
+    def reset_errors(item: Dict[str, Any]) -> None:
+        item["results"] = [result for result in item.get("results", []) if result.get("status") != "ERRO"]
+        for account in item.get("accounts", []):
+            account_results = [
+                result
+                for result in item["results"]
+                if str(result.get("account_id", "")) == str(account.get("account_id", ""))
+            ]
+            account.update(
+                status="queued",
+                progress="Retomando somente empresas com erro...",
+                processed=len(account_results),
+                open=sum(1 for result in account_results if result.get("status") in {"ABERTO", "ABERTO_MENSAGEM"}),
+                closed=sum(1 for result in account_results if result.get("status") == "FECHADO"),
+                errors=0,
+            )
+            account.pop("error", None)
+        item.update(
+            status="queued",
+            progress=f"Retomando {len(failed)} empresa(s) com erro...",
+            finished_at=None,
+            stop_requested=False,
+            error="",
+        )
+        _recalculate_run(item)
+
+    updated = _mutate_run(ctx, run_id, reset_errors)
+    _schedule(ctx, run_id)
+    return {"retried": len(failed), "run": _public_summary(updated)}
 
 
 @router.delete("/{run_id}")

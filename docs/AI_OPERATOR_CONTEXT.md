@@ -201,6 +201,7 @@ publicar na conta errada.
 
 ```powershell
 python -m ops.prumo_ops server status
+python -m ops.prumo_ops server runs
 python -m ops.prumo_ops server logs --lines 300
 python -m ops.prumo_ops server deploy
 python -m ops.prumo_ops server deploy --apply
@@ -209,6 +210,14 @@ python -m ops.prumo_ops server deploy --apply
 O acesso usa Cloudflare Access SSH. O deploy remoto e fixo: `git pull
 --ff-only`, build da imagem indicada no Compose, recriacao do `prumo-api` e
 health check. Dados persistentes em `/opt/prumo/data` nao sao apagados.
+
+`server runs` e somente leitura e mostra metadados sanitizados das runs Portal
+e das verificacoes de encerramento, incluindo progresso e resumo de erros, sem
+senha, certificado, cookie ou resultado fiscal detalhado. `server status`
+inclui o mesmo snapshot para auditorias curtas. Recuperacoes excepcionais podem
+ser descritas em `.ops-server-recovery.json` apenas com IDs, emails e aliases;
+o arquivo exige `"apply": true`, e apagado depois de uma aplicacao bem-sucedida
+e nunca deve conter credenciais.
 
 ## Fluxo de mudanca recomendado
 

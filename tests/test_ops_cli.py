@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from ops.prumo_ops import build_netlify_zip, build_worker_bundle, login_secret_names
+from ops.prumo_ops import build_netlify_zip, build_parser, build_worker_bundle, login_secret_names
 from ops.secret_store import SecretStore, redact
 
 
@@ -42,6 +42,10 @@ class OpsCliTests(unittest.TestCase):
 
     def test_login_alias_maps_to_names_not_values(self):
         self.assertEqual(login_secret_names("master"), ("LOGIN.master.EMAIL", "LOGIN.master.PASSWORD"))
+
+    def test_server_runs_is_a_read_only_diagnostic_action(self):
+        args = build_parser().parse_args(["server", "runs"])
+        self.assertEqual((args.area, args.action, args.apply), ("server", "runs", False))
 
 
 if __name__ == "__main__":

@@ -288,12 +288,12 @@
       };
     }
     function renderMetrics(state){
-      const runs = groupRuns(state.runs || []);
+      const runs = groupRuns(manualPortalRuns(state.runs));
       const active = runs.find(r => r._children.some(child => child.run_id === state.active_run_id));
       const latest = runs[0] || {};
       const summary = latest.summary || {};
       $("metrics").innerHTML = `
-        <div class="metric"><span>Run ativa</span><b>${state.active_run_id ? "Sim" : "Não"}</b></div>
+        <div class="metric"><span>Run ativa</span><b>${active ? "Sim" : "Não"}</b></div>
         <div class="metric"><span>Última run</span><b>${esc(latest.status || "-")}</b></div>
         <div class="metric"><span>Baixados</span><b>${Number(summary.baixados || 0)}</b></div>
         <div class="metric"><span>Erros</span><b>${Number(summary.erros || 0)}</b></div>
@@ -305,6 +305,9 @@
     function logicalRunKey(run){
       if(run?.config?.batch_id) return `batch-${run.config.batch_id}`;
       return String(run?.run_id || "").replace(/-(emitidas|recebidas)-/, "-ambos-");
+    }
+    function manualPortalRuns(runs){
+      return (runs || []).filter(run => !run?.config?.automatic);
     }
     function mergeRunSummaries(children){
       const summary = {baixados:0, erros:0, pendentes:0, portal_registros:0, capturados:0, competencias:{}};
@@ -478,7 +481,7 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       const state = await api("/py/api/portal-nacional/state");
       latestState = state;
       activeRunId = state.active_run_id || "";
-      const runs = groupRuns(state.runs || []);
+      const runs = groupRuns(manualPortalRuns(state.runs));
       latestLogicalRuns = runs;
       const target = runs.find(run => run.run_id === selectedRunId) || runs[0] || null;
       const selectionChanged = Boolean(target && target.run_id !== selectedRunId);

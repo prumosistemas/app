@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import os
@@ -538,6 +539,105 @@ def server_script(script: str, timeout: int = 300) -> None:
         raise OpsError(f"Comando remoto terminou com codigo {result.returncode}.")
 
 
+def server_recover_from_spec(spec_raw: str) -> None:
+    try:
+        spec = json.loads(spec_raw)
+    except (TypeError, ValueError) as exc:
+        raise OpsError("PRUMO_SERVER_RECOVERY_SPEC precisa conter JSON valido.") from exc
+    if not isinstance(spec, dict):
+        raise OpsError("PRUMO_SERVER_RECOVERY_SPEC precisa ser um objeto JSON.")
+    encoded = base64.b64encode(json.dumps(spec, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    server_script(
+        f"""set -eu
+docker exec -i -e PRUMO_RECOVERY_SPEC_B64='{encoded}' prumo-api python - <<'PY'
+import base64
+import json
+import os
+import requests
+
+from db import ISS_INTERNAL_SECRET, now_ms
+from domain import WorkerContext, load_accounts_raw, new_account_id, save_accounts
+
+spec = json.loads(base64.b64decode(os.environ["PRUMO_RECOVERY_SPEC_B64"]).decode("utf-8"))
+result = {{"account_copy": None, "portal_resumes": [], "closure_retries": []}}
+copy_spec = spec.get("account_copy") or None
+if copy_spec:
+    company_id = str(copy_spec["company_id"])
+    source_ctx = WorkerContext(company_id, company_id, str(copy_spec["source_user_id"]), "operacao@interno", "member", True)
+    target_ctx = WorkerContext(company_id, company_id, str(copy_spec["target_user_id"]), str(copy_spec["target_user_email"]), "member", True)
+    alias = str(copy_spec["alias"]).strip()
+    source = next((item for item in load_accounts_raw(source_ctx) if str(item.get("alias") or "").strip() == alias), None)
+    if source is None:
+        raise RuntimeError("Conta de origem nao encontrada pelo alias informado.")
+    target_accounts = load_accounts_raw(target_ctx)
+    existing = next((item for item in target_accounts if str(item.get("alias") or "").strip() == alias), None)
+    if existing is None:
+        clone = dict(source)
+        clone["id"] = new_account_id()
+        clone["created_at"] = now_ms()
+        clone["updated_at"] = now_ms()
+        clone["created_by_user_email"] = target_ctx.user_email
+        target_accounts.append(clone)
+        save_accounts(target_ctx, target_accounts)
+        result["account_copy"] = {{"created": True, "alias": alias, "target_user_email": target_ctx.user_email}}
+    else:
+        result["account_copy"] = {{"created": False, "alias": alias, "target_user_email": target_ctx.user_email}}
+
+for item in spec.get("portal_resumes") or []:
+    headers = {{
+        "X-Internal-Secret": ISS_INTERNAL_SECRET,
+        "X-Company-Id": str(item["company_id"]),
+        "X-Company-Name": str(item.get("company_name") or item["company_id"]),
+        "X-User-Id": str(item["user_id"]),
+        "X-User-Email": str(item["user_email"]),
+        "X-User-Role": str(item.get("user_role") or "member"),
+    }}
+    response = requests.post(
+        "http://127.0.0.1:8000/api/portal-nacional/runs/continue",
+        headers=headers,
+        json={{"run_ids": list(item["run_ids"])}},
+        timeout=30,
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {{"detail": "Resposta sem JSON"}}
+    if not response.ok:
+        raise RuntimeError(f"Falha ao continuar Portal: HTTP {{response.status_code}} {{payload.get('detail', '')}}")
+    result["portal_resumes"].append(
+        {{"user_email": item["user_email"], "run_ids": payload.get("run_ids") or [payload.get("run_id")]}}
+    )
+
+for item in spec.get("closure_retry_errors") or []:
+    headers = {{
+        "X-Internal-Secret": ISS_INTERNAL_SECRET,
+        "X-Company-Id": str(item["company_id"]),
+        "X-Company-Name": str(item.get("company_name") or item["company_id"]),
+        "X-User-Id": str(item["user_id"]),
+        "X-User-Email": str(item["user_email"]),
+        "X-User-Role": str(item.get("user_role") or "member"),
+    }}
+    run_id = str(item["run_id"])
+    response = requests.post(
+        f"http://127.0.0.1:8000/api/closure-scans/{{run_id}}/retry-errors",
+        headers=headers,
+        timeout=30,
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {{"detail": "Resposta sem JSON"}}
+    if not response.ok:
+        raise RuntimeError(f"Falha ao retomar encerramento: HTTP {{response.status_code}} {{payload.get('detail', '')}}")
+    result["closure_retries"].append({{"run_id": run_id, "retried": payload.get("retried", 0)}})
+
+print(json.dumps(result, ensure_ascii=False))
+PY
+""",
+        timeout=120,
+    )
+
+
 def server_command(action: str, apply: bool, lines: int) -> None:
     if action == "status":
         server_script(
@@ -550,8 +650,139 @@ echo API_HEALTH
 curl -fsS http://127.0.0.1:8000/
 """
         )
+        server_command("runs", apply=False, lines=lines)
+        recovery_spec = os.getenv("PRUMO_SERVER_RECOVERY_SPEC", "").strip()
+        recovery_path = ROOT / ".ops-server-recovery.json"
+        recovery_from_file = False
+        if not recovery_spec and recovery_path.is_file():
+            recovery_spec = recovery_path.read_text(encoding="utf-8")
+            try:
+                recovery_from_file = bool(json.loads(recovery_spec).get("apply"))
+            except (AttributeError, ValueError):
+                recovery_from_file = False
+        if apply or recovery_from_file:
+            if not recovery_spec:
+                raise OpsError("Defina PRUMO_SERVER_RECOVERY_SPEC para usar server status --apply.")
+            server_recover_from_spec(recovery_spec)
+            if recovery_from_file:
+                recovery_path.unlink(missing_ok=True)
     elif action == "logs":
         server_script(f"docker logs --tail {max(1, min(lines, 2000))} prumo-api\n")
+    elif action == "runs":
+        server_script(
+            r"""set -eu
+docker exec -i prumo-api python - <<'PY'
+import json
+import os
+import sqlite3
+from collections import Counter
+from pathlib import Path
+
+output_root = Path(os.getenv("ISS_OUTPUT_ROOT", "/app/output"))
+db_file = Path(os.getenv("ISS_DATA_ROOT", str(output_root / "_api_data"))) / "iss_automacao.db"
+email_by_scope = {}
+closure_runs = []
+
+with sqlite3.connect(db_file) as conn:
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT key, value FROM kv WHERE key LIKE '%:runs_state' OR key LIKE '%:closure_scans'"
+    ).fetchall()
+
+for row in rows:
+    try:
+        payload = json.loads(row["value"])
+    except Exception:
+        continue
+    runs = payload.get("runs", {}) if isinstance(payload, dict) else {}
+    values = runs.values() if isinstance(runs, dict) else runs if isinstance(runs, list) else []
+    for run in values:
+        if not isinstance(run, dict):
+            continue
+        company_id = str(run.get("company_id") or "")
+        user_id = str(run.get("user_id") or "")
+        user_email = str(run.get("user_email") or "")
+        if company_id and user_id and user_email:
+            email_by_scope[(company_id, user_id)] = user_email
+        if not str(row["key"]).endswith(":closure_scans"):
+            continue
+        error_summary = Counter(
+            str(item.get("erro") or "Sem detalhe")[:240]
+            for item in run.get("results") or []
+            if isinstance(item, dict) and item.get("status") == "ERRO"
+        )
+        accounts = []
+        for account in run.get("accounts") or []:
+            if isinstance(account, dict):
+                accounts.append(
+                    {
+                        "alias": account.get("account_alias"),
+                        "status": account.get("status"),
+                        "processed": account.get("processed"),
+                        "total": account.get("total"),
+                        "open": account.get("open"),
+                        "closed": account.get("closed"),
+                        "errors": account.get("errors"),
+                    }
+                )
+        closure_runs.append(
+            {
+                "company_id": company_id,
+                "user_id": user_id,
+                "user_email": user_email,
+                "run_id": run.get("run_id"),
+                "status": run.get("status"),
+                "progress": run.get("progress"),
+                "processed": run.get("processed"),
+                "total": run.get("total"),
+                "open": run.get("open"),
+                "closed": run.get("closed"),
+                "errors": run.get("errors"),
+                "created_at": run.get("created_at"),
+                "updated_at": run.get("updated_at"),
+                "accounts": accounts,
+                "error_summary": [
+                    {"message": message, "count": count}
+                    for message, count in error_summary.most_common(10)
+                ],
+            }
+        )
+
+portal_runs = []
+portal_root = output_root / "empresas"
+for path in portal_root.glob("*/colaboradores/*/portal_nacional/runs/*/run.json"):
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+        relative = path.relative_to(portal_root).parts
+    except Exception:
+        continue
+    company_id, user_id = relative[0], relative[2]
+    config = run.get("config") or {}
+    summary = run.get("summary") or {}
+    portal_runs.append(
+        {
+            "company_id": company_id,
+            "user_id": user_id,
+            "user_email": email_by_scope.get((company_id, user_id), ""),
+            "run_id": run.get("run_id") or path.parent.name,
+            "status": run.get("status"),
+            "automatic": bool(config.get("automatic")),
+            "modo": config.get("modo"),
+            "tipo_download": config.get("tipo_download"),
+            "created_at": run.get("created_at"),
+            "updated_at": run.get("updated_at"),
+            "baixados": summary.get("baixados"),
+            "erros": summary.get("erros"),
+            "pendentes": summary.get("pendentes"),
+        }
+    )
+
+portal_runs.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+closure_runs.sort(key=lambda item: int(item.get("created_at") or 0), reverse=True)
+print(json.dumps({"portal_runs": portal_runs[:60], "closure_runs": closure_runs[:20]}, ensure_ascii=False))
+PY
+"""
+        )
     elif action == "deploy":
         if not apply:
             emit({"dry_run": True, "action": "server deploy", "steps": ["git pull --ff-only", "docker build", "compose recreate", "health"]})
@@ -785,7 +1016,7 @@ def build_parser() -> argparse.ArgumentParser:
     hf.add_argument("--space-name", action="append", dest="space_names")
 
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
-    server.add_argument("action", choices=["status", "logs", "deploy"])
+    server.add_argument("action", choices=["status", "logs", "runs", "deploy"])
     server.add_argument("--apply", action="store_true")
     server.add_argument("--lines", type=int, default=200)
 

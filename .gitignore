@@ -4,6 +4,7 @@ __pycache__/
 .tools/
 .wrangler/
 .pytest_cache/
+.tmp-tests*/
 output/
 server/output/
 playwright-report/

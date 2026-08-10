@@ -98,6 +98,9 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert 'id="automaticTipo"' not in source
     assert "Capturar agora" in source
     assert 'data-edit-cert="' in source
+    assert "function manualPortalRuns(runs)" in source
+    assert source.count("groupRuns(manualPortalRuns(state.runs))") == 2
+    assert "!run?.config?.automatic" in source
 
     worker = (Path(__file__).resolve().parents[1] / "cloudflare" / "worker.js").read_text(encoding="utf-8")
     assert 'htmlResponse(portalNacionalHtml, 200, "no-store")' in worker

@@ -1135,6 +1135,7 @@
               <h3>Verificação selecionada</h3>
               <div class="row">
                 <button id="btnStopClosureScan" type="button" class="danger sm hidden">Parar</button>
+                <button id="btnRetryClosureScan" type="button" class="secondary sm hidden">Tentar erros</button>
                 <button id="btnDownloadClosureScan" type="button" class="secondary sm hidden">Baixar CSV</button>
                 <button id="btnDeleteClosureScan" type="button" class="danger sm hidden">Excluir</button>
               </div>
@@ -3770,6 +3771,7 @@ function renderClosureDetail(){
   const run=selectedClosureScan;
   const hasRun=Boolean(run?.run_id);
   $("btnStopClosureScan").classList.toggle("hidden",!hasRun||!CLOSURE_ACTIVE_STATUSES.has(run.status));
+  $("btnRetryClosureScan").classList.toggle("hidden",!hasRun||CLOSURE_ACTIVE_STATUSES.has(run.status)||!Number(run.errors||0));
   $("btnDownloadClosureScan").classList.toggle("hidden",!hasRun);
   $("btnDeleteClosureScan").classList.toggle("hidden",!hasRun||CLOSURE_ACTIVE_STATUSES.has(run.status));
   if(!hasRun){
@@ -3848,6 +3850,13 @@ async function stopClosureScan(){
   await loadClosureScans(true);
 }
 
+async function retryClosureScan(){
+  if(!selectedClosureScanId)return;
+  const response=await apiFetch("/py/api/closure-scans/"+encodeURIComponent(selectedClosureScanId)+"/retry-errors",{method:"POST"});
+  toast(`${Number(response.retried||0)} empresa(s) com erro recolocada(s) na fila.`,"ok");
+  await loadClosureScans(true);
+}
+
 async function deleteClosureScan(){
   if(!selectedClosureScanId)return;
   if(!await customConfirm("Excluir esta verificação do histórico?","Excluir verificação","danger"))return;
@@ -3861,6 +3870,7 @@ $("btnSelectAllClosureAccounts").addEventListener("click",()=>$("closureAccountC
 $("btnClearClosureAccounts").addEventListener("click",()=>$("closureAccountChoices").querySelectorAll("input[type='checkbox']").forEach(input=>input.checked=false));
 $("btnStartClosureScan").addEventListener("click",startClosureScan);
 $("btnStopClosureScan").addEventListener("click",stopClosureScan);
+$("btnRetryClosureScan").addEventListener("click",retryClosureScan);
 $("btnDeleteClosureScan").addEventListener("click",deleteClosureScan);
 $("btnDownloadClosureScan").addEventListener("click",async()=>{
   if(!selectedClosureScanId)return;

@@ -162,6 +162,30 @@ def test_analysis_reuses_company_page_and_emits_incremental_batches(monkeypatch)
     assert [len(batch) for batch in batches] == [3, 2]
 
 
+def test_redirect_loop_and_missing_cid_are_recoverable() -> None:
+    assert scan._is_recoverable_error(RuntimeError("Exceeded 30 redirects."))
+    assert scan._is_recoverable_error(RuntimeError("CID da empresa não encontrado."))
+
+
+def test_missing_cid_retries_company_by_cnpj(monkeypatch) -> None:
+    company = {"cnpj_digits": "12345678000190", "nome": "Empresa"}
+    monkeypatch.setattr(scan, "_resolve_company", lambda *_args: ({**company, "idx": 9}, "state-list"))
+    monkeypatch.setattr(scan, "_search_company", lambda *_args: ({**company, "idx": 1}, "state-search"))
+    calls = []
+
+    def consult(_client, state, resolved):
+        calls.append((state, resolved["idx"]))
+        if len(calls) == 1:
+            raise RuntimeError("CID da empresa não encontrado.")
+        return {"pendencias": [], "status": "FECHADO"}
+
+    monkeypatch.setattr(scan, "_consult_company", consult)
+    result = scan._company_result(object(), "modal", "modal-state", company, {})
+
+    assert result["status"] == "FECHADO"
+    assert calls == [("state-list", 9), ("state-search", 1)]
+
+
 def test_view_expired_on_final_consult_matches_reference_closed_semantics(monkeypatch) -> None:
     class Response:
         def __init__(self, text: str, url: str = "https://iss.example/?cid=1"):
@@ -209,6 +233,38 @@ def test_restart_checkpoint_skips_companies_already_persisted() -> None:
         {"cnpj_digits": "22222222000122"},
         {"cnpj_digits": "33333333000133"},
     ]
+
+
+def test_retry_errors_preserves_successful_closure_results(monkeypatch) -> None:
+    _memory_storage(monkeypatch)
+    ctx = _ctx("laryssa")
+    scan._save_runs(
+        ctx,
+        [
+            {
+                "run_id": "scan-1",
+                "created_at": 1,
+                "status": "finished_with_errors",
+                "results": [
+                    {"account_id": "conta-1", "cnpj_digits": "1", "status": "FECHADO"},
+                    {"account_id": "conta-1", "cnpj_digits": "2", "status": "ERRO", "erro": "redirect"},
+                ],
+                "accounts": [{"account_id": "conta-1", "processed": 2, "closed": 1, "open": 0, "errors": 1}],
+            }
+        ],
+    )
+    scheduled = []
+    monkeypatch.setattr(scan, "_schedule", lambda _ctx, run_id: scheduled.append(run_id))
+
+    response = asyncio.run(scan.retry_closure_scan_errors("scan-1", ctx))
+    updated = scan._load_runs(ctx)[0]
+
+    assert response["retried"] == 1
+    assert scheduled == ["scan-1"]
+    assert updated["status"] == "queued"
+    assert [item["cnpj_digits"] for item in updated["results"]] == ["1"]
+    assert updated["accounts"][0]["processed"] == 1
+    assert updated["accounts"][0]["errors"] == 0
 
 
 def test_history_is_isolated_and_retained_at_five(monkeypatch) -> None:
@@ -266,6 +322,8 @@ def test_closure_scan_ui_is_before_instructions_and_has_multi_account_controls()
     assert 'id="btnStopClosureScan"' in source
     assert 'id="btnDownloadClosureScan"' in source
     assert 'id="closureResultsBody"' in source
+    assert 'id="btnRetryClosureScan"' in source
+    assert '"/retry-errors"' in source
     assert '"/py/api/closure-scans"' in source
 
 

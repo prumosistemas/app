@@ -25,7 +25,8 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A implementação reaproveita o protocolo JSF validado do projeto `varreduracompletaissfortaleza`, mas não usa Executor Worker, Modal ou navegador. Login, listagem de empresas e consultas saem por requests diretamente do ThinkPad.
 - A concorrência é controlada no servidor: seis sessões HTTP globais entre todos os usuários/runs, no máximo quatro por conta e até duas contas coordenadas em paralelo. O mecanismo é separado da fila Browserless, portanto uma checagem não ocupa slots do ISS normal nem dos solvers do Portal.
 - Cada colaborador tem estado isolado na chave SQLite `:closure_scans`. São preservadas exatamente as cinco verificações mais recentes; runs interrompidas mantêm resultados concluídos e runs ativas são retomadas após reinício do contêiner.
-- Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A descoberta pagina a grade com até quatro sessões reutilizáveis e informa o avanço por página; a análise reutiliza a página entre empresas e persiste progresso a cada três resultados. O `ViewExpired` final de inscrições sem escrituração consultável segue a semântica `FECHADO` do projeto de referência. Na retomada após queda, CNPJs já persistidos são preservados e não são consultados novamente. A suíte local da versão passou com 185 testes.
+- Login e senha são descriptografados apenas durante a execução e nunca entram no histórico, CSV ou resposta da API. A descoberta pagina a grade com até quatro sessões reutilizáveis e informa o avanço por página; a análise reutiliza a página entre empresas e persiste progresso a cada três resultados. O `ViewExpired` final de inscrições sem escrituração consultável segue a semântica `FECHADO` do projeto de referência. Na retomada após queda, CNPJs já persistidos são preservados e não são consultados novamente. A suíte local da versão passou com 189 testes.
+- Redirecionamento excessivo e ausência transitória de CID agora reabrem uma sessão e tentam novamente; se o índice JSF da linha ficou obsoleto, a empresa é localizada outra vez pelo CNPJ. A ação `Tentar erros` preserva todas as classificações válidas e recoloca somente resultados `ERRO` na fila.
 
 ### Estabilidade e latência do login em 2026-08-10
 
@@ -39,11 +40,13 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 ### Captura automática do Portal em 2026-08-10
 
 - A versão 1.0.83 mantém `Notas automático` por colaborador e certificado com uma interface simplificada: a execução é sempre diária, sempre baixa XML+PDF e começa na data inicial selecionada. As seguintes usam checkpoint com dois dias de sobreposição e permanecem disponíveis por 123 dias.
+- Runs com `config.automatic` aparecem somente em `Notas automático`. A tela manual `Notas`, seus agrupamentos e seus quatro indicadores ignoram essas runs, sem apagar histórico nem alterar o agendador.
 - No ISS Fortaleza, a exportação de escrituração usa o link autenticado gerado pelo próprio portal, pois o clique AJAX do RichFaces produzia artefatos locais de zero bytes. O arquivo agora é salvo atomicamente e validado como XLSX/XLS antes de a tarefa ser concluída; a auditoria conta as linhas físicas dos XMLs internos porque o portal pode informar dimensões incorretas.
 - As configurações habilitadas são distribuídas uniformemente nas 24 horas. O agendador inicia apenas uma captura automática por vez e espera o Portal ficar sem runs ativas, reduzindo colisões entre empresas e consumo simultâneo de solver.
 - `Capturar agora` permite antecipar uma configuração. A run continua usando o mesmo isolamento por empresa/colaborador e o mesmo fluxo idempotente de recebidas/emitidas.
 - O certificado agora pode ser editado por clique na lista. A API nunca devolve o nome original do PFX; arquivo e senha existentes são mantidos quando não forem substituídos.
 - A navegação lateral mantém apenas `Voltar`; `Atualizar` e `Sair` foram removidos. `Parar run` fica junto de `Continuar` e `Excluir run`, e a listagem não varre todos os arquivos das runs em cada atualização. A rota do Portal usa `Cache-Control: no-store`, evitando HTML antigo durante uma publicação.
+- Os processos do Portal vivem na memória do contêiner da API. Um deploy/reinício preserva arquivos e checkpoint, mas a run passa para `interrompida` e precisa de `Continuar`; por isso mudanças somente de HTML/Worker não devem reiniciar a API, e retomadas operacionais devem ocorrer depois do último deploy do servidor.
 - Validação local: 168 testes, compilação Python e validação sintática do JavaScript inline.
 
 ### Atualização de cobrança em 2026-08-03
