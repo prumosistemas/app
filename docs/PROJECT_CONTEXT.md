@@ -41,7 +41,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - O botão `Capturar agora` usa exclusivamente o runtime de empresa+colaborador retornado pela API. Status antigo persistido não bloqueia a tela, e a execução de outro usuário não interfere nesse botão.
 - Redirecionamentos do Portal para login são detectados sem distinção entre maiúsculas/minúsculas e por marcadores do formulário. A sessão é renovada e a mesma página é repetida; uma tela de login não pode mais virar o erro genérico de total ausente.
 - Após restart/deploy, o agendador compara os estados persistidos `criada`/`rodando` com o runtime real. Se o processo não existe mais, ele retoma automaticamente as partes incompletas pelo mesmo índice/checkpoint, sem rebaixar arquivos já válidos.
-- Validação local: 198 testes aprovados e JavaScript da tela compilado sem erro de sintaxe.
+- Validação local: 200 testes aprovados.
 
 - Na versão 1.0.89, o ZIP geral do ISS apresenta as pastas empresariais como `Nome - CNPJ`, inclusive ao baixar runs antigas armazenadas como `CNPJ - Nome`; a transformação ocorre somente no caminho do ZIP, aceita o CNPJ com ou sem pontuação e não altera checkpoints no servidor.
 - O Worker não retransmite HTML de falha do túnel. HTTP 530/1033 e respostas 5xx não JSON da API viram `503` com `code=UPSTREAM_TEMPORARILY_UNAVAILABLE`, mensagem curta, `retryable=true` e código de suporte; ZIP/PDF/XML válidos continuam transmitidos sem buffering.
