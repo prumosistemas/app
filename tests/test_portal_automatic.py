@@ -220,3 +220,23 @@ def test_automatic_capture_history_keeps_errors_and_counts_only_new_notes(monkey
     assert history[0]["new_notes"] == 1
     assert history[0]["total_accumulated"] == 2
     assert history[1]["new_notes"] == 1
+
+
+def test_automatic_history_does_not_call_stale_created_child_running(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    for modo, status in (("recebidas", "interrompida"), ("emitidas", "criada")):
+        run_id = f"20260810-120000-{modo}-x"
+        run_dir = portal_nacional._runs_root(ctx) / run_id
+        run_dir.mkdir(parents=True)
+        portal_nacional._save_json(run_dir / "run.json", {
+            "run_id": run_id,
+            "created_at": "2026-08-10T12:00:00-03:00",
+            "updated_at": "2026-08-10T12:01:00-03:00",
+            "status": status,
+            "config": {"automatic": True, "automatic_job_id": "cert-1", "modo": modo},
+        })
+
+    history = portal_nacional._automatic_capture_history(ctx)
+
+    assert history[0]["status"] == "finalizado_com_erros"

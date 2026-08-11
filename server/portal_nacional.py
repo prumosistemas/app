@@ -759,6 +759,7 @@ def _automatic_capture_key(run_id: str, cfg: Dict[str, Any]) -> str:
 
 def _automatic_capture_history(ctx: WorkerContext) -> List[Dict[str, Any]]:
     grouped: Dict[str, Dict[str, Any]] = {}
+    active_run_id = str((_active_runtime(ctx) or {}).get("run_id") or "")
     run_paths = sorted(
         _runs_root(ctx).glob("*/run.json"),
         key=lambda path: str(_load_json(path, {}).get("created_at") or ""),
@@ -813,7 +814,7 @@ def _automatic_capture_history(ctx: WorkerContext) -> List[Dict[str, Any]]:
             competence = notes[note_key]
             competence_counts[competence] = competence_counts.get(competence, 0) + 1
         statuses = group.pop("statuses")
-        active = any(status in {"criada", "rodando"} for status in statuses)
+        active = bool(active_run_id and active_run_id in group["run_ids"])
         status = "rodando" if active else (
             "finalizado" if statuses and all(status == "finalizado" for status in statuses)
             else "finalizado_com_erros"
