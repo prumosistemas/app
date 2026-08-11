@@ -19,6 +19,8 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-07-18
 
+- Na versão 1.0.87, o ZIP geral do ISS apresenta as pastas empresariais como `Nome - CNPJ`, inclusive ao baixar runs antigas armazenadas como `CNPJ - Nome`; a transformação ocorre somente no caminho do ZIP e não altera checkpoints no servidor.
+
 ### Checagem de encerramento ISS em 2026-08-10
 
 - A versão 1.0.85 mantém `Checar encerramento` antes de `Instruções` no ISS Fortaleza. O colaborador seleciona uma ou mais contas já cadastradas e acompanha progresso, abertas, fechadas, erros e competências pendentes. CSV continua disponível; impressão e XLSX usam todas as linhas que correspondem aos filtros atuais, não apenas a página visível.

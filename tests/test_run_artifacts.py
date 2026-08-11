@@ -53,7 +53,17 @@ class RunArtifactTests(unittest.TestCase):
                 with zipfile.ZipFile(zip_path) as archive:
                     names = archive.namelist()
 
-            self.assertEqual(names, ["certidao/12345678000190 - EMPRESA/certidao/certidao.pdf"])
+            self.assertEqual(names, ["certidao/EMPRESA - 12345678000190/certidao/certidao.pdf"])
+
+    def test_zip_display_path_inverts_company_and_cnpj_without_changing_other_parts(self):
+        self.assertEqual(
+            domain.display_zip_relative_path("notas/12345678000190 - EMPRESA TESTE/tomadas/notas.xlsx"),
+            "notas/EMPRESA TESTE - 12345678000190/tomadas/notas.xlsx",
+        )
+        self.assertEqual(
+            domain.display_zip_relative_path("dam/12345678000190 - EMPRESA (2)/dam.pdf"),
+            "dam/EMPRESA - 12345678000190 (2)/dam.pdf",
+        )
 
     def test_finished_run_logs_remain_available_without_crossing_flows(self):
         with tempfile.TemporaryDirectory() as temporary:

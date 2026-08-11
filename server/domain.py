@@ -1839,6 +1839,15 @@ def should_skip_zip_file(filename: str) -> bool:
     return should_hide_run_file(filename)
 
 
+def display_zip_relative_path(relative_path: str) -> str:
+    parts = str(relative_path or "").replace("\\", "/").split("/")
+    for index, part in enumerate(parts):
+        match = re.fullmatch(r"(\d{14})\s+-\s+(.+?)(\s+\(\d+\))?", part)
+        if match:
+            parts[index] = f"{match.group(2)} - {match.group(1)}{match.group(3) or ''}"
+    return "/".join(parts)
+
+
 def collect_unified_zip_entries(ctx: WorkerContext, root_id: str, cnpj: str = "") -> Dict[str, str]:
     entries: Dict[str, str] = {}
     attempts = attempts_for_root_raw(ctx, root_id)
@@ -1901,7 +1910,7 @@ def create_root_zip(ctx: WorkerContext, root_id: str) -> str:
                 ),
             )
         for rel, full_path in sorted(entries.items(), key=lambda x: x[0].lower()):
-            zf.write(full_path, rel)
+            zf.write(full_path, display_zip_relative_path(rel))
 
     return zip_path
 
