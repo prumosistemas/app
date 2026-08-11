@@ -165,6 +165,9 @@ O agendador nasce e encerra junto com o FastAPI. A configuração fica em
 automática é uma run normal com checkpoint e os campos `automatic` e
 `automatic_job_id`; por isso continua visível, baixável e retomável. A limpeza
 de 123 dias seleciona somente essas runs e nunca remove capturas manuais.
+Na inicialização, estados persistidos `criada`/`rodando` sem runtime vivo são
+retomados automaticamente com `retry_only`, reaproveitando o índice e os
+arquivos válidos. Isso cobre restart do Docker, deploy e queda do processo.
 
 Operação da tela:
 
