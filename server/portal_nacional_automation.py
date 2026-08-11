@@ -73,6 +73,7 @@ SOLVER_FALLBACK_URLS = configured_solver_fallback_urls(
 # Alias preservado para integracoes e testes antigos que alteram um unico URL.
 SOLVER_FALLBACK_URL = SOLVER_FALLBACK_URLS[0]
 SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
+SOLVER_ENDPOINT_BLOCK_STRIKES: dict[str, tuple[int, float]] = {}
 SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
 SOLVER_MODAL_ROTATION_LOCK = threading.Lock()
 SOLVER_MODAL_ROTATION_COUNTER = 0
@@ -1409,7 +1410,7 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         or "unusual traffic" in detail
         or "sorry/index" in detail
     ):
-        return 300
+        return 900
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
     # Diferente de uma grade apenas instavel, este erro preservado confirma que
@@ -1439,6 +1440,18 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         marker in detail
         for marker in ("google_ai_request_failed", "unusual traffic", "sorry/index")
     )
+    if explicit_google_block and hostname.endswith(".modal.run"):
+        # O bloqueio do Google acompanha o egress por muito mais que os cinco
+        # minutos antigos. Cresca 15 -> 30 -> 60 minutos quando ele reaparece,
+        # compartilhando a decisao entre todas as runs deste processo.
+        now = time.monotonic()
+        with SOLVER_ENDPOINT_COOLDOWN_LOCK:
+            strikes, last_seen = SOLVER_ENDPOINT_BLOCK_STRIKES.get(url, (0, 0.0))
+            if now - last_seen > 6 * 3600:
+                strikes = 0
+            strikes = min(3, strikes + 1)
+            SOLVER_ENDPOINT_BLOCK_STRIKES[url] = (strikes, now)
+        cooldown = min(3600, 900 * (2 ** (strikes - 1)))
     if is_local_solver_url(url) and "google_ai_request_failed" in detail:
         # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
         # endpoint local removia o ultimo fallback das outras threads, que
@@ -1461,6 +1474,7 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
 def clear_solver_endpoint_cooldown(url: str) -> None:
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
         SOLVER_ENDPOINT_COOLDOWNS.pop(url, None)
+        SOLVER_ENDPOINT_BLOCK_STRIKES.pop(url, None)
 
 
 def available_solver_url_candidates(primary: str) -> tuple[list[str], float | None]:

@@ -424,7 +424,10 @@ def proxy_probe() -> str:
         "HOST": "0.0.0.0",
         "SOLVER_HEADLESS": "0",
         "GOOGLE_AI_RECOVERY_VERBOSE": "1",
-        "GOOGLE_AI_PREWARM": "1",
+        # Nao consulte o Google durante cold start. O prewarm criava ate duas
+        # consultas artificiais por container e podia consumir a reputacao do
+        # egress antes de existir trabalho real.
+        "GOOGLE_AI_PREWARM": "0",
         # Cliente v16 do projeto validado. No Modal a base Ubuntu nao traz
         # Firefox apt usavel; use Chrome/CDP em Xvfb, com timeout HTTP curto.
         "GOOGLE_AI_RECOVERY_POLICY": "chrome",
@@ -433,7 +436,7 @@ def proxy_probe() -> str:
         "GOOGLE_AI_FIREFOX_FALLBACK": "0",
         # Um container aquecido nao pode permanecer recusando solves pelo resto
         # da vida. O servidor ja evita esse endpoint durante o mesmo intervalo.
-        "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "300",
+        "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "900",
         "PORTAL_SOLVER_BROWSER_RESTART_LIMIT": "1",
         "PORTAL_SOLVER_OPEN_FAILURE_LIMIT": "1",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,

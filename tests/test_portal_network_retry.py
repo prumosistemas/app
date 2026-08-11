@@ -16,11 +16,13 @@ import portal_nacional_automation as automation  # noqa: E402
 @pytest.fixture(autouse=True)
 def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_ENDPOINT_BLOCK_STRIKES.clear()
     automation.SOLVER_ENDPOINT_SCORES.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
     monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+    automation.SOLVER_ENDPOINT_BLOCK_STRIKES.clear()
     automation.SOLVER_ENDPOINT_SCORES.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
 
@@ -382,7 +384,7 @@ def test_not_ready_is_scoped_to_the_current_captcha() -> None:
 def test_google_session_failure_cools_only_that_endpoint() -> None:
     assert automation.solver_endpoint_cooldown_seconds(
         RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel")
-    ) == 300
+    ) == 900
 
 
 def test_local_google_session_failure_does_not_hide_residential_fallback() -> None:
@@ -405,7 +407,27 @@ def test_explicit_google_block_has_long_modal_cooldown() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "https://conta--solver.modal.run/solve",
         RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index"),
-    ) == 300
+    ) == 900
+
+
+def test_repeated_explicit_google_block_grows_modal_cooldown() -> None:
+    url = "https://conta--solver.modal.run/solve"
+    error = RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index")
+
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 1800
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 3600
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 3600
+
+
+def test_success_resets_explicit_google_block_growth() -> None:
+    url = "https://conta--solver.modal.run/solve"
+    error = RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index")
+
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 1800
+    automation.clear_solver_endpoint_cooldown(url)
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
 
 
 def test_solver_preserves_json_reason_from_503(monkeypatch) -> None:

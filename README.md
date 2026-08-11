@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.89 - capturas automáticas por empresa e sessão resiliente**
+Versao: **1.0.90 - proteção adaptativa contra bloqueio do egress**
 
 ## Estado atual
 
@@ -92,9 +92,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.89 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.90 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.89
+docker push ryang20/prumo-api:1.0.90
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

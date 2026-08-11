@@ -1649,7 +1649,11 @@ def _query_image(image_path: Path, prompt: str) -> Any:
                         prompt,
                         timeout=90,
                         image_path=image_path,
-                        attempts=3,
+                        # O failover externo ja tenta HF, as duas contas Modal
+                        # e por ultimo o ThinkPad. Repetir a mesma consulta ate
+                        # tres vezes dentro deste egress aumenta a chance de
+                        # /sorry/index e piora a latencia sem adicionar rota.
+                        attempts=1,
                         allow_browser_recovery=True,
                     )
                 actual_route = str(getattr(result, "route", route) or route)

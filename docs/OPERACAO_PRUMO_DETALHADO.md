@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.89.
+Este documento e a fonte de contexto operacional da versao 1.0.90.
 
 ## Estado desejado
 
@@ -19,6 +19,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.89.
 - Histórico automático separado por certificado, inclusive para ciclos com erro, com contagem incremental deduplicada e download filtrável por data de emissão e competência.
 - GitHub, pasta local e servidor na mesma versao.
 - Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
+- Cold start Modal não executa prewarm no Google. Cada egress faz somente uma tentativa por análise; `unusual traffic` aplica cooldown adaptativo de 15/30/60 minutos, compartilhado pelas runs do processo, e sucesso confirmado limpa a penalidade.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
 - A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
