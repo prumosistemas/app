@@ -57,7 +57,9 @@ EOF
   export GOOGLE_AI_FIREFOX_FALLBACK=0
   export GOOGLE_AI_RECOVERY_POLICY=chrome
   export GOOGLE_AI_RECOVERY_VERBOSE=1
-  export GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS=3
+  # Um /sorry/index pertence ao IP residencial; repetir Chrome no mesmo egress
+  # nao recupera a sessao e atrasava cada nota antes do retry preservado.
+  export GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS=1
   export PORTAL_SOLVER_BROWSER_RESTART_LIMIT=1
   export PORTAL_SOLVER_OPEN_FAILURE_LIMIT=1
 

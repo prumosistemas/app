@@ -303,6 +303,12 @@ def _recovery_log(message: str) -> None:
         print(f"[recuperação] {message}", file=sys.stderr, flush=True)
 
 
+def _is_unusual_traffic_error(exc: BaseException) -> bool:
+    """Return whether Google explicitly blocked the current network route."""
+    detail = str(exc).lower()
+    return "unusual traffic" in detail or "sorry/index" in detail
+
+
 def _write_recovery_state(
     method: str,
     status: str,
@@ -722,6 +728,11 @@ def recover_session_with_browser(
             except (requests.RequestException, GoogleAIModeError, OSError, subprocess.SubprocessError) as exc:
                 chrome_error = exc
                 _recovery_log(f"Chrome não renovou a sessão ({attempt}/{chrome_attempts}): {exc}")
+                # A pagina /sorry pertence ao egress, nao ao perfil temporario.
+                # Abrir outros Chromes na mesma rota apenas aumenta latencia e
+                # reforca o bloqueio; devolva imediatamente ao failover externo.
+                if _is_unusual_traffic_error(exc):
+                    break
                 if attempt < chrome_attempts:
                     time.sleep(float(attempt * 2))
     else:

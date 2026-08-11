@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.91**
+Versao do app: **1.0.92**
 Atualizado em: **2026-08-11**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -80,12 +80,14 @@ A captura diária sempre baixa XML+PDF e sua primeira janela começa na data
 escolhida na tela.
 Certificados, senhas e sessões continuam fora dos comandos e da documentação.
 
-Na 1.0.91, o solver não consulta o Google durante cold start e cada análise
+Na 1.0.92, o solver não consulta o Google durante cold start e cada análise
 direta faz uma única tentativa interna. Um bloqueio explícito do egress Modal
 abre cooldown compartilhado curto de cinco minutos; um sucesso confirmado
 zera a penalidade. Isso não usa nem recomenda conta
 Google pessoal: autenticar uma conta para contornar `unusual traffic` pode
 associar o bloqueio à conta.
+Quando a recuperação por Chrome já identifica `/sorry/index`, ela devolve o
+controle imediatamente ao failover e não abre outros perfis no mesmo egress.
 As duas contas Modal continuam paralelas, com até duas requisições em voo por
 conta e quatro no total. Threads que aguardaram vaga reavaliam o cooldown antes
 de consultar, preservando vazão quando o egress está saudável.

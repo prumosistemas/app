@@ -65,6 +65,17 @@ def test_google_ai_recovery_uses_official_ai_entrypoint() -> None:
     assert "aep=11" in url
 
 
+def test_unusual_traffic_detection_stops_same_egress_recovery() -> None:
+    assert SOLVER.google_ai._is_unusual_traffic_error(
+        SOLVER.google_ai.GoogleAIModeError(
+            "Google abriu https://www.google.com/sorry/index por unusual traffic"
+        )
+    )
+    assert not SOLVER.google_ai._is_unusual_traffic_error(
+        SOLVER.google_ai.GoogleAIModeError("resposta temporariamente vazia")
+    )
+
+
 def test_linux_chrome_recovery_stops_the_entire_process_group(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
