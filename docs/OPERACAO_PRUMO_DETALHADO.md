@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.87.
+Este documento e a fonte de contexto operacional da versao 1.0.88.
 
 ## Estado desejado
 
@@ -22,6 +22,8 @@ Este documento e a fonte de contexto operacional da versao 1.0.87.
 - A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
 - `Checar encerramento` usa requests do ThinkPad, não Browserless. Aceita várias contas cadastradas, mantém cinco históricos compartilhados pela empresa com identificação do executor e compartilha um limite global de seis sessões HTTP para não prejudicar outras operações.
+- O Worker transforma falhas de infraestrutura da API (`530`, túnel `1033` e respostas 5xx não JSON) em erro JSON 503 amigável e rastreável. Respostas válidas de arquivos continuam em streaming.
+- O ZIP geral do ISS converte somente a apresentação da pasta para `Nome - CNPJ`; o layout persistido e os checkpoints permanecem inalterados.
 
 ## Onde fica cada coisa
 

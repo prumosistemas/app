@@ -137,3 +137,5 @@ def test_portal_frontend_uses_competence_selector_without_files_box() -> None:
     assert 'data-competence="todas"' in source
     assert 'combinedQuery.append("run_id", child.run_id)' in source
     assert 'combinedQuery.append("competencia", value)' in source
+    assert "responseErrorMessage" in source
+    assert "looksLikeHtml" in source

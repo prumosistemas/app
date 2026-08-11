@@ -64,6 +64,14 @@ class RunArtifactTests(unittest.TestCase):
             domain.display_zip_relative_path("dam/12345678000190 - EMPRESA (2)/dam.pdf"),
             "dam/EMPRESA - 12345678000190 (2)/dam.pdf",
         )
+        self.assertEqual(
+            domain.display_zip_relative_path("escrituracao/12.345.678.0001-90 - EMPRESA/notas.xlsx"),
+            "escrituracao/EMPRESA - 12.345.678.0001-90/notas.xlsx",
+        )
+        self.assertEqual(
+            domain.display_zip_relative_path("notas/EMPRESA - 12345678000190/notas.xml"),
+            "notas/EMPRESA - 12345678000190/notas.xml",
+        )
 
     def test_finished_run_logs_remain_available_without_crossing_flows(self):
         with tempfile.TemporaryDirectory() as temporary:

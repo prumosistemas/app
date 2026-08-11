@@ -49,3 +49,14 @@ def test_worker_uses_safe_d1_session_for_read_replication() -> None:
     assert "env = withRequestD1Session(env);" in source
     assert 'env.db.withSession("first-primary")' in source
     assert "async scheduled(_event, env, ctx)" in source
+
+
+def test_python_proxy_hides_cloudflare_tunnel_html() -> None:
+    source = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+    proxy = source.split("async function handlePythonProxy", 1)[1].split("function pythonHeaders", 1)[0]
+
+    assert "isPythonInfrastructureFailure(upstreamResponse)" in proxy
+    assert 'status === 530' in proxy
+    assert 'code: "UPSTREAM_TEMPORARILY_UNAVAILABLE"' in proxy
+    assert "upstreamResponse.body?.cancel()" in proxy
+    assert "new Response(upstreamResponse.body" in proxy

@@ -211,6 +211,15 @@
     function saveSessionToken(value){ if(!value) return; sessionToken=value; sessionStorage.setItem(SESSION_TOKEN_KEY,value); }
     function saveCsrf(value){ if(!value) return; csrf=value; sessionStorage.setItem("csrf",value); }
     function toLogin(){ window.location.href="/login"; }
+    function responseErrorMessage(res, data, fallback="Servidor temporariamente indisponível. Tente novamente em instantes."){
+      const detail = data?.error || data?.detail || data?.message || data;
+      const requestId = data && typeof data === "object" ? String(data.request_id || "").trim() : "";
+      const support = requestId ? ` Código: ${requestId}.` : "";
+      if(typeof detail !== "string") return `${detail ? JSON.stringify(detail) : fallback}${support}`;
+      const text = detail.trim();
+      const looksLikeHtml = /^\s*<!doctype\s+html/i.test(text) || /<html(?:\s|>)/i.test(text);
+      return `${looksLikeHtml ? fallback : (text || fallback)}${support}`;
+    }
     async function api(path, options={}){
       const headers = new Headers(options.headers || {});
       const isForm = options.body instanceof FormData;
@@ -236,7 +245,7 @@
       if(data?.csrf) saveCsrf(data.csrf);
       if(data?.session_token) saveSessionToken(data.session_token);
       if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
-      if(!res.ok){ const detail=data?.error || data?.detail || data?.message || data; throw new Error(typeof detail==="string"?detail:JSON.stringify(detail)); }
+      if(!res.ok) throw new Error(responseErrorMessage(res, data));
       return data;
     }
     function dateIso(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
@@ -501,7 +510,11 @@ Baixados: ${Number(s.baixados || 0)} · Erros: ${Number(s.erros || 0)} · Penden
       if(sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
       const res = await fetch(apiPath(path), {credentials:"include", headers});
       if(res.status===401 || res.status===403){ toLogin(); throw new Error("Sessão expirada."); }
-      if(!res.ok){ const text = await res.text().catch(() => ""); throw new Error(text || "Falha no download."); }
+      if(!res.ok){
+        const type = res.headers.get("content-type") || "";
+        const data = type.includes("application/json") ? await res.json().catch(() => null) : await res.text().catch(() => "");
+        throw new Error(responseErrorMessage(res, data, "Falha no download. Tente novamente em instantes."));
+      }
       const blob = await res.blob();
       const disp = res.headers.get("content-disposition") || "";
       const match = disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);

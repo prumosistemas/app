@@ -860,7 +860,10 @@ async function handleMasterSolverAuditFile(request, env) {
   const path = url.searchParams.get("path") || "";
   if (!source || !path) return jsonResponse(request, env, { ok: false, error: "Artefato inválido." }, 400);
   const response = await fetchPythonSolverAuditFile(env, auth.user, source, path);
-  if (!response.ok) return jsonResponse(request, env, { ok: false, error: await response.text() }, response.status);
+  if (!response.ok) {
+    const error = await pythonErrorMessage(response, "Não foi possível abrir o artefato.");
+    return jsonResponse(request, env, { ok: false, error }, response.status === 530 ? 503 : response.status);
+  }
   return new Response(response.body, {
     status: 200,
     headers: apiHeaders(request, env, {
@@ -1910,8 +1913,10 @@ async function handlePythonProxy(request, env) {
     }
     upstreamResponse = await fetch(targetUrl, init);
   } catch (err) {
+    const requestId = randomId();
     console.error(JSON.stringify({
-      message: "python proxy request failed",
+      event: "python_proxy_unavailable",
+      request_id: requestId,
       method: request.method,
       path,
       error: err instanceof Error ? err.message : String(err),
@@ -1921,8 +1926,38 @@ async function handlePythonProxy(request, env) {
       ok: false,
       error: err?.code === "BODY_TOO_LARGE"
         ? "Requisição muito grande."
-        : "A API interna não respondeu.",
-    }, err?.code === "BODY_TOO_LARGE" ? 413 : 502);
+        : "Servidor temporariamente indisponível. A conexão está sendo restabelecida; tente novamente em instantes.",
+      code: err?.code === "BODY_TOO_LARGE" ? "BODY_TOO_LARGE" : "UPSTREAM_TEMPORARILY_UNAVAILABLE",
+      retryable: err?.code !== "BODY_TOO_LARGE",
+      retry_after_seconds: err?.code === "BODY_TOO_LARGE" ? 0 : 10,
+      request_id: requestId,
+    }, err?.code === "BODY_TOO_LARGE" ? 413 : 503);
+  }
+
+  if (isPythonInfrastructureFailure(upstreamResponse)) {
+    const requestId = randomId();
+    console.error(JSON.stringify({
+      event: "python_proxy_upstream_unavailable",
+      request_id: requestId,
+      method: request.method,
+      path,
+      upstream_status: upstreamResponse.status,
+      upstream_content_type: upstreamResponse.headers.get("Content-Type") || "",
+      upstream_ray: upstreamResponse.headers.get("CF-Ray") || "",
+    }));
+    try {
+      await upstreamResponse.body?.cancel();
+    } catch (_err) {
+      // A resposta será descartada de qualquer forma; não exponha o HTML da infraestrutura.
+    }
+    return jsonResponse(request, env, {
+      ok: false,
+      error: "Servidor temporariamente indisponível. A conexão está sendo restabelecida; tente novamente em instantes.",
+      code: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
+      retryable: true,
+      retry_after_seconds: 10,
+      request_id: requestId,
+    }, 503);
   }
 
   const responseHeaders = apiHeaders(request, env, {});
@@ -1943,6 +1978,13 @@ async function handlePythonProxy(request, env) {
   });
 }
 
+function isPythonInfrastructureFailure(response) {
+  const status = Number(response?.status || 0);
+  const contentType = String(response?.headers?.get("Content-Type") || "").toLowerCase();
+  if (status === 530) return true;
+  return status >= 500 && !contentType.includes("application/json");
+}
+
 function pythonHeaders(env, user) {
   const headers = new Headers();
   headers.set("X-Internal-Secret", env.ISS_INTERNAL_SECRET || "");
@@ -1952,6 +1994,32 @@ function pythonHeaders(env, user) {
   headers.set("X-User-Email", user.email || "");
   headers.set("X-User-Role", user.role || "member");
   return headers;
+}
+
+async function pythonErrorMessage(response, fallback = "A API interna não respondeu.") {
+  const status = Number(response?.status || 0);
+  const contentType = String(response?.headers?.get("Content-Type") || "").toLowerCase();
+  if (status === 530 || (status >= 500 && !contentType.includes("application/json"))) {
+    return "Servidor temporariamente indisponível. Tente novamente em instantes.";
+  }
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await response.json();
+      const detail = payload?.error || payload?.detail || payload?.message;
+      return typeof detail === "string" && detail.trim() ? detail.trim().slice(0, 600) : fallback;
+    } catch (_err) {
+      return fallback;
+    }
+  }
+  try {
+    const text = (await response.text()).trim();
+    if (/^\s*<!doctype\s+html/i.test(text) || /<html(?:\s|>)/i.test(text)) {
+      return "Servidor temporariamente indisponível. Tente novamente em instantes.";
+    }
+    return text.slice(0, 600) || fallback;
+  } catch (_err) {
+    return fallback;
+  }
 }
 
 async function stopPythonRunsForUser(env, user) {
@@ -1969,8 +2037,7 @@ async function stopPythonRunsForUser(env, user) {
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      return { ok: false, error: text || `HTTP ${res.status}` };
+      return { ok: false, error: await pythonErrorMessage(res, `HTTP ${res.status}`) };
     }
 
     return { ok: true };
@@ -1992,7 +2059,7 @@ async function stopPythonRunsForCompany(env, actor, companyId) {
       method: "POST",
       headers,
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: await pythonErrorMessage(res) };
     return { ok: true, ...(await res.json()) };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3002,7 +3069,7 @@ async function fetchPythonCompanyStats(env, actor, companyId) {
     });
 
     if (!res.ok) {
-      return { ok: false, error: await res.text() };
+      return { ok: false, error: await pythonErrorMessage(res) };
     }
 
     const data = await res.json();
@@ -3022,7 +3089,7 @@ async function fetchPythonCompanyDetail(env, actor, companyId) {
       method: "GET",
       headers: pythonHeaders(env, actor),
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: await pythonErrorMessage(res) };
     const data = await res.json();
     return data.detail || null;
   } catch (err) {
@@ -3040,7 +3107,7 @@ async function fetchPythonSystemMetrics(env, actor, range) {
       method: "GET",
       headers: pythonHeaders(env, actor),
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: await pythonErrorMessage(res) };
     return await res.json();
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3057,7 +3124,7 @@ async function fetchPythonModalBilling(env, actor) {
       method: "GET",
       headers: pythonHeaders(env, actor),
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: await pythonErrorMessage(res) };
     return await res.json();
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3074,7 +3141,7 @@ async function fetchPythonSolverAudit(env, actor, limit) {
       method: "GET",
       headers: pythonHeaders(env, actor),
     });
-    if (!res.ok) return { ok: false, error: await res.text() };
+    if (!res.ok) return { ok: false, error: await pythonErrorMessage(res) };
     return await res.json();
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3107,7 +3174,7 @@ async function deletePythonMemberData(env, actor, companyId, userId) {
       method: "POST",
       headers: pythonHeaders(env, actor),
     });
-    if (![200, 202].includes(res.status)) return { ok: false, error: await res.text() };
+    if (![200, 202].includes(res.status)) return { ok: false, error: await pythonErrorMessage(res) };
     return { ok: true, ...(await res.json()) };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3129,7 +3196,7 @@ async function deletePythonCompanyData(env, actor, companyId) {
     });
 
     if (![200, 202].includes(res.status)) {
-      return { ok: false, error: await res.text() };
+      return { ok: false, error: await pythonErrorMessage(res) };
     }
 
     const data = await res.json();

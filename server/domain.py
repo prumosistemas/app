@@ -1842,7 +1842,10 @@ def should_skip_zip_file(filename: str) -> bool:
 def display_zip_relative_path(relative_path: str) -> str:
     parts = str(relative_path or "").replace("\\", "/").split("/")
     for index, part in enumerate(parts):
-        match = re.fullmatch(r"(\d{14})\s+-\s+(.+?)(\s+\(\d+\))?", part)
+        match = re.fullmatch(
+            r"((?:\d{2}[.]?\d{3}[.]?\d{3}[.]?\d{4}-?\d{2}))\s+-\s+(.+?)(\s+\(\d+\))?",
+            part,
+        )
         if match:
             parts[index] = f"{match.group(2)} - {match.group(1)}{match.group(3) or ''}"
     return "/".join(parts)
