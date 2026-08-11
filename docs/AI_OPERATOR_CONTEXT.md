@@ -212,6 +212,12 @@ O acesso usa Cloudflare Access SSH. O deploy remoto e fixo: `git pull
 --ff-only`, build da imagem indicada no Compose, recriacao do `prumo-api` e
 health check. Dados persistentes em `/opt/prumo/data` nao sao apagados.
 
+O failover de internet do host esta em `docs/NETWORK_FAILOVER.md`. A ALARES
+continua primaria, mas so e aceita enquanto houver conectividade HTTPS real.
+O cadastro inicial dos perfis Wi-Fi exige `sudo` no console do ThinkPad para
+que as senhas sejam solicitadas diretamente pelo NetworkManager e nunca passem
+por comando, prompt de IA, documentacao ou Git.
+
 `server runs` e somente leitura e mostra metadados sanitizados das runs Portal
 e das verificacoes de encerramento, incluindo progresso e resumo de erros, sem
 senha, certificado, cookie ou resultado fiscal detalhado. `server status`

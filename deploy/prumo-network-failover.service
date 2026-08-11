@@ -1,0 +1,11 @@
+[Unit]
+Description=Prumo network connectivity failover
+After=NetworkManager.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/prumo-network-failover
+
+[Install]
+WantedBy=multi-user.target

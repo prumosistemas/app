@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Prumo server internet connectivity every minute
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+Persistent=true
+Unit=prumo-network-failover.service
+
+[Install]
+WantedBy=timers.target
