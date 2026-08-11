@@ -436,7 +436,7 @@ def proxy_probe() -> str:
         "GOOGLE_AI_FIREFOX_FALLBACK": "0",
         # Um container aquecido nao pode permanecer recusando solves pelo resto
         # da vida. O servidor ja evita esse endpoint durante o mesmo intervalo.
-        "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "900",
+        "GOOGLE_AI_PROVIDER_CIRCUIT_COOLDOWN_SECONDS": "300",
         "PORTAL_SOLVER_BROWSER_RESTART_LIMIT": "1",
         "PORTAL_SOLVER_OPEN_FAILURE_LIMIT": "1",
         "PRUMO_MODAL_PROXY_HOSTNAME": PROXY_HOSTNAME,

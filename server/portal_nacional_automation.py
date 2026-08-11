@@ -16,6 +16,7 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 import requests
 import websocket
+from contextlib import nullcontext
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -73,8 +74,9 @@ SOLVER_FALLBACK_URLS = configured_solver_fallback_urls(
 # Alias preservado para integracoes e testes antigos que alteram um unico URL.
 SOLVER_FALLBACK_URL = SOLVER_FALLBACK_URLS[0]
 SOLVER_ENDPOINT_COOLDOWNS: dict[str, float] = {}
-SOLVER_ENDPOINT_BLOCK_STRIKES: dict[str, tuple[int, float]] = {}
 SOLVER_ENDPOINT_COOLDOWN_LOCK = threading.Lock()
+SOLVER_MODAL_REQUEST_LOCKS: dict[str, threading.BoundedSemaphore] = {}
+SOLVER_MODAL_REQUEST_LOCKS_GUARD = threading.Lock()
 SOLVER_MODAL_ROTATION_LOCK = threading.Lock()
 SOLVER_MODAL_ROTATION_COUNTER = 0
 SOLVER_ENDPOINT_SCORES: dict[str, int] = {}
@@ -1384,6 +1386,24 @@ def is_local_solver_url(url: str) -> bool:
     }
 
 
+def is_modal_solver_url(url: str) -> bool:
+    return (urlparse(str(url or "")).hostname or "").lower().endswith(".modal.run")
+
+
+def modal_solver_request_lock(url: str) -> threading.BoundedSemaphore | None:
+    """Mantém até dois containers por conta Modal e quatro no total."""
+    if not is_modal_solver_url(url):
+        return None
+    label = solver_endpoint_label(url)
+    with SOLVER_MODAL_REQUEST_LOCKS_GUARD:
+        return SOLVER_MODAL_REQUEST_LOCKS.setdefault(label, threading.BoundedSemaphore(2))
+
+
+def solver_endpoint_cooldown_remaining(url: str) -> float:
+    with SOLVER_ENDPOINT_COOLDOWN_LOCK:
+        return max(0.0, SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) - time.monotonic())
+
+
 def is_visual_solver_failure(exc: Exception) -> bool:
     detail = str(exc or "").lower()
     return detail.startswith("solver:") and any(
@@ -1410,7 +1430,7 @@ def solver_endpoint_cooldown_seconds(exc: Exception) -> int:
         or "unusual traffic" in detail
         or "sorry/index" in detail
     ):
-        return 900
+        return 300
     if status in {500, 502, 503, 504} or "circuit_open" in detail:
         return 90
     # Diferente de uma grade apenas instavel, este erro preservado confirma que
@@ -1440,18 +1460,6 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         marker in detail
         for marker in ("google_ai_request_failed", "unusual traffic", "sorry/index")
     )
-    if explicit_google_block and hostname.endswith(".modal.run"):
-        # O bloqueio do Google acompanha o egress por muito mais que os cinco
-        # minutos antigos. Cresca 15 -> 30 -> 60 minutos quando ele reaparece,
-        # compartilhando a decisao entre todas as runs deste processo.
-        now = time.monotonic()
-        with SOLVER_ENDPOINT_COOLDOWN_LOCK:
-            strikes, last_seen = SOLVER_ENDPOINT_BLOCK_STRIKES.get(url, (0, 0.0))
-            if now - last_seen > 6 * 3600:
-                strikes = 0
-            strikes = min(3, strikes + 1)
-            SOLVER_ENDPOINT_BLOCK_STRIKES[url] = (strikes, now)
-        cooldown = min(3600, 900 * (2 ** (strikes - 1)))
     if is_local_solver_url(url) and "google_ai_request_failed" in detail:
         # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
         # endpoint local removia o ultimo fallback das outras threads, que
@@ -1474,7 +1482,6 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
 def clear_solver_endpoint_cooldown(url: str) -> None:
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
         SOLVER_ENDPOINT_COOLDOWNS.pop(url, None)
-        SOLVER_ENDPOINT_BLOCK_STRIKES.pop(url, None)
 
 
 def available_solver_url_candidates(primary: str) -> tuple[list[str], float | None]:
@@ -1606,21 +1613,35 @@ def solve_captcha_with_url(
         request_id,
     )
     for candidate in candidates:
-        try:
-            token = solve_captcha_once(candidate, sitekey, request_id, page_url)
-            clear_solver_endpoint_cooldown(candidate)
-            record_solver_endpoint_event(candidate, "success", request_id)
-            return token
-        except Exception as exc:
-            record_solver_endpoint_event(candidate, "failure", request_id, exc)
-            cooldown = mark_solver_endpoint_unavailable(candidate, exc)
-            safe_candidate = solver_endpoint_label(candidate)
-            safe_error = sanitized_solver_error(exc)
-            errors.append(f"{safe_candidate}: {safe_error}")
-            print(
-                f"[Solver] Falha em {safe_candidate}; tentando proximo endpoint: "
-                f"{safe_error}; cooldown={cooldown}s"
-            )
+        request_lock = modal_solver_request_lock(candidate)
+        with request_lock if request_lock is not None else nullcontext():
+            # Outra thread pode ter descoberto o bloqueio enquanto esta
+            # aguardava uma das duas vagas da mesma conta. Reavalie dentro do
+            # gate para desviar rapidamente sem reduzir a vazao quando saudavel.
+            remaining = solver_endpoint_cooldown_remaining(candidate)
+            if remaining > 0:
+                safe_candidate = solver_endpoint_label(candidate)
+                errors.append(f"{safe_candidate}: solver_endpoint_cooling_down")
+                print(
+                    f"[Solver] Pulando {safe_candidate}; cooldown publicado por "
+                    f"outra tentativa ({remaining:.0f}s restantes)."
+                )
+                continue
+            try:
+                token = solve_captcha_once(candidate, sitekey, request_id, page_url)
+                clear_solver_endpoint_cooldown(candidate)
+                record_solver_endpoint_event(candidate, "success", request_id)
+                return token
+            except Exception as exc:
+                record_solver_endpoint_event(candidate, "failure", request_id, exc)
+                cooldown = mark_solver_endpoint_unavailable(candidate, exc)
+                safe_candidate = solver_endpoint_label(candidate)
+                safe_error = sanitized_solver_error(exc)
+                errors.append(f"{safe_candidate}: {safe_error}")
+                print(
+                    f"[Solver] Falha em {safe_candidate}; tentando proximo endpoint: "
+                    f"{safe_error}; cooldown={cooldown}s"
+                )
     raise RuntimeError("solver:all_endpoints_failed: " + " | ".join(errors))
 
 

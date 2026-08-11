@@ -16,14 +16,14 @@ import portal_nacional_automation as automation  # noqa: E402
 @pytest.fixture(autouse=True)
 def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
-    automation.SOLVER_ENDPOINT_BLOCK_STRIKES.clear()
     automation.SOLVER_ENDPOINT_SCORES.clear()
+    automation.SOLVER_MODAL_REQUEST_LOCKS.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
     monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
-    automation.SOLVER_ENDPOINT_BLOCK_STRIKES.clear()
     automation.SOLVER_ENDPOINT_SCORES.clear()
+    automation.SOLVER_MODAL_REQUEST_LOCKS.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
 
 
@@ -384,7 +384,7 @@ def test_not_ready_is_scoped_to_the_current_captcha() -> None:
 def test_google_session_failure_cools_only_that_endpoint() -> None:
     assert automation.solver_endpoint_cooldown_seconds(
         RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel")
-    ) == 900
+    ) == 300
 
 
 def test_local_google_session_failure_does_not_hide_residential_fallback() -> None:
@@ -407,27 +407,30 @@ def test_explicit_google_block_has_long_modal_cooldown() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "https://conta--solver.modal.run/solve",
         RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index"),
-    ) == 900
+    ) == 300
 
 
-def test_repeated_explicit_google_block_grows_modal_cooldown() -> None:
-    url = "https://conta--solver.modal.run/solve"
-    error = RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index")
+def test_inflight_modal_attempt_rechecks_shared_cooldown(monkeypatch) -> None:
+    modal = "https://conta--solver.modal.run/solve"
+    residential = "http://127.0.0.1:8876/solve"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        automation,
+        "wait_for_solver_candidates",
+        lambda _primary: [modal, residential],
+    )
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    with automation.SOLVER_ENDPOINT_COOLDOWN_LOCK:
+        automation.SOLVER_ENDPOINT_COOLDOWNS[modal] = automation.time.monotonic() + 300
 
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 1800
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 3600
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 3600
+    def fake_solve(url, *_args, **_kwargs):
+        calls.append(url)
+        return "token-local"
 
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
 
-def test_success_resets_explicit_google_block_growth() -> None:
-    url = "https://conta--solver.modal.run/solve"
-    error = RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index")
-
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 1800
-    automation.clear_solver_endpoint_cooldown(url)
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 900
+    assert automation.solve_captcha_with_url(modal, "sitekey", "nota") == "token-local"
+    assert calls == [residential]
 
 
 def test_solver_preserves_json_reason_from_503(monkeypatch) -> None:
