@@ -68,3 +68,12 @@ python -m ops.prumo_ops server status
 O esperado na API Cloudflare e o tunel `browser` saudavel com quatro conexoes.
 O tunel historico `main`, inativo desde maio de 2026, nao faz parte da rota de
 producao atual.
+
+## Prova real de failover
+
+Em 11/08/2026, depois da instalacao, o cabo Ethernet foi removido com a ALARES
+sem DNS. O timer registrou duas falhas, rejeitou a ALARES naquele ciclo e
+restaurou a internet pela `AVANÇAR_LINK_5G`. A nova rede recebeu
+`192.168.100.121`, respondeu HTTP 204 pela propria interface em 147 ms e
+manteve API e app publicos em HTTP 200. Os tuneis `browser` e `prumo-proxy`
+permaneceram saudaveis. O perfil `TENDA_WIFI_5G` foi removido.
