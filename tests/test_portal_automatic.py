@@ -160,6 +160,35 @@ def test_scheduler_waits_while_any_portal_run_is_active(monkeypatch, tmp_path: P
     assert result == {"started": False, "reason": "portal_busy"}
 
 
+def test_scheduler_resumes_orphaned_automatic_checkpoint(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    run_ids = ["run-recebidas", "run-emitidas"]
+    for run_id, status in zip(run_ids, ("rodando", "criada")):
+        run_dir = portal_nacional._runs_root(ctx) / run_id
+        run_dir.mkdir(parents=True)
+        portal_nacional._save_json(run_dir / "run.json", {"run_id": run_id, "status": status, "config": {"automatic": True}})
+    portal_nacional._save_automatic_state(ctx, {
+        "jobs": [{"id": "cert-1", "cert_id": "cert-1", "enabled": True, "last_run_ids": run_ids}]
+    })
+    started = {}
+    monkeypatch.setattr(portal_nacional, "_automatic_records", lambda: [
+        (ctx, portal_nacional._load_automatic_state(ctx), portal_nacional._load_automatic_state(ctx)["jobs"][0])
+    ])
+    monkeypatch.setattr(portal_nacional, "_rebalance_automatic_schedules", lambda now=None: None)
+    monkeypatch.setattr(portal_nacional, "_cleanup_automatic_runs", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(portal_nacional, "_any_portal_runtime_active", lambda: False)
+    monkeypatch.setattr(portal_nacional, "_start_jobs", lambda _ctx, dirs, retry_only=False: started.update({"dirs": dirs, "retry_only": retry_only}))
+
+    result = portal_nacional._run_automatic_scheduler_cycle(
+        datetime(2026, 8, 11, 18, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    )
+
+    assert result["reason"] == "checkpoint_resume"
+    assert [path.name for path in started["dirs"]] == run_ids
+    assert started["retry_only"] is True
+
+
 def test_automatic_accumulated_download_deduplicates_and_honors_cutoff(monkeypatch, tmp_path: Path) -> None:
     _configure_storage(monkeypatch, tmp_path)
     ctx = _ctx("empresa", "usuario")

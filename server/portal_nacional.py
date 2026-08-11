@@ -297,9 +297,12 @@ def _automatic_run_state(ctx: WorkerContext, job: Dict[str, Any]) -> tuple[str, 
             statuses.append(str(run.get("status") or "criada"))
     if not statuses:
         return "run_removida", False
-    active = any(value in {"criada", "rodando"} for value in statuses)
+    runtime_run_id = str((_active_runtime(ctx) or {}).get("run_id") or "")
+    active = bool(runtime_run_id and runtime_run_id in run_ids)
     if active:
         return "rodando", True
+    if any(value in {"criada", "rodando"} for value in statuses):
+        return "finalizado_com_erros", False
     if all(value == "finalizado" for value in statuses):
         return "finalizado", False
     if any("erro" in value or value in {"interrompida", "parado"} for value in statuses):
@@ -1159,6 +1162,22 @@ def _record_automatic_started(
     _save_automatic_state(ctx, state)
 
 
+def _stale_automatic_run_dirs(ctx: WorkerContext, job: Dict[str, Any]) -> List[Path]:
+    if _active_runtime(ctx):
+        return []
+    candidates: List[Path] = []
+    has_orphan = False
+    for value in list(job.get("last_run_ids") or []):
+        run_dir = _runs_root(ctx) / safe_slug(value, "run")
+        run = _load_json(run_dir / "run.json", {})
+        status = str(run.get("status") or "")
+        if status in {"criada", "rodando"}:
+            has_orphan = True
+        if status and status != "finalizado":
+            candidates.append(run_dir)
+    return candidates if has_orphan else []
+
+
 def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any]:
     current = now or datetime.now(PORTAL_TIMEZONE)
     _rebalance_automatic_schedules(current)
@@ -1173,6 +1192,22 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
 
     if _any_portal_runtime_active():
         return {"started": False, "reason": "portal_busy"}
+
+    for ctx, state, job in records:
+        stale_dirs = _stale_automatic_run_dirs(ctx, job)
+        if not stale_dirs:
+            continue
+        _start_jobs(ctx, stale_dirs, retry_only=True)
+        job["last_status"] = "rodando"
+        job["last_error"] = None
+        _save_automatic_state(ctx, state)
+        return {
+            "started": True,
+            "reason": "checkpoint_resume",
+            "scope": _runtime_key(ctx),
+            "job_id": job.get("id"),
+            "run_ids": [path.name for path in stale_dirs],
+        }
 
     due = []
     for ctx, state, job in _automatic_records():
