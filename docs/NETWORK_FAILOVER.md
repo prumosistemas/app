@@ -40,10 +40,11 @@ git pull --ff-only
 sudo bash deploy/install-network-failover.sh
 ```
 
-O instalador solicita apenas os perfis ausentes, configura prioridades e
-instala `prumo-network-failover.timer`. O verificador roda a cada minuto,
-nunca acessa senhas e reinicia somente o `cloudflared` depois de uma troca
-bem-sucedida.
+O instalador ativa e valida cada perfil existente. Perfil com senha incorreta
+ou segredo ausente e apagado e recadastrado antes da instalacao continuar.
+Depois ele configura prioridades e instala `prumo-network-failover.timer`. O
+verificador roda a cada minuto, nunca acessa senhas e reinicia somente o
+`cloudflared` depois de uma troca bem-sucedida.
 
 ## Diagnostico
 

@@ -32,18 +32,37 @@ nmcli device wifi rescan ifname "${WIFI_IFACE}" || true
 ensure_profile() {
   local ssid="$1"
   if nmcli -g connection.id connection show "${ssid}" >/dev/null 2>&1; then
-    echo "Perfil ja cadastrado: ${ssid}"
-    return 0
+    echo "Validando perfil existente: ${ssid}"
+    if nmcli --wait 45 connection up "${ssid}" ifname "${WIFI_IFACE}"; then
+      sleep 2
+      if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" == "${ssid}" ]]; then
+        echo "Perfil validado: ${ssid}"
+        return 0
+      fi
+    fi
+    echo "Perfil invalido ou sem segredo utilizavel; ele sera recadastrado: ${ssid}"
+    nmcli connection delete "${ssid}"
   fi
 
   echo
   echo "Cadastre ${ssid}; a senha sera solicitada diretamente pelo NetworkManager."
   if nmcli --ask --wait 45 device wifi connect "${ssid}" ifname "${WIFI_IFACE}" name "${ssid}"; then
-    return 0
+    sleep 2
+    if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" == "${ssid}" ]]; then
+      echo "Perfil validado: ${ssid}"
+      return 0
+    fi
   fi
 
   echo "Tentando ${ssid} como rede oculta."
+  nmcli connection delete "${ssid}" >/dev/null 2>&1 || true
   nmcli --ask --wait 45 device wifi connect "${ssid}" ifname "${WIFI_IFACE}" name "${ssid}" hidden yes
+  sleep 2
+  if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" != "${ssid}" ]]; then
+    echo "A rede nao chegou ao estado conectado: ${ssid}" >&2
+    return 1
+  fi
+  echo "Perfil validado: ${ssid}"
 }
 
 for ssid in "${FALLBACK_CONNECTIONS[@]}"; do
