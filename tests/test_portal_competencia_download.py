@@ -13,6 +13,7 @@ import portal_nacional  # noqa: E402
 from portal_nacional_competencia import (  # noqa: E402
     competencia_from_item,
     competencia_from_xml_bytes,
+    emissao_from_xml_bytes,
     summarize_competencias,
 )
 
@@ -23,6 +24,11 @@ def xml_for_competencia(value: str) -> bytes:
 
 def test_competencia_is_read_from_namespaced_nfse_xml() -> None:
     assert competencia_from_xml_bytes(xml_for_competencia("2026-06-30")) == "2026-06"
+
+
+def test_emissao_is_read_from_namespaced_nfse_xml() -> None:
+    xml = b'<NFSe xmlns="urn:teste"><infNFSe><dhEmi>2026-07-18T12:30:00-03:00</dhEmi></infNFSe></NFSe>'
+    assert str(emissao_from_xml_bytes(xml)) == "2026-07-18"
 
 
 def test_competencia_summary_counts_retroactive_notes(tmp_path: Path) -> None:

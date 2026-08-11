@@ -17,9 +17,17 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
-## Estado validado em 2026-07-18
+## Estado validado em 2026-08-11
 
-- Na versão 1.0.88, o ZIP geral do ISS apresenta as pastas empresariais como `Nome - CNPJ`, inclusive ao baixar runs antigas armazenadas como `CNPJ - Nome`; a transformação ocorre somente no caminho do ZIP, aceita o CNPJ com ou sem pontuação e não altera checkpoints no servidor.
+### Portal automático 1.0.89
+
+- O histórico de `Notas automático` é separado pelo alias de cada certificado/empresa, inclui capturas `finalizado_com_erros`, mostra quantas notas únicas entraram em cada ciclo (`+N`) e o total deduplicado acumulado.
+- O ZIP acumulado pode ser baixado inteiro ou filtrado por intervalo da data de emissão e por competência. A estrutura continua separando `Recebidas|Emitidas`, competência, XML e PDF.
+- O botão `Capturar agora` usa exclusivamente o runtime de empresa+colaborador retornado pela API. Status antigo persistido não bloqueia a tela, e a execução de outro usuário não interfere nesse botão.
+- Redirecionamentos do Portal para login são detectados sem distinção entre maiúsculas/minúsculas e por marcadores do formulário. A sessão é renovada e a mesma página é repetida; uma tela de login não pode mais virar o erro genérico de total ausente.
+- Validação local: 196 testes aprovados e JavaScript da tela compilado sem erro de sintaxe.
+
+- Na versão 1.0.89, o ZIP geral do ISS apresenta as pastas empresariais como `Nome - CNPJ`, inclusive ao baixar runs antigas armazenadas como `CNPJ - Nome`; a transformação ocorre somente no caminho do ZIP, aceita o CNPJ com ou sem pontuação e não altera checkpoints no servidor.
 - O Worker não retransmite HTML de falha do túnel. HTTP 530/1033 e respostas 5xx não JSON da API viram `503` com `code=UPSTREAM_TEMPORARILY_UNAVAILABLE`, mensagem curta, `retryable=true` e código de suporte; ZIP/PDF/XML válidos continuam transmitidos sem buffering.
 
 ### Checagem de encerramento ISS em 2026-08-10
@@ -46,7 +54,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 - A versão 1.0.83 mantém `Notas automático` por colaborador e certificado com uma interface simplificada: a execução é sempre diária, sempre baixa XML+PDF e começa na data inicial selecionada. As seguintes usam checkpoint com dois dias de sobreposição e permanecem disponíveis por 123 dias.
 - Runs com `config.automatic` aparecem somente em `Notas automático`. A tela manual `Notas`, seus agrupamentos e seus quatro indicadores ignoram essas runs, sem apagar histórico nem alterar o agendador.
-- A aba `Notas automático` lista somente capturas concluídas, com certificado, período, quantidade incremental, competências e momento da captura; tentativas interrompidas/com erro não poluem o histórico visual. O download é acumulado por automação: todos os arquivos disponíveis ou todos até a data de uma captura, deduplicados e separados por recebidas, emitidas, competências, XML e PDF. `Capturar agora` permanece nessa aba e mostra o andamento até a conclusão.
+- A aba `Notas automático` lista todas as capturas encerradas, inclusive as que terminaram com erro, separadas por certificado. O download é acumulado por automação, deduplicado e separado por recebidas, emitidas, competências, XML e PDF, com filtros de emissão e competência.
 - Enquanto qualquer run do Portal está ativa para o colaborador, `Capturar agora` fica desabilitado e informa `Captura em andamento`. Uma segunda validação no clique evita interface desatualizada, enquanto a API mantém a resposta HTTP 409 que impede uma segunda execução simultânea.
 - No ISS Fortaleza, a exportação de escrituração usa o link autenticado gerado pelo próprio portal, pois o clique AJAX do RichFaces produzia artefatos locais de zero bytes. O arquivo agora é salvo atomicamente e validado como XLSX/XLS antes de a tarefa ser concluída; a auditoria conta as linhas físicas dos XMLs internos porque o portal pode informar dimensões incorretas.
 - As configurações habilitadas são distribuídas uniformemente nas 24 horas. O agendador inicia apenas uma captura automática por vez e espera o Portal ficar sem runs ativas, reduzindo colisões entre empresas e consumo simultâneo de solver.
@@ -95,7 +103,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A prova Loquicenter entrou pelo certificado na segunda tentativa, mas a primeira janela de recebidas recebeu HTTP 503 no endpoint oficial. A causa foi classificada como `portal_indisponivel_temporario`, distinta de certificado, captcha e erro de nota.
 - A API 1.0.60 repete a indexação para HTTP 429/500/502/503/504 e falhas de rede em até oito tentativas, com intervalos crescentes de 15, 30, 60, 120, 240 e até 300 segundos. A run permanece ativa e a tela informa a causa e a próxima espera.
 
-- API alvo atual: 1.0.88, preservando autenticação direta no ThinkPad e seleção adaptativa entre as rotas de resolução antes do fallback residencial.
+- API alvo atual: 1.0.89, preservando autenticação direta no ThinkPad e seleção adaptativa entre as rotas de resolução antes do fallback residencial.
 - Portal 1.0.72: a ação visível `Continuar` retoma emitidas e recebidas incompletas em sequência, preserva índice e arquivos válidos e mantém indisponibilidades transitórias em espera. Outage do solver não consome tentativas da nota; após falha, a concorrência cai para um probe e o Modal com sucesso recente passa a ser preferido. Respostas HTTP 503 agora preservam `reason/error` do JSON; `google_ai_request_failed`, `unusual traffic` e `/sorry/index` aplicam cooldown de 300 segundos somente ao endpoint Modal explicitamente bloqueado, enquanto 5xx genérico mantém cooldown curto para aproveitar outros containers do pool.
 - Portal 1.0.73: a recuperação de sessão do Modo IA cria um grupo de processos próprio no Linux e encerra toda a árvore do Chromium ao terminar. Isso impede o acúmulo observado na Loquicenter (8.438 tarefas no contêiner), que degradava o solver residencial até `Resource temporarily unavailable`.
 - Portal Alan/Loquicenter em 07/08/2026: recebidas preservadas em 72 XML/72 PDFs; emitidas retomadas somente em XML, sem reindexar e preservando 274 PDFs existentes. Backup local anterior à retomada em `Downloads/Prumo-Alan-Loquicenter-20260807`, contendo arquivos e os quatro JSONs de índice/estado, sem certificado, senha ou sessão.
@@ -114,7 +122,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Login/Worker: o incidente `1101` de 2026-07-17 revelou rejeições assíncronas escapando do `try/catch` porque os handlers eram retornados sem `await`. Todas as rotas assíncronas agora são aguardadas dentro da barreira de erro; respostas HTML de infraestrutura são reduzidas a uma mensagem segura com código de suporte, sem inserir o documento da Cloudflare no formulário.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
-- Imagem alvo do servidor: `ryang20/prumo-api:1.0.88`; a imagem em produção imediatamente anterior deve ser mantida como rollback local até a validação do deploy.
+- Imagem alvo do servidor: `ryang20/prumo-api:1.0.89`; a imagem em produção imediatamente anterior deve ser mantida como rollback local até a validação do deploy.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from portal_nacional_session import list_certificates, load_pfx_identity
 from portal_nacional_competencia import (
     UNKNOWN_COMPETENCIA,
     competencia_from_item,
+    emissao_from_item,
     normalize_competencia,
     summarize_competencias,
 )
@@ -317,8 +319,8 @@ def _reconcile_automatic_state(ctx: WorkerContext, state: Dict[str, Any]) -> boo
             job["last_completed_at"] = _now_iso()
             job["last_error"] = None
             changed = True
-        elif not active and status == "finalizado_com_erros" and not job.get("last_error"):
-            job["last_error"] = "A captura terminou com pendências. O próximo ciclo retomará o período não confirmado."
+        elif job.get("last_error") == "A captura terminou com pendências. O próximo ciclo retomará o período não confirmado.":
+            job["last_error"] = None
             changed = True
     if changed:
         _save_automatic_state(ctx, state)
@@ -682,6 +684,7 @@ def _portal_download_entries(
     seen_paths: set[str] = set()
     for item in (index.get("items") or {}).values():
         competence = competencia_from_item(item) or UNKNOWN_COMPETENCIA
+        emissao = emissao_from_item(item)
         if selected and competence not in selected:
             continue
         file_paths: List[str] = []
@@ -703,14 +706,18 @@ def _portal_download_entries(
                 continue
             seen_paths.add(path_key)
             kind = "XML" if full.suffix.lower() == ".xml" else "PDF" if full.suffix.lower() == ".pdf" else "OUTROS"
-            entries.append({"path": full, "competencia": competence, "kind": kind})
+            entries.append({"path": full, "competencia": competence, "emissao": emissao, "kind": kind})
     return entries
 
 
 def _automatic_accumulated_entries(
     ctx: WorkerContext,
     job_id: str,
-    until: date | None = None,
+    capture_until: date | None = None,
+    *,
+    date_from: date | None = None,
+    date_until: date | None = None,
+    selected_competencias: set[str] | None = None,
 ) -> tuple[List[Dict[str, Any]], List[Path]]:
     safe_job_id = safe_slug(job_id, "job")
     entries_by_key: Dict[tuple[str, str, str], Dict[str, Any]] = {}
@@ -722,18 +729,106 @@ def _automatic_accumulated_entries(
         if not cfg.get("automatic") or current_job != safe_job_id:
             continue
         created = _parse_portal_datetime(run.get("created_at"))
-        if until and created and created.astimezone(PORTAL_TIMEZONE).date() > until:
+        if capture_until and created and created.astimezone(PORTAL_TIMEZONE).date() > capture_until:
             continue
         run_dir = run_path.parent
         index = _load_json(_run_paths(run_dir)["index"], {})
         modo = str(cfg.get("modo") or "").strip().lower()
-        found = _portal_download_entries(run_dir, index, set())
+        found = _portal_download_entries(run_dir, index, selected_competencias or set())
+        if date_from or date_until:
+            found = [
+                entry for entry in found
+                if entry.get("emissao")
+                and (not date_from or entry["emissao"] >= date_from)
+                and (not date_until or entry["emissao"] <= date_until)
+            ]
         if found:
             run_dirs.append(run_dir)
         for entry in found:
             key = (modo, str(entry.get("kind") or ""), entry["path"].name.casefold())
             entries_by_key[key] = {**entry, "modo": modo}
     return list(entries_by_key.values()), run_dirs
+
+
+def _automatic_capture_key(run_id: str, cfg: Dict[str, Any]) -> str:
+    batch_id = str(cfg.get("batch_id") or "").strip()
+    if batch_id:
+        return f"batch-{batch_id}"
+    return re.sub(r"-(emitidas|recebidas)-", "-ambos-", str(run_id), count=1)
+
+
+def _automatic_capture_history(ctx: WorkerContext) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    run_paths = sorted(
+        _runs_root(ctx).glob("*/run.json"),
+        key=lambda path: str(_load_json(path, {}).get("created_at") or ""),
+    )
+    for run_path in run_paths:
+        run = _load_json(run_path, {})
+        cfg = dict(run.get("config") or {})
+        if not cfg.get("automatic"):
+            continue
+        job_id = safe_slug(str(cfg.get("automatic_job_id") or cfg.get("cert_id") or ""), "job")
+        capture_key = _automatic_capture_key(str(run.get("run_id") or run_path.parent.name), cfg)
+        group = grouped.setdefault(
+            capture_key,
+            {
+                "capture_id": capture_key,
+                "job_id": job_id,
+                "certificate_alias": str(cfg.get("certificate_alias") or cfg.get("cert_alias") or "Certificado"),
+                "created_at": run.get("created_at"),
+                "updated_at": run.get("updated_at"),
+                "data_inicial": cfg.get("data_inicial"),
+                "data_final": cfg.get("data_final"),
+                "statuses": [],
+                "run_ids": [],
+                "notes": {},
+            },
+        )
+        group["statuses"].append(str(run.get("status") or "criada"))
+        group["run_ids"].append(str(run.get("run_id") or run_path.parent.name))
+        group["updated_at"] = max(str(group.get("updated_at") or ""), str(run.get("updated_at") or ""))
+        modo = str(cfg.get("modo") or "").strip().lower()
+        index = _load_json(run_path.parent / "indice.json", {})
+        for item_id, item in (index.get("items") or {}).items():
+            if str(item.get("status") or "") != "baixado":
+                continue
+            candidate_paths = list((item.get("files_by_tipo") or {}).values()) + list(item.get("files") or [])
+            if not any(Path(str(path)).is_file() for path in candidate_paths if path):
+                continue
+            note_key = f"{modo}:{item_id}"
+            group["notes"][note_key] = competencia_from_item(item) or UNKNOWN_COMPETENCIA
+
+    seen_by_job: Dict[str, set[str]] = {}
+    histories: List[Dict[str, Any]] = []
+    for group in grouped.values():
+        job_id = group["job_id"]
+        seen = seen_by_job.setdefault(job_id, set())
+        notes = group.pop("notes")
+        note_keys = set(notes)
+        new_keys = note_keys - seen
+        seen.update(note_keys)
+        competence_counts: Dict[str, int] = {}
+        for note_key in new_keys:
+            competence = notes[note_key]
+            competence_counts[competence] = competence_counts.get(competence, 0) + 1
+        statuses = group.pop("statuses")
+        active = any(status in {"criada", "rodando"} for status in statuses)
+        status = "rodando" if active else (
+            "finalizado" if statuses and all(status == "finalizado" for status in statuses)
+            else "finalizado_com_erros"
+        )
+        histories.append(
+            {
+                **group,
+                "status": status,
+                "new_notes": len(new_keys),
+                "captured_notes": len(note_keys),
+                "total_accumulated": len(seen),
+                "competencias_novas": competence_counts,
+            }
+        )
+    return list(reversed(histories))
 
 
 def _modo_folder(value: str) -> str:
@@ -1001,6 +1096,7 @@ def _start_automatic_job(ctx: WorkerContext, job: Dict[str, Any], *, reason: str
             "automatic_reason": reason,
             "automatic_retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
             "certificate_alias": str(cert["meta"].get("alias") or "Certificado"),
+            "batch_id": datetime.now(PORTAL_TIMEZONE).strftime("%Y%m%d-%H%M%S-%f"),
         }
     )
     modos = ["recebidas", "emitidas"] if cfg["modo"] == "ambos" else [cfg["modo"]]
@@ -1180,9 +1276,19 @@ def _public_automatic_state(ctx: WorkerContext) -> Dict[str, Any]:
                     "last_capture_end": job.get("last_capture_end"),
                 }
             )
+        captures = _automatic_capture_history(ctx)
+        totals_by_job: Dict[str, int] = {}
+        competencias_by_job: Dict[str, set[str]] = {}
+        for capture in reversed(captures):
+            totals_by_job[capture["job_id"]] = int(capture.get("total_accumulated") or 0)
+            competencias_by_job.setdefault(capture["job_id"], set()).update(capture.get("competencias_novas") or {})
+        for job in jobs:
+            job["total_accumulated"] = totals_by_job.get(job["id"], 0)
+            job["competencias"] = sorted(competencias_by_job.get(job["id"], set()))
         return {
             "enabled_jobs": sum(1 for job in jobs if job["enabled"]),
             "jobs": jobs,
+            "captures": captures,
             "retention_days": PORTAL_AUTOMATIC_RETENTION_DAYS,
             "initial_lookback_days": PORTAL_AUTOMATIC_INITIAL_LOOKBACK_DAYS,
             "overlap_days": PORTAL_AUTOMATIC_OVERLAP_DAYS,
@@ -1350,22 +1456,39 @@ async def get_portal_automatic(ctx: WorkerContext = Depends(get_worker_context))
 @router.get("/automatic/download")
 async def download_portal_automatic_accumulated(
     job_id: str = Query(...),
+    de: str = Query(default=""),
     ate: str = Query(default=""),
+    competencia: List[str] = Query(default=[]),
     ctx: WorkerContext = Depends(get_worker_context),
 ):
-    cutoff = None
+    date_from = None
+    date_until = None
+    if str(de or "").strip():
+        try:
+            date_from = datetime.strptime(str(de).strip(), "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Data inicial inválida.") from exc
     if str(ate or "").strip():
         try:
-            cutoff = datetime.strptime(str(ate).strip(), "%Y-%m-%d").date()
+            date_until = datetime.strptime(str(ate).strip(), "%Y-%m-%d").date()
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Data limite inválida.") from exc
-    entries, run_dirs = _automatic_accumulated_entries(ctx, job_id, cutoff)
+            raise HTTPException(status_code=400, detail="Data final inválida.") from exc
+    if date_from and date_until and date_from > date_until:
+        raise HTTPException(status_code=400, detail="Data inicial não pode ser maior que a final.")
+    selected = _selected_competencias(competencia)
+    entries, run_dirs = _automatic_accumulated_entries(
+        ctx,
+        job_id,
+        date_from=date_from,
+        date_until=date_until,
+        selected_competencias=selected,
+    )
     if not entries or not run_dirs:
-        raise HTTPException(status_code=404, detail="Nenhum arquivo automático disponível até esta data.")
+        raise HTTPException(status_code=404, detail="Nenhum arquivo automático disponível para estes filtros.")
     zip_dir = _run_paths(run_dirs[-1])["zip"]
     zip_dir.mkdir(parents=True, exist_ok=True)
-    cutoff_slug = cutoff.isoformat() if cutoff else "tudo"
-    zip_path = zip_dir / f"portal-automatico-{safe_slug(job_id, 'job')}-ate-{cutoff_slug}.zip"
+    period_slug = f"{date_from.isoformat() if date_from else 'inicio'}-a-{date_until.isoformat() if date_until else 'hoje'}"
+    zip_path = zip_dir / f"portal-automatico-{safe_slug(job_id, 'job')}-{period_slug}.zip"
     _write_portal_zip(zip_path, entries, separate_competencias=True, separate_modos=True)
     return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
 

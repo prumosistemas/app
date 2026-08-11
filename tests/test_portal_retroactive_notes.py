@@ -1,8 +1,15 @@
 from urllib.parse import parse_qs, urlparse
+from pathlib import Path
+import sys
 
 import pytest
+import requests
 
-from server.portal_nacional_automation import build_portal_date_windows, page_snapshot_html, requests_page_url
+SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+
+from portal_nacional_automation import build_portal_date_windows, page_snapshot_html, requests_page_url, response_is_login
 
 
 def test_portal_index_url_sends_date_filter() -> None:
@@ -73,3 +80,12 @@ def test_unavailable_page_is_not_mistaken_for_empty_window() -> None:
         "https://www.nfse.gov.br/EmissorNacional/Notas/Recebidas",
     )
     assert snapshot["totalRegistros"] is None
+
+
+def test_login_detection_is_case_insensitive_and_recognizes_form() -> None:
+    response = requests.Response()
+    response.status_code = 200
+    response.url = "https://www.nfse.gov.br/EmissorNacional/login?ReturnUrl=%2FNotas"
+    response._content = b'<form action="/EmissorNacional/Login"><input name="ReturnUrl"></form>'
+
+    assert response_is_login(response) is True

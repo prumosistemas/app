@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.88.
+Este documento e a fonte de contexto operacional da versao 1.0.89.
 
 ## Estado desejado
 
@@ -16,6 +16,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.88.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
 - Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
 - Captura automática diária do Portal distribuída pelas 24 horas, com uma execução automática global por vez, primeira janela de 123 dias, sobreposição de dois dias e retenção de 123 dias.
+- Histórico automático separado por certificado, inclusive para ciclos com erro, com contagem incremental deduplicada e download filtrável por data de emissão e competência.
 - GitHub, pasta local e servidor na mesma versao.
 - Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
@@ -170,7 +171,7 @@ Operação da tela:
 1. Em `Certificados`, clique numa linha ou em `Editar` para alterar o alias, a senha ou substituir o PFX. Arquivo e senha em branco são preservados.
 2. Em `Notas automático`, escolha certificado, tipo de nota e data inicial. Salvar torna a captura diária em XML+PDF imediatamente elegível.
 3. O horário mostrado é administrado pelo servidor e redistribuído quando configurações são incluídas ou excluídas.
-4. `Capturar agora` ignora a espera da agenda, mas recusa se o mesmo colaborador já estiver executando outra run.
+4. `Capturar agora` ignora a espera da agenda, mas recusa se o mesmo colaborador já estiver executando outra run. Uma run de outro colaborador não desativa o botão.
 5. `Parar run` fica ao lado de `Excluir run`. A navegação lateral mantém somente `Voltar`, que retorna à central da Prumo.
 
 Em 2026-07-05 o Netlify bloqueou novos deploys por credito da conta. A central `/` e a rota limpa `/portal-nacional` foram mantidas ativas por rotas especificas do Cloudflare Worker `morning-credit-8a59` (`app.prumosistemas.com.br/` e `app.prumosistemas.com.br/portal-nacional*`), que entregam `index.html` e `portal-nacional.html` diretamente.

@@ -799,12 +799,16 @@ def portal_index_backoff_seconds(attempt: int, response: requests.Response | Non
 
 def response_is_login(response: requests.Response) -> bool:
     text = response.text if response.content else ""
+    normalized_url = str(response.url or "").lower()
+    normalized_text = text.lower()
     return (
-        "/Login" in response.url or
-        "Acesso com Certificado Digital" in text or
-        "Acesso com Usuário/Senha" in text or
-        "Acesso com Usuario/Senha" in text or
-        "login-page" in text
+        "/login" in normalized_url or
+        "acesso com certificado digital" in normalized_text or
+        "acesso com usuário/senha" in normalized_text or
+        "acesso com usuario/senha" in normalized_text or
+        "login-page" in normalized_text or
+        'action="/emissornacional/login' in normalized_text or
+        "name=\"returnurl\"" in normalized_text
     )
 
 

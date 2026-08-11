@@ -102,14 +102,17 @@ def test_portal_ui_has_automatic_tab_back_button_and_contextual_stop() -> None:
     assert "function automaticPortalRuns(runs)" in source
     assert 'id="automaticRunsTable"' in source
     assert 'id="automaticRunsCount"' in source
-    assert "function renderAutomaticRuns(runs)" in source
-    assert 'data-download-auto-job="${esc(jobId)}"' in source
-    assert 'run.status==="finalizado"' in source
+    assert "function renderAutomaticRuns(state)" in source
+    assert 'data-auto-company="${esc(job.id)}"' in source
+    assert 'data-download-auto-filtered' in source
+    assert 'data-auto-competence' in source
     assert 'automatic/download?${query}' in source
-    assert "renderAutomaticRuns(state.runs)" in source
+    assert "renderAutomaticRuns(state)" in source
     assert 'switchSection("automaticSection"); setMsg("ok", "Captura automática iniciada.' in source
     assert 'Captura em andamento' in source
-    assert 'if(activeRunId||job?.last_status==="rodando")' in source
+    assert 'if(activeRunId)' in source
+    assert 'activeRunId||job.last_status==="rodando"' not in source
+    assert "A captura terminou com pendências. O próximo ciclo retomará o período não confirmado." not in source
     assert source.count("groupRuns(manualPortalRuns(state.runs))") == 2
     assert "!run?.config?.automatic" in source
 
@@ -185,3 +188,35 @@ def test_automatic_accumulated_download_deduplicates_and_honors_cutoff(monkeypat
     assert [path.name for path in all_runs] == ["run-old", "run-new"]
     assert [entry["path"].name for entry in old_entries] == ["nota-1.xml"]
     assert [path.name for path in old_runs] == ["run-old"]
+
+
+def test_automatic_capture_history_keeps_errors_and_counts_only_new_notes(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    for run_id, created, status, item_ids in (
+        ("20260810-recebidas-x", "2026-08-10T10:00:00-03:00", "finalizado", ["n1"]),
+        ("20260811-recebidas-x", "2026-08-11T10:00:00-03:00", "finalizado_com_erros", ["n1", "n2"]),
+    ):
+        run_dir = portal_nacional._runs_root(ctx) / run_id
+        downloads = run_dir / "downloads"
+        downloads.mkdir(parents=True)
+        items = {}
+        for item_id in item_ids:
+            path = downloads / f"{item_id}.xml"
+            path.write_text("<NFSe><dCompet>2026-08-01</dCompet></NFSe>", encoding="utf-8")
+            items[item_id] = {"status": "baixado", "files_by_tipo": {"xml": str(path)}}
+        portal_nacional._save_json(run_dir / "run.json", {
+            "run_id": run_id,
+            "created_at": created,
+            "updated_at": created,
+            "status": status,
+            "config": {"automatic": True, "automatic_job_id": "cert-1", "modo": "recebidas", "certificate_alias": "SIM7"},
+        })
+        portal_nacional._save_json(run_dir / "indice.json", {"items": items})
+
+    history = portal_nacional._automatic_capture_history(ctx)
+
+    assert [capture["status"] for capture in history] == ["finalizado_com_erros", "finalizado"]
+    assert history[0]["new_notes"] == 1
+    assert history[0]["total_accumulated"] == 2
+    assert history[1]["new_notes"] == 1
