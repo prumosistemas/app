@@ -41,8 +41,10 @@ sudo bash deploy/install-network-failover.sh
 ```
 
 O instalador ativa e valida cada perfil existente. Perfil com senha incorreta
-ou segredo ausente e apagado e recadastrado antes da instalacao continuar.
-Depois ele configura prioridades e instala `prumo-network-failover.timer`. O
+ou segredo ausente e apagado e recadastrado antes da instalacao continuar. A
+validacao exige autenticacao, IP e HTTP 204 pela propria interface Wi-Fi.
+Depois ele remove o perfil legado `TENDA_WIFI_5G`, configura prioridades,
+restaura a ALARES como primaria e instala `prumo-network-failover.timer`. O
 verificador roda a cada minuto, nunca acessa senhas e reinicia somente o
 `cloudflared` depois de uma troca bem-sucedida.
 

@@ -29,13 +29,25 @@ fi
 nmcli radio wifi on
 nmcli device wifi rescan ifname "${WIFI_IFACE}" || true
 
+wifi_internet_ok() {
+  curl -4 --interface "${WIFI_IFACE}" -fsS \
+    --connect-timeout 5 --max-time 10 --output /dev/null \
+    https://cp.cloudflare.com/generate_204
+}
+
+active_profile_is_usable() {
+  local ssid="$1"
+  [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" == "${ssid}" ]] \
+    && wifi_internet_ok
+}
+
 ensure_profile() {
   local ssid="$1"
   if nmcli -g connection.id connection show "${ssid}" >/dev/null 2>&1; then
     echo "Validando perfil existente: ${ssid}"
     if nmcli --wait 45 connection up "${ssid}" ifname "${WIFI_IFACE}"; then
       sleep 2
-      if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" == "${ssid}" ]]; then
+      if active_profile_is_usable "${ssid}"; then
         echo "Perfil validado: ${ssid}"
         return 0
       fi
@@ -48,7 +60,7 @@ ensure_profile() {
   echo "Cadastre ${ssid}; a senha sera solicitada diretamente pelo NetworkManager."
   if nmcli --ask --wait 45 device wifi connect "${ssid}" ifname "${WIFI_IFACE}" name "${ssid}"; then
     sleep 2
-    if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" == "${ssid}" ]]; then
+    if active_profile_is_usable "${ssid}"; then
       echo "Perfil validado: ${ssid}"
       return 0
     fi
@@ -58,8 +70,8 @@ ensure_profile() {
   nmcli connection delete "${ssid}" >/dev/null 2>&1 || true
   nmcli --ask --wait 45 device wifi connect "${ssid}" ifname "${WIFI_IFACE}" name "${ssid}" hidden yes
   sleep 2
-  if [[ "$(nmcli -g GENERAL.CONNECTION device show "${WIFI_IFACE}")" != "${ssid}" ]]; then
-    echo "A rede nao chegou ao estado conectado: ${ssid}" >&2
+  if ! active_profile_is_usable "${ssid}"; then
+    echo "A rede nao chegou ao estado conectado com internet: ${ssid}" >&2
     return 1
   fi
   echo "Perfil validado: ${ssid}"
@@ -80,6 +92,9 @@ nmcli connection modify "AVANÇAR_LINK_2G" \
 nmcli connection modify "AVANCAR_CLARO" \
   connection.autoconnect yes connection.autoconnect-priority 100 connection.autoconnect-retries 0
 
+# Perfil legado removido por decisao operacional em 11/08/2026.
+nmcli connection delete "TENDA_WIFI_5G" >/dev/null 2>&1 || true
+
 install -m 0755 "${ROOT_DIR}/deploy/prumo-network-failover.sh" /usr/local/sbin/prumo-network-failover
 install -m 0644 "${ROOT_DIR}/deploy/prumo-network-failover.service" /etc/systemd/system/prumo-network-failover.service
 install -m 0644 "${ROOT_DIR}/deploy/prumo-network-failover.timer" /etc/systemd/system/prumo-network-failover.timer
@@ -87,6 +102,10 @@ install -m 0644 "${ROOT_DIR}/deploy/prumo-network-failover.timer" /etc/systemd/s
 systemctl daemon-reload
 systemctl enable --now prumo-network-failover.timer
 systemctl start prumo-network-failover.service
+
+# A validacao termina na Claro porque ela e o ultimo fallback. Retorna para a
+# ALARES, que continua sendo a rede Wi-Fi primaria.
+nmcli --wait 45 connection up "AVANCAR CONTADORES ALARES_5G" ifname "${WIFI_IFACE}" || true
 
 echo
 echo "Failover instalado. Estado atual:"
