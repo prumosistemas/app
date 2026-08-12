@@ -958,7 +958,9 @@ def html_to_text(fragment: str) -> str:
 
 def page_snapshot_html(html_text: str, url: str) -> dict:
     total = None
-    total_match = re.search(r"Total\s+de\s+(\d+)\s+registros", html_text, flags=re.I)
+    # O Portal usa o singular exatamente quando existe uma nota
+    # ("Total de 1 registro") e o plural nos demais totais.
+    total_match = re.search(r"Total\s+de\s+(\d+)\s+registros?", html_text, flags=re.I)
     if total_match:
         total = int(total_match.group(1))
 

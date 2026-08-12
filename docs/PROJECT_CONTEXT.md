@@ -19,6 +19,12 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-08-12
 
+### Portal automático 1.0.94
+
+- A tela real de Emitidas usa `Total de 1 registro` no singular. O parser agora
+  aceita singular e plural sem flexibilizar as proteções contra login, 5xx e
+  indisponibilidade; o checkpoint afetado pode ser retomado normalmente.
+
 ### Portal automático 1.0.93
 
 - `Unusual traffic` continua aceito como condicao normal de uma rota. A ordem

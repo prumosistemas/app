@@ -73,6 +73,16 @@ def test_valid_empty_notes_window_is_zero_records() -> None:
     assert snapshot["empty_notes_page"] is True
 
 
+def test_single_note_uses_singular_total_label() -> None:
+    html = '<div class="resumo">Total de 1 registro</div>'
+    snapshot = page_snapshot_html(
+        html,
+        "https://www.nfse.gov.br/EmissorNacional/Notas/Emitidas?executar=1",
+    )
+    assert snapshot["totalRegistros"] == 1
+    assert snapshot["empty_notes_page"] is False
+
+
 def test_unavailable_page_is_not_mistaken_for_empty_window() -> None:
     html = '<p>The service is unavailable.</p><input name="datainicio"><input name="datafim">'
     snapshot = page_snapshot_html(
