@@ -17,7 +17,22 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 | Testes | `tests/` |
 | Operação | `docs/SERVER_CONTEXT.md`, `docs/OPERACAO_PRUMO_DETALHADO.md` |
 
-## Estado validado em 2026-08-11
+## Estado validado em 2026-08-12
+
+### Portal automático 1.0.93
+
+- `Unusual traffic` continua aceito como condicao normal de uma rota. A ordem
+  de decisao e conclusao, acerto, velocidade e custo; reduzir `unusual` so e
+  desejavel quando nao prejudica esses objetivos.
+- Os dois Spaces HF voltaram a operar com Chrome real sob demanda. O desktop
+  permanente esgotava threads, e a ausencia do decorador ZeroGPU impedia o
+  startup. Testes reais retornaram resposta valida em cerca de 28 s e 14 s.
+- Um bloqueio de um container nao afasta o endpoint Modal balanceado por cinco
+  minutos: ele volta ao pool em 10 s (15 s para 5xx generico). O probe de
+  recuperacao cresce em 10, 20, 30, 60, 90 e 120 s.
+- `run.json` recebe heartbeat/resumo a cada 10 s, a tela automatica mostra o
+  progresso vivo e `/api/internal/runtime-metrics` expoe o runtime do Portal
+  separadamente da fila ISS.
 
 ### Portal automático 1.0.92
 

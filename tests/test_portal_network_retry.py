@@ -360,12 +360,12 @@ def test_solver_outage_backoff_grows_across_different_items() -> None:
     )
     assert not automation.is_transient_solver_outage({"reason": "arquivo_invalido"})
     assert [automation.retry_backoff_seconds(2, streak) for streak in range(1, 7)] == [
+        10,
+        20,
         30,
         60,
+        90,
         120,
-        300,
-        600,
-        900,
     ]
 
 
@@ -403,11 +403,11 @@ def test_modal_container_outage_has_short_pool_cooldown() -> None:
     ) == 15
 
 
-def test_explicit_google_block_has_long_modal_cooldown() -> None:
+def test_explicit_google_block_keeps_modal_pool_available() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "https://conta--solver.modal.run/solve",
         RuntimeError("solver:google_ai_request_failed: unusual traffic /sorry/index"),
-    ) == 300
+    ) == 10
 
 
 def test_inflight_modal_attempt_rechecks_shared_cooldown(monkeypatch) -> None:

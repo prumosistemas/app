@@ -1465,11 +1465,13 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         # endpoint local removia o ultimo fallback das outras threads, que
         # entao falhavam usando apenas os Modals em circuito.
         cooldown = 0
-    elif hostname.endswith(".modal.run") and cooldown >= 90 and not explicit_google_block:
-        # O endpoint Modal balanceia containers independentes; um 503 nao
-        # prova que todos perderam a sessao. Um intervalo curto evita rajada
-        # sem esconder containers saudaveis por minutos.
-        cooldown = 15
+    elif hostname.endswith(".modal.run") and cooldown >= 90:
+        # Cada endpoint Modal balanceia dois containers independentes. Um
+        # `unusual` confirma somente o egress que recebeu aquela chamada; um
+        # cooldown de cinco minutos no endpoint escondia tambem o segundo
+        # container e derrubava metade da capacidade. Preserve um intervalo
+        # curto contra rajada e deixe a proxima nota testar outra instancia.
+        cooldown = 10 if explicit_google_block else 15
     if cooldown <= 0:
         return 0
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
@@ -1956,7 +1958,10 @@ def retry_backoff_seconds(retry_level: int, outage_streak: int) -> int:
     item_delay = min(2 ** max(1, retry_level), 30)
     if outage_streak <= 0:
         return item_delay
-    outage_steps = (30, 60, 120, 300, 600, 900)
+    # `unusual` pode desaparecer a qualquer momento. Esperar ate quinze
+    # minutos atrasava uma run mesmo depois de algum egress voltar. Um probe
+    # unico a cada dois minutos preserva custo e detecta recuperacao cedo.
+    outage_steps = (10, 20, 30, 60, 90, 120)
     outage_delay = outage_steps[min(outage_streak - 1, len(outage_steps) - 1)]
     return max(item_delay, outage_delay)
 

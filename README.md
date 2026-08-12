@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.92 - failover rápido sem repetir egress bloqueado**
+Versao: **1.0.93 - disponibilidade e progresso vivo do Portal**
 
 ## Estado atual
 
@@ -13,7 +13,7 @@ Versao: **1.0.92 - failover rápido sem repetir egress bloqueado**
 - Navegadores: `30` sessoes Modal/turbo.
 - Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; os frames brutos permanecem somente nos Volumes Modal.
-- Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva com backoff crescente, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. Respostas HTTP 503 do solver preservam o motivo JSON; bloqueio explícito do Google (`unusual traffic`/`sorry/index`) afasta somente o endpoint afetado por cinco minutos.
+- Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. `Unusual traffic` é tratado como falha daquela tentativa, não como objetivo de otimização: endpoints Modal voltam ao pool em 10–15 s e o probe global cresce somente até 120 s. A run publica heartbeat e progresso a cada 10 s.
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas por 123 dias. O histórico fica separado por certificado/empresa, inclui ciclos com erro, mostra `+novas` e total deduplicado e permite ZIP por data de emissão e competência. `Capturar agora` é bloqueado somente enquanto aquele colaborador possui uma run do Portal ativa.
 - A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
 - A exportação de escrituração do ISS é obtida pelo link gerado dentro do navegador autenticado. Arquivos vazios, HTML de erro e planilhas estruturalmente inválidas deixam de ser aceitos como sucesso; o log registra bytes e linhas físicas dos XMLs internos, contornando metadados de dimensão incorretos do portal.
@@ -92,9 +92,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.92 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.93 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.92
+docker push ryang20/prumo-api:1.0.93
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

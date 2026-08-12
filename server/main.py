@@ -120,6 +120,7 @@ from run_queue import (
     startup_queue_workers,
 )
 from portal_nacional import (
+    portal_runtime_metrics,
     router as portal_nacional_router,
     start_portal_automatic_scheduler,
     stop_portal_automatic_scheduler,
@@ -151,7 +152,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="ISS Automação API",
-    version="1.0.92",
+    version="1.0.93",
     description="API Prumo conectada ao Worker, com ISS Fortaleza e Portal Nacional isolados por membro.",
     lifespan=lifespan,
 )
@@ -498,7 +499,7 @@ async def health() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "Prumo API",
-        "version": "1.0.92",
+        "version": "1.0.93",
         "worker_public_url": WORKER_PUBLIC_URL,
         "allow_direct_local": ALLOW_DIRECT_LOCAL,
         "max_browsers": MAX_BROWSERS,
@@ -1792,6 +1793,7 @@ async def internal_runtime_metrics(
             "active": len(active_runs),
             "errors": sum(int(run.get("erros") or 0) for run in runs),
         },
+        "portal": portal_runtime_metrics(),
     }
 
 

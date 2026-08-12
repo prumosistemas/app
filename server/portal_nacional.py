@@ -55,6 +55,10 @@ PORTAL_AUTOMATIC_POLL_SECONDS = max(
     10,
     min(300, int(os.getenv("PORTAL_AUTOMATIC_POLL_SECONDS", "30"))),
 )
+PORTAL_RUN_HEARTBEAT_SECONDS = max(
+    5,
+    min(60, int(os.getenv("PORTAL_RUN_HEARTBEAT_SECONDS", "10"))),
+)
 PORTAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 
 router = APIRouter(prefix="/api/portal-nacional", tags=["portal-nacional"])
@@ -308,6 +312,29 @@ def _automatic_run_state(ctx: WorkerContext, job: Dict[str, Any]) -> tuple[str, 
     if any("erro" in value or value in {"interrompida", "parado"} for value in statuses):
         return "finalizado_com_erros", False
     return statuses[0], False
+
+
+def _automatic_job_progress(ctx: WorkerContext, job: Dict[str, Any]) -> Dict[str, Any]:
+    totals = {"baixados": 0, "erros": 0, "pendentes": 0, "executando": 0, "capturados": 0}
+    heartbeat_at: str | None = None
+    last_event: Dict[str, Any] | None = None
+    for value in list(job.get("last_run_ids") or []):
+        run_dir = _runs_root(ctx) / safe_slug(value, "run")
+        run = _load_json(run_dir / "run.json", {})
+        summary = _summarize_index(run_dir / "indice.json") if (run_dir / "indice.json").exists() else dict(run.get("summary") or {})
+        for field in totals:
+            totals[field] += int(summary.get(field) or 0)
+        candidate = str(run.get("heartbeat_at") or run.get("updated_at") or "").strip()
+        if candidate and (heartbeat_at is None or candidate > heartbeat_at):
+            heartbeat_at = candidate
+        event = summary.get("ultimo_evento")
+        if isinstance(event, dict):
+            last_event = event
+    return {
+        **totals,
+        "heartbeat_at": heartbeat_at,
+        "last_event": last_event,
+    }
 
 
 def _reconcile_automatic_state(ctx: WorkerContext, state: Dict[str, Any]) -> bool:
@@ -1031,11 +1058,38 @@ def _run_process(scope: str, run_dir: Path, cfg: Dict[str, Any], retry_only: boo
             if runtime is not None:
                 runtime["process"] = proc
                 runtime["run_id"] = run_dir.name
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            log_file.write(line)
-            log_file.flush()
-        return proc.wait()
+                runtime["heartbeat_at"] = _now_iso()
+
+        heartbeat_stop = threading.Event()
+
+        def heartbeat() -> None:
+            while not heartbeat_stop.wait(PORTAL_RUN_HEARTBEAT_SECONDS):
+                heartbeat_at = _now_iso()
+                try:
+                    _update_run(run_dir, status="rodando", heartbeat_at=heartbeat_at)
+                except Exception:
+                    # Heartbeat e observabilidade nunca podem derrubar a run.
+                    continue
+                with _LOCK:
+                    current_runtime = _RUNTIME.get(scope)
+                    if current_runtime is not None:
+                        current_runtime["heartbeat_at"] = heartbeat_at
+
+        heartbeat_thread = threading.Thread(
+            target=heartbeat,
+            name=f"portal-heartbeat-{run_dir.name[:32]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                log_file.write(line)
+                log_file.flush()
+            return proc.wait()
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=2)
 
 
 def _sequence_worker(scope: str, jobs: List[Path], retry_only: bool = False) -> None:
@@ -1073,7 +1127,14 @@ def _start_jobs(ctx: WorkerContext, run_dirs: List[Path], retry_only: bool = Fal
     scope = _runtime_key(ctx)
     thread = threading.Thread(target=_sequence_worker, args=(scope, run_dirs, retry_only), daemon=True)
     with _LOCK:
-        _RUNTIME[scope] = {"thread": thread, "process": None, "run_id": run_dirs[0].name, "stop_requested": False}
+        _RUNTIME[scope] = {
+            "thread": thread,
+            "process": None,
+            "run_id": run_dirs[0].name,
+            "stop_requested": False,
+            "started_at": _now_iso(),
+            "heartbeat_at": _now_iso(),
+        }
     thread.start()
 
 
@@ -1137,6 +1198,32 @@ def _any_portal_runtime_active() -> bool:
         for key in stale:
             _RUNTIME.pop(key, None)
         return bool(_RUNTIME)
+
+
+def portal_runtime_metrics() -> Dict[str, Any]:
+    """Estado operacional do Portal para o monitor interno, sem segredos."""
+    _any_portal_runtime_active()
+    with _LOCK:
+        active = [
+            {
+                "scope": scope,
+                "run_id": str(runtime.get("run_id") or ""),
+                "started_at": runtime.get("started_at"),
+                "heartbeat_at": runtime.get("heartbeat_at"),
+                "process_alive": bool(
+                    runtime.get("process") is not None
+                    and runtime["process"].poll() is None
+                ),
+            }
+            for scope, runtime in _RUNTIME.items()
+        ]
+    return {
+        "active": len(active),
+        "runs": active,
+        "automatic_scheduler_alive": bool(
+            _AUTOMATIC_THREAD and _AUTOMATIC_THREAD.is_alive()
+        ),
+    }
 
 
 def _record_automatic_started(
@@ -1310,6 +1397,7 @@ def _public_automatic_state(ctx: WorkerContext) -> Dict[str, Any]:
                     "last_run_ids": list(job.get("last_run_ids") or []),
                     "last_capture_start": job.get("last_capture_start"),
                     "last_capture_end": job.get("last_capture_end"),
+                    "progress": _automatic_job_progress(ctx, job),
                 }
             )
         captures = _automatic_capture_history(ctx)

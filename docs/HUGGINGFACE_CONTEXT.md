@@ -1,7 +1,7 @@
 # Contexto Hugging Face da Prumo
 
-Atualizado em: **2026-08-07**  
-Versao da Prumo: **1.0.92**
+Atualizado em: **2026-08-12**
+Versao da Prumo: **1.0.93**
 
 ## Segredos
 
@@ -46,9 +46,12 @@ boa situacao pode manter ate dois Spaces Gradio ZeroGPU:
 - https://huggingface.co/docs/hub/spaces-overview
 - https://huggingface.co/pricing
 
-O endpoint da Prumo usa somente CPU; o probe/dependencia GPU foi removido da
-fonte futura. O hardware gratuito pode dormir e ter cold start. Nao selecionar
-hardware pago sem autorizacao.
+O endpoint da Prumo usa somente CPU, mas estes dois Spaces existentes estao no
+plano ZeroGPU gratuito e o runtime exige ao menos uma funcao `@spaces.GPU`.
+Por isso `test_google_ai` conserva o decorador de compatibilidade; o Chrome e o
+Modo IA continuam executando em CPU. Remover esse decorador causa
+`No @spaces.GPU function detected during startup`. O hardware gratuito pode
+dormir e ter cold start. Nao selecionar hardware pago sem autorizacao.
 
 ## Criacao futura da conta secundaria
 
@@ -80,3 +83,9 @@ token secundario permanece somente no cofre local e nao e enviado ao Modal.
   do Modal, evitando prender quatro trabalhadores em dois Spaces.
 - O ThinkPad permanece no ultimo fallback.
 - PFX, senha, cookies e arquivos fiscais nunca seguem ao Hugging Face.
+
+Em 12/08/2026, os dois Spaces falhavam antes da analise com `can't start new
+thread`: o desktop permanente mantinha Chrome, Xvfb, Openbox, x11vnc e noVNC
+ativos e esgotava PIDs/threads. A fonte passou a deixar o Chrome real iniciar
+sob demanda e a fazer uma tentativa por egress. Depois do ajuste, os testes
+reais do Modo IA responderam com sucesso em aproximadamente 28 s e 14 s.

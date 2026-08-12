@@ -17,7 +17,7 @@ PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacio
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
-A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente: 429 ou sessão Google confirmadamente indisponível troca de conta por 300 segundos; 5xx/circuito por 90 segundos; falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e nao derrubam a conta inteira.
+A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente. No cliente da API, `unusual` em endpoint Modal balanceado volta ao pool em 10 segundos e 5xx/circuito em 15 segundos, pois uma falha nao prova que seus dois containers estao bloqueados. Falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e nao derrubam a conta inteira.
 
 Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o estado anônimo fica no Volume privado. No ThinkPad, fica em `/opt/prumo/data/_api_data/google_ai_solver_state`, coberto pelo volume persistente; somente o código entra no Git e na imagem.
 
@@ -30,7 +30,7 @@ Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o es
 5. Valide `item_downloaded`, os arquivos XML/PDF e o status final.
 6. Só depois aumente o lote.
 
-As tentativas de rede usam backoff crescente. Quando 429/503, falha de DNS/conexão ou circuito aberto afetam itens diferentes, a espera global cresce em 4, 8, 16, 32, 64 e 120 segundos e zera após um sucesso.
+As tentativas de rede usam backoff crescente. Quando 429/503, falha de DNS/conexao ou circuito aberto afetam itens diferentes, a espera global cresce em 10, 20, 30, 60, 90 e 120 segundos e zera apos um sucesso.
 
 ## Certificados e troca de segredo
 

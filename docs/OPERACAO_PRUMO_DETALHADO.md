@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.92.
+Este documento e a fonte de contexto operacional da versao 1.0.93.
 
 ## Estado desejado
 
@@ -14,12 +14,12 @@ Este documento e a fonte de contexto operacional da versao 1.0.92.
 - Browserless local desligado.
 - Modal `prumo-browserless` com 30 sessoes turbo pela API.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
-- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com backoff e um unico probe, sem consumir a tentativa da nota. HTTP 503 do solver preserva o motivo JSON; bloqueio Google explicito resfria somente o Modal afetado por 300 segundos.
+- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com um unico probe, sem consumir a tentativa da nota. HTTP 503 preserva o motivo JSON; `unusual` nao encerra a run e o endpoint Modal balanceado volta ao pool em 10–15 segundos. O backoff de recuperacao cresce ate 120 segundos.
 - Captura automática diária do Portal distribuída pelas 24 horas, com uma execução automática global por vez, primeira janela de 123 dias, sobreposição de dois dias e retenção de 123 dias.
 - Histórico automático separado por certificado, inclusive para ciclos com erro, com contagem incremental deduplicada e download filtrável por data de emissão e competência.
 - GitHub, pasta local e servidor na mesma versao.
 - Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
-- Cold start Modal não executa prewarm no Google. Cada egress faz somente uma tentativa por análise; `unusual traffic` aplica cooldown curto de cinco minutos, compartilhado pelas runs do processo, e sucesso confirmado limpa a penalidade. As duas contas trabalham em paralelo com até duas requisições em voo por conta, mantendo quatro solves potenciais.
+- Cold start Modal não executa prewarm no Google. Cada egress faz somente uma tentativa por análise; `unusual traffic` e telemetria de rota e nao reduz a capacidade por minutos. Sucesso confirmado limpa a penalidade. As duas contas trabalham em paralelo com até duas requisições em voo por conta, mantendo quatro solves potenciais.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
 - A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.

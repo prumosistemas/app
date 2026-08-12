@@ -269,3 +269,61 @@ def test_automatic_history_does_not_call_stale_created_child_running(monkeypatch
     history = portal_nacional._automatic_capture_history(ctx)
 
     assert history[0]["status"] == "finalizado_com_erros"
+
+
+def test_automatic_job_progress_reads_live_index(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    run_dir = portal_nacional._runs_root(ctx) / "run-live"
+    run_dir.mkdir(parents=True)
+    portal_nacional._save_json(
+        run_dir / "run.json",
+        {"status": "rodando", "heartbeat_at": "2026-08-12T09:30:00", "updated_at": "2026-08-12T09:30:00"},
+    )
+    portal_nacional._save_json(
+        run_dir / "indice.json",
+        {
+            "items": {
+                "ok": {"status": "baixado"},
+                "wait": {"status": "pendente"},
+            },
+            "events": [{"event": "item_waiting_solver"}],
+        },
+    )
+
+    progress = portal_nacional._automatic_job_progress(ctx, {"last_run_ids": ["run-live"]})
+
+    assert progress["baixados"] == 1
+    assert progress["pendentes"] == 1
+    assert progress["heartbeat_at"] == "2026-08-12T09:30:00"
+    assert progress["last_event"]["event"] == "item_waiting_solver"
+
+
+def test_portal_runtime_metrics_reports_process_and_scheduler(monkeypatch) -> None:
+    class AliveThread:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    class AliveProcess:
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(portal_nacional, "_AUTOMATIC_THREAD", AliveThread())
+    portal_nacional._RUNTIME.clear()
+    portal_nacional._RUNTIME["empresa:usuario"] = {
+        "thread": AliveThread(),
+        "process": AliveProcess(),
+        "run_id": "run-live",
+        "started_at": "2026-08-12T09:00:00",
+        "heartbeat_at": "2026-08-12T09:30:00",
+    }
+    try:
+        metrics = portal_nacional.portal_runtime_metrics()
+    finally:
+        portal_nacional._RUNTIME.clear()
+
+    assert metrics["active"] == 1
+    assert metrics["runs"][0]["process_alive"] is True
+    assert metrics["automatic_scheduler_alive"] is True
