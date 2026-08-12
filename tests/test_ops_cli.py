@@ -6,7 +6,15 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from ops.prumo_ops import build_netlify_zip, build_parser, build_worker_bundle, login_secret_names
+from ops.prumo_ops import (
+    HF_SPACE_CANONICAL_GOOGLE_AI,
+    HF_SPACE_SOURCE,
+    HF_SPACE_SOURCE_FILES,
+    build_netlify_zip,
+    build_parser,
+    build_worker_bundle,
+    login_secret_names,
+)
 from ops.secret_store import SecretStore, redact
 
 
@@ -46,6 +54,18 @@ class OpsCliTests(unittest.TestCase):
     def test_server_runs_is_a_read_only_diagnostic_action(self):
         args = build_parser().parse_args(["server", "runs"])
         self.assertEqual((args.area, args.action, args.apply), ("server", "runs", False))
+
+    def test_hf_space_source_is_versioned_without_duplicate_solver(self):
+        self.assertTrue(HF_SPACE_SOURCE.is_dir())
+        for filename in HF_SPACE_SOURCE_FILES:
+            self.assertTrue((HF_SPACE_SOURCE / filename).is_file(), filename)
+        self.assertTrue(HF_SPACE_CANONICAL_GOOGLE_AI.is_file())
+        self.assertFalse((HF_SPACE_SOURCE / "google_ia_requests.py").exists())
+
+    def test_hf_deploy_can_use_repository_source_by_default(self):
+        args = build_parser().parse_args(["hf", "deploy", "--space-name", "example"])
+        self.assertIsNone(args.source_dir)
+        self.assertEqual(args.space_names, ["example"])
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ Versao: **1.0.94 - totais singulares do Portal corrigidos**
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
 - Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
-- A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; os frames brutos permanecem somente nos Volumes Modal.
+- A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; frames do Modal permanecem nos Volumes Modal, enquanto uma resolução feita pelo fallback residencial conserva sua própria evidência local pelo mesmo prazo.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. `Unusual traffic` é tratado como falha daquela tentativa, não como objetivo de otimização: endpoints Modal voltam ao pool em 10–15 s e o probe global cresce somente até 120 s. A run publica heartbeat e progresso a cada 10 s.
 - O indexador reconhece tanto `Total de 1 registro` quanto `Total de N registros`; uma janela com exatamente uma nota não é mais confundida com resposta inválida.
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas por 123 dias. O histórico fica separado por certificado/empresa, inclui ciclos com erro, mostra `+novas` e total deduplicado e permite ZIP por data de emissão e competência. `Capturar agora` é bloqueado somente enquanto aquele colaborador possui uma run do Portal ativa.
@@ -39,6 +39,7 @@ Versao: **1.0.94 - totais singulares do Portal corrigidos**
 | `server/iss_closure_scan.py` | Varredura HTTP de encerramento da escrituração ISS |
 | `deploy/modal_browserless.py` | Browserless no Modal |
 | `solver/google_ai_mode/` | Código versionado do único resolvedor do Portal |
+| `deploy/huggingface/navegador-headless/` | Casca Gradio/Chrome versionada dos Spaces HF; o deploy injeta o resolvedor canônico |
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
 | `docs/AI_OPERATOR_CONTEXT.md` | Entrada canonica para IA operar sem ver credenciais |
@@ -53,8 +54,10 @@ Versao: **1.0.94 - totais singulares do Portal corrigidos**
 O unico resolvedor visual ativo e o Google Modo IA do projeto organizado. O
 navegador do hCaptcha continua no Modal; somente a imagem efemera do desafio e
 o prompt podem seguir aos Spaces privados Hugging Face. Certificado, cookies do
-Portal e arquivos fiscais nunca saem do ThinkPad. O código validado está
-versionado em `solver/google_ai_mode/`.
+Portal e arquivos fiscais nunca saem do ThinkPad. O motor validado esta
+versionado em `solver/google_ai_mode/`; a casca dos Spaces fica em
+`deploy/huggingface/navegador-headless/` e recebe esse motor canonico durante o
+deploy, sem depender de uma copia em Downloads.
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
@@ -99,7 +102,9 @@ docker push ryang20/prumo-api:1.0.94
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
-ThinkPad depois do `git pull`.
+ThinkPad depois do `git pull`. O deploy conserva a imagem corrente e duas
+anteriores para rollback e remove tags locais mais antigas somente depois do
+health check da nova API.
 
 Servidor:
 

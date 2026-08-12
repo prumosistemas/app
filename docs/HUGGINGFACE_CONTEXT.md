@@ -54,19 +54,24 @@ Remover o probe causa
 `No @spaces.GPU function detected during startup`. O hardware gratuito pode
 dormir e ter cold start. Nao selecionar hardware pago sem autorizacao.
 
-## Criacao futura da conta secundaria
+## Fonte versionada e criacao futura da conta secundaria
 
-Fonte operacional atual do Space:
+A casca operacional dos Spaces fica versionada no proprio projeto:
 
 ```text
-C:\Users\ryang\Downloads\navegador-headless-hf
+deploy\huggingface\navegador-headless
 ```
+
+Ela contem `app.py`, README e dependencias do Space. O deploy nao mantem uma
+segunda copia do motor: `ops.prumo_ops` monta um bundle temporario e injeta nele
+sempre `solver/google_ai_mode/google_ia_requests.py`, que continua sendo a fonte
+canonica do Google Modo IA. O diretorio antigo em Downloads nao e mais fonte de
+deploy.
 
 Quando a conta ficar elegivel:
 
 ```powershell
 python -m ops.prumo_ops hf deploy --account secondary `
-  --source-dir "C:\Users\ryang\Downloads\navegador-headless-hf" `
   --space-name navegador-headless-prumo `
   --space-name navegador-headless-prumo-2
 ```

@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.72",
+  "version": "1.0.94",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -155,8 +155,9 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - URL: `https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve`
 - Health: `https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/health`
 - Arquivo local: `deploy/modal_portal_nacional_google_solver.py`
-- Fonte versionada: `solver/google_ai_mode/`.
-- Projeto externo original: apenas referência histórica; o deploy não depende mais dele.
+- Motor versionado: `solver/google_ai_mode/`.
+- Casca dos Spaces HF versionada: `deploy/huggingface/navegador-headless/`; `ops.prumo_ops` injeta o `google_ia_requests.py` canônico no bundle temporário de deploy.
+- Projeto externo original: apenas referência histórica; o deploy não depende mais dele nem de uma cópia em Downloads.
 - Volume privado: `prumo-portal-google-ai-state`.
 - Rota de navegador: direta, sem proxy. Na análise visual, ambas as contas tentam o pool privado `ryanzinprot/navegador-headless` e `ryanzinprot/navegador-headless-2`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
 - O timeout HF e 30 s: com quatro workers e dois Spaces serializados, fila excedente usa cedo o egress Modal aquecido.
@@ -342,11 +343,12 @@ O Netlify pode bloquear novos deploys por crédito da conta. Para não misturar 
 
 ## Retencao e crescimento de disco
 
-- `/opt/prumo/data/_api_data/google_ai_solver_artifacts` guarda debug visual por 7 dias.
+- `/opt/prumo/data/_api_data/google_ai_solver_artifacts` guarda por 7 dias a evidência criada pelo fallback residencial, inclusive seus próprios quadros de captura.
 - `/opt/prumo/data/_api_data/portal_solver_audit` espelha dos dois Volumes Modal apenas imagens-resumo, vídeos, JSONs e linha do tempo; frames brutos não são duplicados no ThinkPad.
 - Após 15 minutos sem alteração, `.html`, `.json` e `.txt` viram gzip; PNG vira WebP lossless quando o resultado é menor.
 - XML/PDF, índices e certificados das empresas não são compactados nem removidos por essa rotina.
 - O compose limita o log `json-file` da API a 3 arquivos de 10 MiB.
+- O deploy conserva a imagem Docker atual e duas anteriores para rollback; tags `ryang20/prumo-api` mais antigas são removidas somente após o health check da nova versão.
 - A rotina fica em `solver/google_ai_mode/artifact_retention.py` e roda tanto no ThinkPad quanto no Modal.
 - A primeira compactacao controlada foi executada em 2026-07-15. O processo roda em baixa concorrencia com a API ativa e preserva os artefatos dos sete dias definidos para depuracao.
 

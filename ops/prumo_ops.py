@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -265,6 +266,10 @@ HF_ACCOUNTS = {
     "primary": ("HUGGINGFACE_PRIMARY_TOKEN", "HUGGINGFACE_TOKEN"),
     "secondary": ("HUGGINGFACE_SECONDARY_TOKEN",),
 }
+HF_SPACE_SOURCE = ROOT / "deploy" / "huggingface" / "navegador-headless"
+HF_SPACE_CANONICAL_GOOGLE_AI = ROOT / "solver" / "google_ai_mode" / "google_ia_requests.py"
+HF_SPACE_SOURCE_FILES = ("README.md", "app.py", "requirements.txt", "packages.txt")
+HF_SPACE_UPLOAD_FILES = (*HF_SPACE_SOURCE_FILES, "google_ia_requests.py")
 
 
 def hf_token(store: SecretStore, account: str) -> str:
@@ -324,12 +329,13 @@ def hf_command(
         return
     if action != "deploy":
         raise OpsError("Acao Hugging Face invalida.")
-    if not source_dir or not space_names:
-        raise OpsError("Informe --source-dir e pelo menos um --space-name.")
-    source = Path(source_dir).expanduser().resolve()
-    required = ("README.md", "app.py", "google_ia_requests.py", "requirements.txt", "packages.txt")
-    if not source.is_dir() or any(not (source / name).is_file() for name in required):
+    if not space_names:
+        raise OpsError("Informe pelo menos um --space-name.")
+    source = Path(source_dir).expanduser().resolve() if source_dir else HF_SPACE_SOURCE
+    if not source.is_dir() or any(not (source / name).is_file() for name in HF_SPACE_SOURCE_FILES):
         raise OpsError("A fonte do Space esta incompleta.")
+    if not HF_SPACE_CANONICAL_GOOGLE_AI.is_file():
+        raise OpsError("O resolvedor Google Modo IA canonico esta ausente.")
 
     from huggingface_hub import HfApi
     from huggingface_hub.errors import HfHubHTTPError
@@ -337,45 +343,53 @@ def hf_command(
     token = hf_token(store, account)
     api = HfApi(token=token)
     deployed = []
-    for raw_name in space_names:
-        name = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(raw_name or "").strip()).strip("-.")
-        if not name:
-            raise OpsError("Nome de Space invalido.")
-        repo_id = f"{username}/{name}"
-        try:
+    with tempfile.TemporaryDirectory(prefix="prumo-hf-space-") as temporary:
+        bundle = Path(temporary)
+        for filename in HF_SPACE_SOURCE_FILES:
+            shutil.copy2(source / filename, bundle / filename)
+        # O Space recebe sempre o resolvedor versionado do projeto. Assim a
+        # casca Gradio/HF nao mantem uma segunda copia divergente do motor.
+        shutil.copy2(HF_SPACE_CANONICAL_GOOGLE_AI, bundle / "google_ia_requests.py")
+
+        for raw_name in space_names:
+            name = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(raw_name or "").strip()).strip("-.")
+            if not name:
+                raise OpsError("Nome de Space invalido.")
+            repo_id = f"{username}/{name}"
             try:
-                api.repo_info(repo_id=repo_id, repo_type="space", token=token)
-            except HfHubHTTPError as lookup_error:
-                if getattr(lookup_error.response, "status_code", None) != 404:
-                    raise
-                api.create_repo(
+                try:
+                    api.repo_info(repo_id=repo_id, repo_type="space", token=token)
+                except HfHubHTTPError as lookup_error:
+                    if getattr(lookup_error.response, "status_code", None) != 404:
+                        raise
+                    api.create_repo(
+                        repo_id=repo_id,
+                        repo_type="space",
+                        space_sdk="gradio",
+                        # O navegador e o Modo IA usam CPU. CPU Basic evita a
+                        # exigencia de PRO/30 dias do ZeroGPU em contas novas.
+                        space_hardware="cpu-basic",
+                        private=True,
+                        token=token,
+                    )
+                api.upload_folder(
                     repo_id=repo_id,
                     repo_type="space",
-                    space_sdk="gradio",
-                    # O navegador e o Modo IA usam CPU. CPU Basic evita a
-                    # exigencia de PRO/30 dias do ZeroGPU em contas novas.
-                    space_hardware="cpu-basic",
-                    private=True,
+                    folder_path=bundle,
+                    allow_patterns=[*HF_SPACE_UPLOAD_FILES],
+                    commit_message="Deploy Prumo Google Modo IA",
                     token=token,
                 )
-            api.upload_folder(
-                repo_id=repo_id,
-                repo_type="space",
-                folder_path=source,
-                allow_patterns=[*required],
-                commit_message="Deploy Prumo Google Modo IA",
-                token=token,
-            )
-            runtime = api.get_space_runtime(repo_id, token=token)
-        except HfHubHTTPError as exc:
-            status = getattr(exc.response, "status_code", None)
-            raise OpsError(f"Hugging Face recusou {repo_id} (HTTP {status or 'desconhecido'}).") from exc
-        deployed.append({
-            "id": repo_id,
-            "stage": getattr(runtime, "stage", None),
-            "hardware": getattr(runtime, "hardware", None),
-            "requested_hardware": getattr(runtime, "requested_hardware", None),
-        })
+                runtime = api.get_space_runtime(repo_id, token=token)
+            except HfHubHTTPError as exc:
+                status = getattr(exc.response, "status_code", None)
+                raise OpsError(f"Hugging Face recusou {repo_id} (HTTP {status or 'desconhecido'}).") from exc
+            deployed.append({
+                "id": repo_id,
+                "stage": getattr(runtime, "stage", None),
+                "hardware": getattr(runtime, "hardware", None),
+                "requested_hardware": getattr(runtime, "requested_hardware", None),
+            })
     emit({"account": account, "deployed": deployed, "token_exposed": False})
 
 
@@ -785,7 +799,7 @@ PY
         )
     elif action == "deploy":
         if not apply:
-            emit({"dry_run": True, "action": "server deploy", "steps": ["git pull --ff-only", "docker build", "compose recreate", "health"]})
+            emit({"dry_run": True, "action": "server deploy", "steps": ["git pull --ff-only", "docker build", "compose recreate", "health", "keep current + 2 rollback images"]})
             return
         server_script(
             r"""set -eu
@@ -802,14 +816,33 @@ else
   printf 'PRUMO_API_IMAGE=%s\n' "$image" >> .env
 fi
 PRUMO_API_IMAGE="$image" docker compose up -d --force-recreate --remove-orphans
+healthy=0
 for attempt in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:8000/; then
-    exit 0
+    healthy=1
+    break
   fi
   sleep 2
 done
-echo 'API nao ficou saudavel dentro de 60 segundos.' >&2
-exit 1
+if [ "$healthy" -ne 1 ]; then
+  echo 'API nao ficou saudavel dentro de 60 segundos.' >&2
+  exit 1
+fi
+
+# A imagem corrente e duas anteriores bastam para rollback local. O codigo
+# completo de todas as versoes continua no Git, portanto acumular dezenas de
+# tags de 2+ GiB no ThinkPad apenas consome disco.
+mapfile -t prumo_images < <(
+  docker image ls ryang20/prumo-api \
+    --format '{{.Repository}}:{{.Tag}}|{{.CreatedAt}}' \
+    | sort -t '|' -k2,2r \
+    | cut -d '|' -f1
+)
+for old_image in "${prumo_images[@]:3}"; do
+  docker image rm "$old_image" >/dev/null 2>&1 || true
+done
+docker image prune -f >/dev/null 2>&1 || true
+echo "Docker Prumo: ${#prumo_images[@]} tag(s) encontradas; mantidas as 3 mais recentes."
 """,
             timeout=1800,
         )

@@ -61,7 +61,7 @@ permanece até o administrador reativar explicitamente o colaborador.
 | ThinkPad | API `prumo-api`, dados em `/opt/prumo/data`, codigo em `/home/server/prumo-src` | `server/`, `deploy/docker-compose.yml` |
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
 | Modal fallback | segundo solver Google Modo IA, escala a zero quando ocioso | mesmo arquivo de deploy do Portal |
-| Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `solver/google_ai_mode/hf_google_ai_provider.py`, `docs/HUGGINGFACE_CONTEXT.md` |
+| Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `deploy/huggingface/navegador-headless/`, `solver/google_ai_mode/`, `docs/HUGGINGFACE_CONTEXT.md` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker
@@ -194,6 +194,17 @@ python -m ops.prumo_ops netlify deploy --apply
 O deploy direto e fallback. Ele envia um ZIP atomico contendo apenas HTML,
 PNG, ICO, `_redirects` e `_headers`; codigo, documentos, tokens e dados do
 servidor ficam fora do pacote.
+
+## Hugging Face
+
+A fonte especifica dos Spaces fica em `deploy/huggingface/navegador-headless/`.
+O deploy monta um bundle temporario e injeta o resolvedor canonico
+`solver/google_ai_mode/google_ia_requests.py`; nao use uma copia em Downloads.
+
+```powershell
+python -m ops.prumo_ops hf status --account primary
+python -m ops.prumo_ops hf deploy --account primary --space-name navegador-headless --space-name navegador-headless-2
+```
 
 ## Modal sem trocar perfil
 
