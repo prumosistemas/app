@@ -48,8 +48,9 @@ boa situacao pode manter ate dois Spaces Gradio ZeroGPU:
 
 O endpoint da Prumo usa somente CPU, mas estes dois Spaces existentes estao no
 plano ZeroGPU gratuito e o runtime exige ao menos uma funcao `@spaces.GPU`.
-Por isso `test_google_ai` conserva o decorador de compatibilidade; o Chrome e o
-Modo IA continuam executando em CPU. Remover esse decorador causa
+Por isso um probe oculto de um segundo conserva o decorador de compatibilidade;
+`test_google_ai`, Chrome e Modo IA executam em CPU e nao reservam cota GPU.
+Remover o probe causa
 `No @spaces.GPU function detected during startup`. O hardware gratuito pode
 dormir e ter cold start. Nao selecionar hardware pago sem autorizacao.
 
@@ -89,3 +90,5 @@ thread`: o desktop permanente mantinha Chrome, Xvfb, Openbox, x11vnc e noVNC
 ativos e esgotava PIDs/threads. A fonte passou a deixar o Chrome real iniciar
 sob demanda e a fazer uma tentativa por egress. Depois do ajuste, os testes
 reais do Modo IA responderam com sucesso em aproximadamente 28 s e 14 s.
+O teste inicial tambem provou que decorar a analise CPU reservava cota ZeroGPU
+sem beneficio e esgotava o pool. Somente o probe oculto permanece decorado.
