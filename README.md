@@ -6,7 +6,7 @@ Versao: **1.0.92 - failover rápido sem repetir egress bloqueado**
 
 - HTMLs criticos servidos pelo Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicacao complementar ligada ao GitHub.
 - Worker Cloudflare de producao: `morning-credit-8a59`.
-- Login: rate limits e persistencia de sessao usam batches D1 sequenciais; limpeza fica somente no cron e falhas transitórias recebem retry curto sem reduzir a seguranca do PBKDF2.
+- Login: rate limits e persistencia de sessao usam batches D1 sequenciais; limpeza fica somente no cron. Timeouts e resets transitórios do D1 recebem até cinco tentativas no Worker e até três tentativas transparentes na tela, sem repetir credencial inválida nem reduzir a segurança do PBKDF2.
 - D1 de producao: `db`.
 - D1 com replicacao global de leitura `auto` e Sessions API `first-primary`; leituras posteriores podem usar replicas sem perder consistencia da autenticacao.
 - API Python no servidor: `prumo-api`.

@@ -53,7 +53,7 @@ const AUTH_SESSION_TOUCH_INTERVAL_SECONDS = 60;
 const LIGHT_CLEANUP_INTERVAL_SECONDS = 60;
 const HEAVY_CLEANUP_INTERVAL_SECONDS = 3600;
 const BILLING_STATE_REFRESH_SECONDS = 60;
-const D1_TRANSIENT_MAX_ATTEMPTS = 3;
+const D1_TRANSIENT_MAX_ATTEMPTS = 5;
 
 // Estes arquivos vivem na origem estática (Netlify), mas os padrões
 // /login* e /iss-fortaleza* também os fazem passar por este Worker.
@@ -269,6 +269,19 @@ export default {
         error_message: String(err?.message || "Erro sem mensagem").slice(0, 500),
         stack: String(err?.stack || "").slice(0, 2000),
       }));
+      if (
+        isRetryableD1Error(err)
+        && ["/api/login", "/api/me"].includes(url.pathname)
+      ) {
+        return jsonResponse(request, env, {
+          ok: false,
+          error: "A autenticação está concluindo. Aguarde um instante.",
+          code: "AUTH_TEMPORARILY_BUSY",
+          retryable: true,
+          retry_after_ms: 300,
+          request_id: requestId,
+        }, 503);
+      }
       return jsonResponse(request, env, {
         ok: false,
         error: "Erro interno no Worker.",
@@ -2280,10 +2293,12 @@ async function runScheduledCleanup(db, options = {}) {
 ========================= */
 
 function isRetryableD1Error(err) {
-  const message = String(err?.message || err || "");
+  const message = String(err?.message || err || "").toLowerCase();
   return [
-    "Network connection lost",
+    "network connection lost",
     "storage caused object to be reset",
+    "storage operation exceeded timeout",
+    "caused object to be reset",
     "reset because its code was updated",
   ].some((fragment) => message.includes(fragment));
 }
@@ -2311,7 +2326,7 @@ async function withTransientD1Retry(operation, stage) {
         throw markWorkerErrorStage(err, stage);
       }
 
-      const delayMs = 20 * (2 ** (attempt - 1)) + Math.floor(Math.random() * 20);
+      const delayMs = 40 * (2 ** (attempt - 1)) + Math.floor(Math.random() * 40);
       console.warn(JSON.stringify({
         event: "d1_transient_retry",
         stage,
@@ -2393,13 +2408,13 @@ function memberAccessDeniedPayload(reason, ownerEmail) {
 
 async function getCompanyOwnerEmail(db, companyId) {
   if (!companyId) return "";
-  const row = await db.prepare(`
+  const row = await withTransientD1Retry(() => db.prepare(`
     SELECT email
     FROM users
     WHERE company_id = ?
       AND role = 'owner'
     LIMIT 1
-  `).bind(companyId).first();
+  `).bind(companyId).first(), "auth_owner_lookup");
   return String(row?.email || "");
 }
 
@@ -2535,7 +2550,7 @@ async function getAuth(request, env, options = {}) {
   const sessionHash = await sha256Hex(rawToken);
   const ts = now();
 
-  const row = await env.db.prepare(`
+  const row = await withTransientD1Retry(() => env.db.prepare(`
     SELECT
       s.session_hash AS session_hash,
       s.user_id AS user_id,
@@ -2565,7 +2580,7 @@ async function getAuth(request, env, options = {}) {
     JOIN companies c ON c.id = u.company_id
     WHERE s.session_hash = ?
     LIMIT 1
-  `).bind(sessionHash).first();
+  `).bind(sessionHash).first(), "auth_session_lookup");
 
   if (!row) {
     return { ok: false, clearCookie: true };
@@ -2573,13 +2588,16 @@ async function getAuth(request, env, options = {}) {
 
   let billingState = null;
   if (refreshBilling && row.role !== "master") {
-    billingState = await maybeApplyBillingStateForCompany(env.db, row.company_id);
-    const userState = await env.db.prepare(`
+    billingState = await withTransientD1Retry(
+      () => maybeApplyBillingStateForCompany(env.db, row.company_id),
+      "auth_billing_state"
+    );
+    const userState = await withTransientD1Retry(() => env.db.prepare(`
       SELECT disabled, manual_disabled, billing_disabled
       FROM users
       WHERE id = ?
       LIMIT 1
-    `).bind(row.uid).first();
+    `).bind(row.uid).first(), "auth_user_state");
     if (userState) {
       row.disabled = userState.disabled;
       row.manual_disabled = userState.manual_disabled;
@@ -2642,11 +2660,11 @@ async function getAuth(request, env, options = {}) {
   }
 
   if (touchSession && ts - Number(row.last_seen_at) > AUTH_SESSION_TOUCH_INTERVAL_SECONDS) {
-    await env.db.prepare(`
+    await withTransientD1Retry(() => env.db.prepare(`
       UPDATE sessions
       SET last_seen_at = ?
       WHERE session_hash = ?
-    `).bind(ts, row.session_hash).run();
+    `).bind(ts, row.session_hash).run(), "auth_session_touch");
 
     row.last_seen_at = ts;
   }
@@ -2682,11 +2700,11 @@ async function getAuth(request, env, options = {}) {
 }
 
 async function revokeSession(db, sessionHash) {
-  await db.prepare(`
+  await withTransientD1Retry(() => db.prepare(`
     UPDATE sessions
     SET revoked_at = ?
     WHERE session_hash = ?
-  `).bind(now(), sessionHash).run();
+  `).bind(now(), sessionHash).run(), "auth_session_revoke");
 }
 
 function getSessionTokenFromRequest(request) {
@@ -2704,11 +2722,11 @@ async function issueCsrfForSession(env, sessionHash) {
   const csrfToken = randomBase64Url(32);
   const csrfHash = await sha256Hex(csrfToken);
 
-  await env.db.prepare(`
+  await withTransientD1Retry(() => env.db.prepare(`
     UPDATE sessions
     SET csrf_hash = ?
     WHERE session_hash = ?
-  `).bind(csrfHash, sessionHash).run();
+  `).bind(csrfHash, sessionHash).run(), "auth_csrf_issue");
 
   return csrfToken;
 }

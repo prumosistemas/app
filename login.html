@@ -540,15 +540,30 @@
         const requestId = data && typeof data === "object" ? String(data.request_id || "").trim() : "";
         const supportCode = requestId ? ` Código: ${requestId}.` : "";
         const message = typeof detail === "string" ? detail : JSON.stringify(detail);
-        throw new Error(`${message || "Falha no login."}${supportCode}`);
+        const error = new Error(`${message || "Falha no login."}${supportCode}`);
+        error.retryable = Boolean(data && typeof data === "object" && data.retryable);
+        error.retryAfterMs = Math.max(100, Math.min(2000, Number(data?.retry_after_ms || 300)));
+        throw error;
       }
 
       return data;
     }
 
+    async function authApi(path, options = {}) {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await api(path, options);
+        } catch (err) {
+          if (!err?.retryable || attempt >= 3) throw err;
+          await sleep(err.retryAfterMs * attempt);
+        }
+      }
+      throw new Error("Não foi possível concluir a autenticação.");
+    }
+
     async function checkSession({ redirect = false } = {}) {
       try {
-        const data = await api("/api/me", { method: "GET" });
+        const data = await authApi("/api/me", { method: "GET" });
 
         if (data.authenticated) {
           if (data.user?.must_change_password) {
@@ -598,7 +613,7 @@
       loginButton.textContent = "Entrando...";
 
       try {
-        const data = await api("/api/login", {
+        const data = await authApi("/api/login", {
           method: "POST",
           body: JSON.stringify({ email, password })
         });

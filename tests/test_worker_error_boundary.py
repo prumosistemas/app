@@ -32,7 +32,34 @@ def test_login_serializes_d1_writes_and_leaves_cleanup_to_cron() -> None:
     assert "persistSuccessfulLogin" in login
     assert '"login_rate_limit"' in source
     assert '"login_session_persist"' in source
-    assert "D1_TRANSIENT_MAX_ATTEMPTS = 3" in source
+    assert "D1_TRANSIENT_MAX_ATTEMPTS = 5" in source
+    assert '"storage operation exceeded timeout"' in source
+    assert '"caused object to be reset"' in source
+
+
+def test_login_retries_auth_transient_response_without_user_action() -> None:
+    worker = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+    login = (ROOT / "login.html").read_text(encoding="utf-8")
+
+    assert 'code: "AUTH_TEMPORARILY_BUSY"' in worker
+    assert "retry_after_ms: 300" in worker
+    assert "async function authApi" in login
+    assert 'authApi("/api/login"' in login
+    assert 'authApi("/api/me"' in login
+
+
+def test_auth_session_d1_operations_have_transient_retry_stages() -> None:
+    source = (ROOT / "cloudflare" / "worker.js").read_text(encoding="utf-8")
+
+    for stage in (
+        "auth_session_lookup",
+        "auth_billing_state",
+        "auth_user_state",
+        "auth_session_touch",
+        "auth_session_revoke",
+        "auth_csrf_issue",
+    ):
+        assert f'"{stage}"' in source
 
 
 def test_worker_errors_are_searchable_by_support_code_and_stage() -> None:

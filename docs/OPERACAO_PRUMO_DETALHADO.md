@@ -25,6 +25,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.92.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
 - `Checar encerramento` usa requests do ThinkPad, não Browserless. Aceita várias contas cadastradas, mantém cinco históricos compartilhados pela empresa com identificação do executor e compartilha um limite global de seis sessões HTTP para não prejudicar outras operações.
 - O Worker transforma falhas de infraestrutura da API (`530`, túnel `1033` e respostas 5xx não JSON) em erro JSON 503 amigável e rastreável. Respostas válidas de arquivos continuam em streaming.
+- A autenticação reconhece timeouts/resets transitórios do D1 em rate limit, sessão, usuário, cobrança e CSRF. O Worker tenta até cinco vezes com backoff e jitter; login e restauração de sessão repetem respostas transitórias até três vezes no navegador. Falha prolongada vira `AUTH_TEMPORARILY_BUSY`, sem expor erro interno.
 - O ZIP geral do ISS converte somente a apresentação da pasta para `Nome - CNPJ`; o layout persistido e os checkpoints permanecem inalterados.
 
 ## Onde fica cada coisa
