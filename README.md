@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.94 - totais singulares do Portal corrigidos**
+Versao: **1.0.95 - auditoria visual com sincronização limitada**
 
 ## Estado atual
 
@@ -13,6 +13,7 @@ Versao: **1.0.94 - totais singulares do Portal corrigidos**
 - Navegadores: `30` sessoes Modal/turbo.
 - Portal Nacional: Google Modo IA em quatro contêineres Modal (2+2), com dois Spaces privados Hugging Face como primeiro egress visual, egress Modal como segundo e ThinkPad como último fallback; sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; frames do Modal permanecem nos Volumes Modal, enquanto uma resolução feita pelo fallback residencial conserva sua própria evidência local pelo mesmo prazo.
+- Cada conta do espelho Modal possui timeout de sincronização e o manifesto conserva somente a janela atual, evitando thread presa e índice crescente indefinidamente.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. `Unusual traffic` é tratado como falha daquela tentativa, não como objetivo de otimização: endpoints Modal voltam ao pool em 10–15 s e o probe global cresce somente até 120 s. A run publica heartbeat e progresso a cada 10 s.
 - O indexador reconhece tanto `Total de 1 registro` quanto `Total de N registros`; uma janela com exatamente uma nota não é mais confundida com resposta inválida.
 - `Notas automático` consulta cada certificado diariamente em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas por 123 dias. O histórico fica separado por certificado/empresa, inclui ciclos com erro, mostra `+novas` e total deduplicado e permite ZIP por data de emissão e competência. `Capturar agora` é bloqueado somente enquanto aquele colaborador possui uma run do Portal ativa.
@@ -96,9 +97,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.94 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.95 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.94
+docker push ryang20/prumo-api:1.0.95
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

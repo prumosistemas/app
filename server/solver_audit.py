@@ -19,6 +19,9 @@ from typing import Any
 
 
 SYNC_INTERVAL_SECONDS = max(30, int(os.getenv("PORTAL_SOLVER_AUDIT_SYNC_SECONDS", "120")))
+SYNC_ACCOUNT_TIMEOUT_SECONDS = max(
+    60, int(os.getenv("PORTAL_SOLVER_AUDIT_ACCOUNT_TIMEOUT_SECONDS", "300"))
+)
 RETENTION_DAYS = max(1, int(os.getenv("PORTAL_DEBUG_RETENTION_DAYS", "7")))
 MAX_BOOTSTRAP_CHALLENGES = max(10, int(os.getenv("PORTAL_SOLVER_AUDIT_BOOTSTRAP_DIRS", "40")))
 
@@ -179,6 +182,12 @@ def _load_manifest(root: Path) -> dict[str, str]:
         return {}
 
 
+def _compact_manifest(manifest: dict[str, str], candidates: list[Any]) -> dict[str, str]:
+    """Descarta assinaturas que nao pertencem mais à janela sincronizada."""
+    wanted = {str(entry.path) for entry in candidates}
+    return {path: signature for path, signature in manifest.items() if path in wanted}
+
+
 async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str, Any]:
     import modal
 
@@ -216,6 +225,7 @@ async def _sync_account(role: str, token_id: str, token_secret: str) -> dict[str
 
     # Eventos primeiro: o painel fica útil antes de terminar o espelho visual.
     candidates = list({entry.path: entry for entry in [*audit_candidates, *summary_candidates]}.values())
+    manifest = _compact_manifest(manifest, candidates)
     semaphore = asyncio.Semaphore(6)
 
     async def transfer(entry: Any) -> int:
@@ -269,7 +279,14 @@ async def sync_once() -> dict[str, Any]:
             results.append({"ok": False, "source": role, "error": "credentials_not_configured"})
             continue
         try:
-            results.append(await _sync_account(role, token_id, token_secret))
+            results.append(
+                await asyncio.wait_for(
+                    _sync_account(role, token_id, token_secret),
+                    timeout=SYNC_ACCOUNT_TIMEOUT_SECONDS,
+                )
+            )
+        except asyncio.TimeoutError:
+            results.append({"ok": False, "source": role, "error": "sync_timeout"})
         except Exception as exc:
             results.append({"ok": False, "source": role, "error": type(exc).__name__})
     status = {

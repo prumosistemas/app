@@ -1,7 +1,7 @@
 # Contexto Hugging Face da Prumo
 
-Atualizado em: **2026-08-12**
-Versao da Prumo: **1.0.94**
+Atualizado em: **2026-08-13**
+Versao da Prumo: **1.0.95**
 
 ## Segredos
 

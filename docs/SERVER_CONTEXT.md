@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.94
-Data: 2026-08-12
+Versao: 1.0.95
+Data: 2026-08-13
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.94",
+  "version": "1.0.95",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -349,6 +349,7 @@ O Netlify pode bloquear novos deploys por crédito da conta. Para não misturar 
 - XML/PDF, índices e certificados das empresas não são compactados nem removidos por essa rotina.
 - O compose limita o log `json-file` da API a 3 arquivos de 10 MiB.
 - O deploy conserva a imagem Docker atual e duas anteriores para rollback; tags `ryang20/prumo-api` mais antigas são removidas somente após o health check da nova versão.
+- Cada conta Modal tem cinco minutos por ciclo para atualizar o espelho; timeout fica no `sync-status.json` e o ciclo seguinte tenta novamente. O manifesto é reduzido à janela remota corrente para não crescer indefinidamente.
 - A rotina fica em `solver/google_ai_mode/artifact_retention.py` e roda tanto no ThinkPad quanto no Modal.
 - A primeira compactacao controlada foi executada em 2026-07-15. O processo roda em baixa concorrencia com a API ativa e preserva os artefatos dos sete dias definidos para depuracao.
 
@@ -531,8 +532,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.94 .
-docker push ryang20/prumo-api:1.0.94
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.95 .
+docker push ryang20/prumo-api:1.0.95
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -543,10 +544,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.94 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.95 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.94
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.95
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

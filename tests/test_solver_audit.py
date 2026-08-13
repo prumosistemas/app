@@ -12,10 +12,26 @@ if str(SERVER) not in sys.path:
 import solver_audit
 
 
+class ManifestEntry:
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+
 def test_solver_audit_mirrors_temporal_frames_without_unrelated_files() -> None:
     assert solver_audit._wanted_summary("/desafios/unificados/x/quadro-01.jpg")
     assert solver_audit._wanted_summary("/desafios/unificados/x/quadro-120.png")
     assert not solver_audit._wanted_summary("/desafios/unificados/x/certificado.pfx")
+
+
+def test_solver_audit_compacts_manifest_to_current_window() -> None:
+    manifest = {"/current.json": "1:10", "/expired.json": "2:20"}
+
+    compact = solver_audit._compact_manifest(
+        manifest,
+        [ManifestEntry("/current.json"), ManifestEntry("/new.json")],
+    )
+
+    assert compact == {"/current.json": "1:10"}
 
 
 def test_solver_audit_removes_frames_only_after_video_exists(tmp_path: Path) -> None:
