@@ -13,6 +13,7 @@ from ops.prumo_ops import (
     build_netlify_zip,
     build_parser,
     build_worker_bundle,
+    console_safe_text,
     login_secret_names,
 )
 from ops.secret_store import SecretStore, redact
@@ -54,6 +55,11 @@ class OpsCliTests(unittest.TestCase):
     def test_server_runs_is_a_read_only_diagnostic_action(self):
         args = build_parser().parse_args(["server", "runs"])
         self.assertEqual((args.area, args.action, args.apply), ("server", "runs", False))
+
+    def test_console_output_replaces_only_unsupported_characters(self):
+        message = "deploy concluído ✅"
+        self.assertEqual(console_safe_text(message, "utf-8"), message)
+        self.assertEqual(console_safe_text(message, "cp1252"), "deploy concluído ?")
 
     def test_hf_space_source_is_versioned_without_duplicate_solver(self):
         self.assertTrue(HF_SPACE_SOURCE.is_dir())

@@ -539,6 +539,12 @@ SSH_COMMAND = [
 ]
 
 
+def console_safe_text(value: str, encoding: str | None) -> str:
+    """Evita que Unicode de ferramentas remotas derrube consoles legados."""
+    target_encoding = encoding or "utf-8"
+    return value.encode(target_encoding, errors="replace").decode(target_encoding)
+
+
 def server_script(script: str, timeout: int = 300) -> None:
     # Enviar bytes evita que o modo texto do Windows converta LF para CRLF;
     # o bash remoto interpreta o CR como parte do comando.
@@ -546,9 +552,9 @@ def server_script(script: str, timeout: int = 300) -> None:
     stdout = result.stdout.decode("utf-8", errors="replace").strip()
     stderr = result.stderr.decode("utf-8", errors="replace").strip()
     if stdout:
-        print(stdout)
+        print(console_safe_text(stdout, getattr(sys.stdout, "encoding", None)))
     if stderr:
-        print(stderr, file=sys.stderr)
+        print(console_safe_text(stderr, getattr(sys.stderr, "encoding", None)), file=sys.stderr)
     if result.returncode:
         raise OpsError(f"Comando remoto terminou com codigo {result.returncode}.")
 
