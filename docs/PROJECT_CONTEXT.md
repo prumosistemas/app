@@ -26,11 +26,11 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
   por indisponibilidade dos resolvedores e uma concluiu. O rebalanceamento agora
   corrige um `next_run_at` futuro indevido sem adiar para amanhã uma empresa que
   ainda não iniciou hoje.
-- O Browserless ISS foi implantado também na conta Modal reserva. O pool afasta
-  `workspace disabled` por 30 minutos e faz nova sondagem automaticamente, sem
-  calendário fixo para a renovação de créditos. A terceira conta
-  `prumo-sistema` está modelada na operação e entra no mesmo pool após concluir
-  o vínculo oficial do token.
+- O Browserless ISS foi implantado nas três contas Modal. O pool ponderado
+  18/4/8 afasta `workspace disabled` por 30 minutos e faz nova sondagem
+  automaticamente, sem calendário fixo para a renovação de créditos. A terceira
+  conta `prumo-sistema` foi autenticada, teve Browserless e solver Portal
+  publicados e concluiu smoke real em 2026-08-21.
 - A última run ISS de Laryssa foi validada sem executar nova escrituração: os
   cinco fluxos históricos terminaram `ok`; as duas tarefas de notas produziram
   41 XMLs válidos, 394 registros prestados e 4 tomados.

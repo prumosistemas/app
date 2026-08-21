@@ -61,14 +61,15 @@ permanece até o administrador reativar explicitamente o colaborador.
 | ThinkPad | API `prumo-api`, dados em `/opt/prumo/data`, codigo em `/home/server/prumo-src` | `server/`, `deploy/docker-compose.yml` |
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
 | Modal fallback | Browserless ISS de contingência e segundo solver Google Modo IA | mesmos arquivos de deploy |
+| Modal terceira | Browserless ISS e terceiro solver Google Modo IA (`prumo-sistema`) | mesmos arquivos de deploy |
 | Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `deploy/huggingface/navegador-headless/`, `solver/google_ai_mode/`, `docs/HUGGINGFACE_CONTEXT.md` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker
 e valida `X-Internal-Secret`; o servico no host esta ligado a `127.0.0.1:8000`.
-O ISS usa um pool Browserless direto nas duas contas Modal. A principal recebe
-maior peso; falha de quota/workspace abre cooldown e desvia para a reserva. O
-servidor volta a sondar a principal automaticamente. No Portal, o hCaptcha roda nas duas contas
+O ISS usa um pool Browserless direto nas três contas Modal, ponderado 18/4/8.
+Falha de quota/workspace abre cooldown e desvia para as contas saudáveis. O
+servidor volta a sondar a principal automaticamente. No Portal, o hCaptcha roda nas três contas
 Modal; a análise Google Modo IA tenta os dois Spaces privados HF, depois o
 egress da conta Modal que hospeda o navegador. O ThinkPad permanece como
 último fallback residencial. A API espelha no ThinkPad imagens-resumo, MP4 e

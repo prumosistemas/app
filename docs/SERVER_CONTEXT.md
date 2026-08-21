@@ -97,7 +97,7 @@ O esperado:
 
 ## Modal
 
-Contas Browserless ISS: principal `ryangurgell20`, reserva `fabriciofarofa5` e terceira `prumo-sistema` quando autenticada.
+Contas Browserless ISS: principal `ryangurgell20`, reserva `fabriciofarofa5` e terceira ativa `prumo-sistema`.
 
 App Modal:
 
@@ -120,8 +120,8 @@ python -m ops.prumo_ops server smoke-iss
 python -m ops.prumo_ops server metrics
 ```
 
-Repita `sync-iss-secret`, `deploy` e `smoke-iss` com `--account tertiary`
-depois que o perfil `prumo-sistema` estiver no cofre. O pool usa pesos 18/4/8
+Os comandos `sync-iss-secret`, `deploy` e `smoke-iss` aceitam `--account tertiary`.
+O perfil `prumo-sistema` já está no cofre e os dois apps estão publicados. O pool usa pesos 18/4/8
 com três contas e 24/4 com duas. `workspace disabled` recebe cooldown de 30
 minutos; após o prazo, uma conexão real sonda a conta e o sucesso a devolve ao
 pool. A renovação de créditos não depende de uma data codificada.
@@ -152,7 +152,7 @@ python -m ops.prumo_ops modal billing --account fallback --target portal
 ```
 
 O painel master usa `modal.Workspace.billing.report()` e consulta separadamente
-as duas contas do solver Portal. O container `prumo-api` precisa receber:
+as três contas do solver Portal. O container `prumo-api` precisa receber:
 
 ```env
 MODAL_PRIMARY_TOKEN_ID=...
@@ -163,6 +163,10 @@ MODAL_FALLBACK_TOKEN_ID=...
 MODAL_FALLBACK_TOKEN_SECRET=...
 MODAL_FALLBACK_WORKSPACE=fabriciofarofa5
 MODAL_FALLBACK_MONTHLY_CREDIT_USD=30.00
+MODAL_TERTIARY_TOKEN_ID=...
+MODAL_TERTIARY_TOKEN_SECRET=...
+MODAL_TERTIARY_WORKSPACE=prumo-sistema
+MODAL_TERTIARY_MONTHLY_CREDIT_USD=30.00
 MODAL_BILLING_APP_NAME=prumo-portal-nacional-google-solver
 ```
 
@@ -192,12 +196,13 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - O timeout HF e 30 s: com quatro workers e dois Spaces serializados, fila excedente usa cedo o egress Modal aquecido.
 - A conta HF secundaria `jorjoinho` esta no cofre, mas a API recusou novos Spaces ZeroGPU com HTTP 402 em 2026-08-07. Veja `docs/HUGGINGFACE_CONTEXT.md`.
 
-Deploy seguro das duas contas, sem trocar perfil global:
+Deploy seguro das três contas, sem trocar perfil global:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
 python -m ops.prumo_ops modal deploy --account primary --target portal
 python -m ops.prumo_ops modal deploy --account fallback --target portal
+python -m ops.prumo_ops modal deploy --account tertiary --target portal
 ```
 
 Antes do primeiro deploy ou ao girar o token HF:
@@ -209,8 +214,8 @@ python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode prefer
 ```
 
 A CLI publica até dois contêineres por conta Modal, com uma entrada e um
-Chromium por contêiner. O backend distribui os quatro trabalhos em 2+2; o
-ThinkPad só recebe falha/indisponibilidade das duas contas.
+Chromium por contêiner. O backend distribui trabalho entre as três contas; o
+ThinkPad só recebe falha/indisponibilidade delas.
 
 Validar:
 
@@ -222,13 +227,13 @@ Configuracao da API Python:
 
 ```env
 PORTAL_NACIONAL_SOLVER_URL=https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve
-PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacional-google-solver-sol-ffa9e3.modal.run/solve,http://127.0.0.1:8876/solve
+PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacional-google-solver-sol-ffa9e3.modal.run/solve,https://prumo-sistema--prumo-portal-nacional-google-solver-solve-ab4155.modal.run/solve,http://127.0.0.1:8876/solve
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 PORTAL_LOCAL_MAX_SOLVE_SECONDS=360
 PORTAL_LOCAL_MAX_BROWSERS=1
 ```
 
-A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e somente fallback Modal e escala a zero quando ociosa. O master consulta o billing das duas contas e mostra o ultimo endpoint que concluiu uma resolucao.
+A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e `prumo-sistema` são contingências Modal e escalam a zero quando ociosas. O master consulta o billing das três contas e mostra o último endpoint que concluiu uma resolução.
 
 Em 2026-07-15 foram parados o app Florence remanescente em `ryangurgell20` e o
 terceiro deploy legado deste solver em `jorhinhogames`. Como esse workspace

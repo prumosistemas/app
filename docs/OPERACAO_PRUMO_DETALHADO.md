@@ -18,9 +18,9 @@ Este documento e a fonte de contexto operacional da versao 1.0.98.
 - Captura automática diária do Portal distribuída pelas 24 horas, com uma execução automática global por vez, sem pular a tentativa do dia após rebalanceamento, primeira janela de 123 dias, sobreposição de dois dias e retenção de 123 dias.
 - Histórico automático separado por certificado, inclusive para ciclos com erro, com contagem incremental deduplicada e download filtrável por data de emissão e competência.
 - GitHub, pasta local e servidor na mesma versao.
-- Dois Spaces HF privados são tentados antes do egress Modal; a conta Modal reserva vem depois da principal e o ThinkPad permanece por último.
+- Dois Spaces HF privados são tentados antes do egress Modal; as duas contas Modal de contingência vêm depois da principal e o ThinkPad permanece por último.
 - Falta de crédito/`workspace disabled` no Modal principal abre quarentena compartilhada de 30 minutos. A próxima atividade o sonda novamente e restaura sua prioridade automaticamente após sucesso; não existe regra fixa para o dia da renovação.
-- Cold start Modal não executa prewarm no Google. Cada egress faz somente uma tentativa por análise; `unusual traffic` e telemetria de rota e nao reduz a capacidade por minutos. Sucesso confirmado limpa a penalidade. As duas contas trabalham em paralelo com até duas requisições em voo por conta, mantendo quatro solves potenciais.
+- Cold start Modal não executa prewarm no Google. Cada egress faz somente uma tentativa por análise; `unusual traffic` é telemetria de rota e não reduz a capacidade por minutos. Sucesso confirmado limpa a penalidade. As três contas podem trabalhar em paralelo, limitadas por conta, sem antecipar carga para o ThinkPad.
 - A captura temporal completa cobre 8,7 s em 30 quadros; ocupacao fica sincrona e montagem/overlay/MP4 sao gerados em fila de debug fora do caminho critico.
 - A segunda conta HF fica no cofre, mas ainda nao pode criar ZeroGPU; detalhes em `docs/HUGGINGFACE_CONTEXT.md`.
 - O master exibe a auditoria visual espelhada no ThinkPad: rota, tempo, navegadores, `unusual`, cliques, trocas, imagens e vídeo, com retenção de sete dias.
@@ -95,7 +95,7 @@ Se o servidor desligar:
 
 O painel master mostra creditos Modal na secao `Logs`, nao em `Pagamentos`.
 
-O Worker expoe `/api/master/modal-billing` para o master e encaminha para a API Python. A API Python consulta `modal.Workspace.billing.report()` nas duas contas do solver Portal.
+O Worker expõe `/api/master/modal-billing` para o master e encaminha para a API Python. A API Python consulta `modal.Workspace.billing.report()` nas três contas do solver Portal.
 
 Variaveis necessarias no servidor:
 
@@ -205,7 +205,7 @@ Teste local confirmado em 2026-07-06:
 - PDF com cabecalho `%PDF-1.4`;
 - XML com raiz `NFSe`;
 - sessao local sem proxy caiu para login no servidor; sessao local com `--proxy http://127.0.0.1:31480` funcionou na producao.
-- O solver v19 usa exclusivamente Google Modo IA e um contrato visual unico. A conta Modal principal tenta primeiro. A segunda conta recebe failover de quota/indisponibilidade; falha visual especifica segue para o mesmo solver no ThinkPad, evitando duplicar custo Modal no mesmo desafio e sem bloquear as outras notas.
+- O solver v19 usa exclusivamente Google Modo IA e um contrato visual único. A conta Modal principal tenta primeiro. As duas contas de contingência recebem failover de quota/indisponibilidade; falha visual específica segue para o mesmo solver no ThinkPad, evitando duplicar custo Modal no mesmo desafio e sem bloquear as outras notas.
 - Se o widget hCaptcha nao abrir, a v19 recarrega o widget com espera crescente e registra `visual_challenge_not_opened`, separado de grade instavel. URLs persistidas em erros nunca mantem query string ou token transitorio.
 - Na 1.0.53, `visual_challenge_not_ready` nao abre cooldown global. Cada container Modal aceita uma entrada ativa, a principal mantem um container e um buffer, e a reserva escala a zero. A sessao anonima recuperada sincroniza em 15 segundos e a recuperacao Chrome usa um ciclo curto.
 - Na 1.0.54, falha real da sessao Google Modo IA ou do navegador preserva sua classificacao e tenta a conta Modal reserva. Apenas rejeicao visual do desafio segue direto ao ThinkPad.

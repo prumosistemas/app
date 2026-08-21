@@ -805,7 +805,7 @@ docker ps --filter name=prumo-api --format '{{{{.Names}}}} {{{{.Status}}}} {{{{.
 def configure_modal_tertiary(store: SecretStore, *, apply: bool) -> None:
     endpoint = (
         "https://prumo-sistema--prumo-portal-nacional-google-solver-"
-        "solver-server.modal.run/solve"
+        "solve-ab4155.modal.run/solve"
     )
     if not apply:
         emit({
@@ -962,6 +962,10 @@ docker exec -i prumo-api python - <<'PY'
 import json
 import os
 import requests
+from collections import Counter
+from urllib.parse import urlparse
+
+from flow_core import _parse_browser_cdp_pool
 
 response = requests.get(
     "http://127.0.0.1:8000/api/internal/runtime-metrics",
@@ -970,10 +974,21 @@ response = requests.get(
 )
 response.raise_for_status()
 payload = response.json()
+browser_labels = Counter(label for label, _url in _parse_browser_cdp_pool())
+solver_values = [
+    os.getenv("PORTAL_NACIONAL_SOLVER_URL", ""),
+    *os.getenv("PORTAL_NACIONAL_SOLVER_FALLBACK_URLS", "").replace(";", ",").split(","),
+]
 print(json.dumps({
     "iss": payload.get("iss"),
     "portal": payload.get("portal"),
     "queue": payload.get("queue"),
+    "browser_pool_labels": dict(browser_labels),
+    "portal_solver_hosts": [
+        urlparse(value.strip()).hostname
+        for value in solver_values
+        if value.strip() and urlparse(value.strip()).hostname
+    ],
 }, ensure_ascii=False))
 PY
 """
