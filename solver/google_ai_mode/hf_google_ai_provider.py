@@ -104,9 +104,13 @@ class HuggingFaceGoogleAIProvider:
                     raise HuggingFaceProviderError("huggingface_invalid_response")
                 if not payload.get("ok") or not str(payload.get("answer") or "").strip():
                     reason = str(payload.get("error_type") or payload.get("error") or "provider_failed")
+                    detail = str(payload.get("error") or "")[:240]
                     unusual = bool(payload.get("unusual_traffic"))
                     raise HuggingFaceProviderError(
-                        f"huggingface_{'unusual_traffic' if unusual else reason}"[:300]
+                        (
+                            f"huggingface_{'unusual_traffic' if unusual else reason}"
+                            + (f":{detail}" if detail else "")
+                        )[:500]
                     )
                 self._successes += 1
                 self._last_error = None

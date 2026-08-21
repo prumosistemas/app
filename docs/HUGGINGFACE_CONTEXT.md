@@ -97,3 +97,10 @@ Chrome, recolhe filhos adotados, desativa breakpad/crash reporter e limita
 threads de bibliotecas numéricas a uma. O desktop permanente continua
 desativado. A análise CPU não reserva ZeroGPU; somente o probe oculto permanece
 decorado para o runtime aceitar os Spaces existentes.
+
+Prova pós-correção em 21/08/2026: cada Space concluiu três consultas visuais
+consecutivas. No `navegador-headless`, os tempos internos foram 14,26 s, 3,50 s
+e 2,67 s; no `navegador-headless-2`, 13,92 s, 5,07 s e 3,35 s. Todas usaram
+uma única consulta de IA. Uma resposta vazia transitória observada antes dessa
+prova passou a receber uma repetição curta dentro do Space, sem abrir o circuito
+e sem consumir o Modal por falso negativo.

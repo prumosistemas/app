@@ -30,6 +30,12 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
   subreaper por consulta e limites de threads; o desktop permanente permanece
   desligado. O Modal principal é preferido, o fallback é promovido após falha
   e um workspace 404 fica afastado por seis horas entre runs.
+- Prova real pós-deploy: ambos os Spaces concluíram três análises consecutivas;
+  depois do primeiro aquecimento, as quatro respostas seguintes ficaram entre
+  2,67 s e 5,07 s. O Modal reserva confirmou `route_policy=prefer` e HF
+  configurado. O deploy do Modal principal foi aceito, mas o gateway continuou
+  em `404 workspace disabled`; por isso ele permanece automaticamente fora da
+  cadeia até a conta voltar.
 
 ### Operação 1.0.95 em 2026-08-13
 

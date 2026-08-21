@@ -119,10 +119,10 @@ def test_google_ai(image_path: str | None, question: str) -> dict[str, object]:
             prompt,
             timeout=60,
             image_path=image_path,
-            # Existem dois Spaces, duas contas Modal e o ThinkPad. Uma
-            # segunda tentativa no mesmo egress aumenta a latencia e o risco
-            # de bloqueio sem adicionar uma rota nova.
-            attempts=1,
+            # O Google ocasionalmente devolve uma resposta vazia apesar de a
+            # sessão estar válida. Uma repetição curta no mesmo Space evita
+            # abrir circuito e cair no Modal por esse falso negativo.
+            attempts=2,
             allow_browser_recovery=True,
         )
         return {
