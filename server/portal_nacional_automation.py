@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import hashlib
 import html as html_lib
 import json
 import os
@@ -112,19 +113,42 @@ def record_solver_endpoint_event(
         status = getattr(response, "status_code", None)
         payload["error_kind"] = f"http_{status}" if status else type(exc).__name__
     temporary: Path | None = None
+    endpoint_temporary: Path | None = None
     try:
         with SOLVER_STATUS_LOCK:
             SOLVER_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            previous: dict = {}
+            try:
+                previous = json.loads(SOLVER_STATUS_FILE.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                previous = {}
+            endpoint_history = previous.get("endpoints", {}) if isinstance(previous, dict) else {}
+            if not isinstance(endpoint_history, dict):
+                endpoint_history = {}
+            endpoint_history[solver_endpoint_label(url)] = dict(payload)
+            payload["endpoints"] = endpoint_history
             temporary = SOLVER_STATUS_FILE.with_name(
                 f".{SOLVER_STATUS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
             )
             temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             temporary.replace(SOLVER_STATUS_FILE)
+            endpoint_file = solver_endpoint_state_file(url)
+            endpoint_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint_temporary = endpoint_file.with_name(
+                f".{endpoint_file.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            endpoint_temporary.write_text(
+                json.dumps(endpoint_history[solver_endpoint_label(url)], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            endpoint_temporary.replace(endpoint_file)
     except OSError:
         pass
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+        if endpoint_temporary is not None:
+            endpoint_temporary.unlink(missing_ok=True)
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -1339,9 +1363,8 @@ def solver_url_candidates(primary: str) -> list[str]:
 
 
 def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> list[str]:
-    """Prefere o Modal que acerta e preserva o ThinkPad por ultimo."""
-    del request_id  # A ordem exata 2+2 e mais util que um hash probabilistico.
-    global SOLVER_MODAL_ROTATION_COUNTER
+    """Prefere o Modal primario; promove o secundario apenas apos falhas."""
+    del request_id
     modal_urls = [
         url for url in candidates
         if (urlparse(url).hostname or "").lower().endswith(".modal.run")
@@ -1350,12 +1373,11 @@ def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> l
         return candidates
     others = [url for url in candidates if url not in modal_urls]
     with SOLVER_MODAL_ROTATION_LOCK:
-        offset = SOLVER_MODAL_ROTATION_COUNTER % len(modal_urls)
-        SOLVER_MODAL_ROTATION_COUNTER += 1
-        rotated = modal_urls[offset:] + modal_urls[:offset]
         scores = dict(SOLVER_ENDPOINT_SCORES)
-    rotated.sort(key=lambda url: scores.get(url, 0), reverse=True)
-    return rotated + others
+    # sort e estavel: em empate conserva a ordem configurada (primario antes
+    # do fallback). Um endpoint que falha perde prioridade imediatamente.
+    modal_urls.sort(key=lambda url: scores.get(url, 0), reverse=True)
+    return modal_urls + others
 
 
 def solver_endpoint_label(url: str) -> str:
@@ -1403,7 +1425,34 @@ def modal_solver_request_lock(url: str) -> threading.BoundedSemaphore | None:
 
 def solver_endpoint_cooldown_remaining(url: str) -> float:
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
-        return max(0.0, SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) - time.monotonic())
+        memory_remaining = max(0.0, SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) - time.monotonic())
+    return max(memory_remaining, persisted_solver_endpoint_cooldown_remaining(url))
+
+
+def solver_endpoint_state_file(url: str) -> Path:
+    label = solver_endpoint_label(url)
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:20]
+    return SOLVER_STATUS_FILE.with_name(f"{SOLVER_STATUS_FILE.stem}.d") / f"{digest}.json"
+
+
+def persisted_solver_endpoint_cooldown_remaining(url: str) -> float:
+    """Compartilha entre runs o bloqueio longo de endpoints Modal 404."""
+    try:
+        endpoint = json.loads(solver_endpoint_state_file(url).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        try:
+            state = json.loads(SOLVER_STATUS_FILE.read_text(encoding="utf-8"))
+            endpoints = state.get("endpoints", {})
+            endpoint = endpoints.get(solver_endpoint_label(url), {})
+        except (OSError, ValueError, TypeError, AttributeError):
+            return 0.0
+    try:
+        if endpoint.get("event") != "failure" or endpoint.get("error_kind") != "http_404":
+            return 0.0
+        occurred_at = datetime.fromisoformat(str(endpoint["at"]))
+        return max(0.0, occurred_at.timestamp() + 6 * 3600 - time.time())
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return 0.0
 
 
 def is_visual_solver_failure(exc: Exception) -> bool:
@@ -1462,11 +1511,19 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         marker in detail
         for marker in ("google_ai_request_failed", "unusual traffic", "sorry/index")
     )
+    workspace_disabled = (
+        getattr(getattr(exc, "response", None), "status_code", None) == 404
+        or "workspace" in detail and "disabled" in detail
+    )
     if is_local_solver_url(url) and "google_ai_request_failed" in detail:
         # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
         # endpoint local removia o ultimo fallback das outras threads, que
         # entao falhavam usando apenas os Modals em circuito.
         cooldown = 0
+    elif hostname.endswith(".modal.run") and workspace_disabled:
+        # Rota desativada por cota/workspace nao e uma falha de um container
+        # isolado. Insistir a cada 15 s so acrescenta latencia a todas as notas.
+        cooldown = 6 * 3600
     elif hostname.endswith(".modal.run") and cooldown >= 90:
         # Cada endpoint Modal balanceia dois containers independentes. Um
         # `unusual` confirma somente o egress que recebeu aquela chamada; um
@@ -1489,11 +1546,10 @@ def clear_solver_endpoint_cooldown(url: str) -> None:
 
 
 def available_solver_url_candidates(primary: str) -> tuple[list[str], float | None]:
-    now = time.monotonic()
-    with SOLVER_ENDPOINT_COOLDOWN_LOCK:
-        candidates = solver_url_candidates(primary)
-        available = [url for url in candidates if SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) <= now]
-        waits = [SOLVER_ENDPOINT_COOLDOWNS[url] - now for url in candidates if SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0) > now]
+    candidates = solver_url_candidates(primary)
+    remaining = {url: solver_endpoint_cooldown_remaining(url) for url in candidates}
+    available = [url for url in candidates if remaining[url] <= 0]
+    waits = [seconds for seconds in remaining.values() if seconds > 0]
     return available, min(waits) if waits else None
 
 
@@ -1527,6 +1583,13 @@ def require_solver_api(solver_url: str) -> str:
                 f"o POST testara o pool: {fatal.get('reason') or 'solver'}"
             )
     except Exception as exc:
+        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
+            record_solver_endpoint_event(solver_url, "failure", "health", exc)
+            cooldown = mark_solver_endpoint_unavailable(solver_url, exc)
+            print(
+                "[Solver] Endpoint desativado detectado no health; "
+                f"fallback sera usado por {cooldown}s."
+            )
         print(
             "[Solver] Health inconclusivo; o POST real decidira o failover: "
             f"{sanitized_solver_error(exc)}"

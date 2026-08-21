@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import ctypes
 import html
 import json
 import mimetypes
@@ -22,6 +23,48 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 import requests
 import websocket
 from bs4 import BeautifulSoup, Tag
+
+
+_CHILD_SUBREAPER_ENABLED = False
+
+
+def _enable_child_subreaper() -> bool:
+    """Faz o processo Python adotar netos do Chrome em runtimes sem init."""
+    global _CHILD_SUBREAPER_ENABLED
+    if _CHILD_SUBREAPER_ENABLED:
+        return True
+    if sys.platform != "linux" or os.environ.get("PRUMO_ENABLE_CHILD_SUBREAPER", "0") != "1":
+        return False
+    try:
+        # Linux prctl(PR_SET_CHILD_SUBREAPER, 1). O Space executa uma consulta
+        # por vez, portanto a coleta abaixo nao disputa filhos de outra query.
+        if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:
+            return False
+        _CHILD_SUBREAPER_ENABLED = True
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
+def _reap_adopted_children() -> int:
+    if not _CHILD_SUBREAPER_ENABLED:
+        return 0
+    reaped = 0
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        found = False
+        while True:
+            try:
+                pid, _ = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                return reaped
+            if pid <= 0:
+                break
+            reaped += 1
+            found = True
+        if not found:
+            time.sleep(0.05)
+    return reaped
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -526,6 +569,7 @@ def recover_session_with_chrome(
 ) -> CountingSession:
     """Renova a sessão anônima via Chrome/CDP sem persistir o perfil do navegador."""
     started = time.monotonic()
+    _enable_child_subreaper()
     chrome = _find_chrome_executable()
     with _session_recovery_lock():
         try:
@@ -549,6 +593,9 @@ def recover_session_with_chrome(
                 "--disable-gpu",
                 "--no-first-run",
                 "--disable-default-apps",
+                "--disable-breakpad",
+                "--disable-crash-reporter",
+                "--noerrdialogs",
                 "--remote-allow-origins=*",
                 f"--remote-debugging-port={port}",
                 f"--user-data-dir={profile}",
@@ -682,6 +729,7 @@ def recover_session_with_chrome(
                 and process.returncode not in (None, 0, -15)
             ):
                 _write_recovery_state("chrome_cdp", "failed", time.monotonic() - started, profile_removed=removed)
+            _reap_adopted_children()
 
 
 def recover_session_with_browser(

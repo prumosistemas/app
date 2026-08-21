@@ -4,6 +4,19 @@ import asyncio
 import atexit
 import base64
 import os
+
+# Evita que bibliotecas numericas consumam o pequeno limite de threads dos
+# Spaces CPU. O Chrome continua sendo aberto somente sob demanda.
+for _thread_env in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "1")
+os.environ.setdefault("PRUMO_ENABLE_CHILD_SUBREAPER", "1")
+
 import shutil
 import signal
 import socket
@@ -96,6 +109,7 @@ def test_google_ai(image_path: str | None, question: str) -> dict[str, object]:
     os.environ.setdefault("GOOGLE_AI_FIREFOX_FALLBACK", "0")
     os.environ.setdefault("GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS", "1")
     os.environ.setdefault("GOOGLE_AI_RECOVERY_WAIT_SECONDS", "4,8")
+    os.environ.setdefault("PRUMO_ENABLE_CHILD_SUBREAPER", "1")
     os.environ["GOOGLE_CHROME_BIN"] = chrome
 
     try:

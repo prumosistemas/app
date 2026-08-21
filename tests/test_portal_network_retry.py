@@ -258,7 +258,7 @@ def test_solver_candidates_are_ordered_and_unique(monkeypatch) -> None:
     ]
 
 
-def test_modal_accounts_are_balanced_and_local_remains_last() -> None:
+def test_primary_modal_is_preferred_and_local_remains_last() -> None:
     candidates = [
         "https://primary--solver.modal.run/solve",
         "https://fallback--solver.modal.run/solve",
@@ -267,7 +267,7 @@ def test_modal_accounts_are_balanced_and_local_remains_last() -> None:
     first = automation.balance_modal_solver_candidates(candidates, "nota-a")
     second = automation.balance_modal_solver_candidates(candidates, "nota-b")
 
-    assert {first[0], second[0]} == set(candidates[:2])
+    assert first[:2] == second[:2] == candidates[:2]
     assert first[-1] == second[-1] == "http://127.0.0.1:8876/solve"
 
 
@@ -401,6 +401,18 @@ def test_modal_container_outage_has_short_pool_cooldown() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "https://conta--solver.modal.run/solve", error
     ) == 15
+
+
+def test_disabled_modal_workspace_has_long_shared_cooldown() -> None:
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError("workspace is disabled", response=response)
+    url = "https://conta--solver.modal.run/solve"
+
+    automation.record_solver_endpoint_event(url, "failure", "health", error)
+
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 6 * 3600
+    assert automation.persisted_solver_endpoint_cooldown_remaining(url) > 21_500
 
 
 def test_explicit_google_block_keeps_modal_pool_available() -> None:

@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.95**
-Atualizado em: **2026-08-13**
+Versao do app: **1.0.96**
+Atualizado em: **2026-08-21**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -89,11 +89,21 @@ Google pessoal: autenticar uma conta para contornar `unusual traffic` pode
 associar o bloqueio à conta.
 Quando a recuperação por Chrome já identifica `/sorry/index`, ela devolve o
 controle imediatamente ao failover e não abre outros perfis no mesmo egress.
-As duas contas Modal continuam paralelas, com até duas requisições em voo por
-conta e quatro no total. Threads que aguardaram vaga reavaliam o cooldown antes
-de consultar, preservando vazão quando o egress está saudável. As runs publicam
+O Modal principal continua preferencial enquanto saudável e a conta reserva é
+promovida após falha, sem alternância 2+2 desnecessária. `404 workspace
+disabled` abre cooldown compartilhado de seis horas; `unusual` continua curto
+porque pode pertencer apenas a um contêiner. Threads que aguardaram vaga
+reavaliam o cooldown antes de consultar. As runs publicam
 heartbeat e resumo do índice a cada 10 s; o monitor interno separa runtimes ISS
 e Portal para não classificar um processo vivo como travado.
+
+Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
+breakpad/crash reporter ficam desativados. Isso corrige o incidente de
+21/08/2026, quando 8.398 processos zumbis (`chrome`/`chrome_crashpad`) levaram o
+contêiner ao limite de PIDs e causaram `can't start new thread`/conexões
+encerradas. O solver residencial fica em uma vaga por padrão e continua sendo
+o último fallback. Nos Spaces, a análise é serializada, threads numéricas são
+limitadas e o processo Python adota e recolhe descendentes do Chrome.
 
 No ISS Fortaleza, `Checar encerramento` usa `server/iss_closure_scan.py`. A API
 abre sessões HTTP diretamente no ThinkPad, limita o conjunto a seis sessões de

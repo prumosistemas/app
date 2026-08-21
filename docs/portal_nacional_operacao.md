@@ -17,7 +17,7 @@ PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacio
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 ```
 
-A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. Cada endpoint possui cooldown independente. No cliente da API, `unusual` em endpoint Modal balanceado volta ao pool em 10 segundos e 5xx/circuito em 15 segundos, pois uma falha nao prova que seus dois containers estao bloqueados. Falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e nao derrubam a conta inteira.
+A lista e ordenada e aceita separacao por virgula, ponto e virgula ou quebra de linha. A variavel singular antiga continua aceita durante upgrades. O Modal principal permanece primeiro enquanto saudável; o fallback ganha prioridade depois de uma falha confirmada. `Unusual` volta ao pool em 10 segundos e 5xx/circuito em 15 segundos, pois uma falha não prova que os dois contêineres estão bloqueados. Um `404 workspace disabled` é persistido por endpoint e afastado por seis horas entre runs. Falhas visuais, inclusive `visual_challenge_not_ready`, ficam restritas ao captcha atual e não derrubam a conta inteira. O ThinkPad é sempre o último candidato e executa uma resolução por vez por padrão.
 
 Nunca grave cookies, PFX, senhas ou credenciais de túnel no Git. No Modal, o estado anônimo fica no Volume privado. No ThinkPad, fica em `/opt/prumo/data/_api_data/google_ai_solver_state`, coberto pelo volume persistente; somente o código entra no Git e na imagem.
 

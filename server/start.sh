@@ -62,11 +62,12 @@ EOF
   export GOOGLE_AI_CHROME_RECOVERY_ATTEMPTS=1
   export PORTAL_SOLVER_BROWSER_RESTART_LIMIT=1
   export PORTAL_SOLVER_OPEN_FAILURE_LIMIT=1
+  export PRUMO_ENABLE_CHILD_SUBREAPER=0
 
   xvfb-run -a python -u "$solver_dir/api_resolvedora_resolver_google_ia.py" \
     --port 8876 \
     --browser "$wrapper" \
-    --max-browsers 4 \
+    --max-browsers "${PORTAL_LOCAL_MAX_BROWSERS:-1}" \
     --max-provider-failures "${PORTAL_LOCAL_PROVIDER_FAILURE_LIMIT:-5}" \
     --max-solver-failures 20 \
     --max-solve-seconds "${PORTAL_LOCAL_MAX_SOLVE_SECONDS:-360}" \

@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.95
-Data: 2026-08-13
+Versao: 1.0.96
+Data: 2026-08-21
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.95",
+  "version": "1.0.96",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -196,6 +196,7 @@ PORTAL_NACIONAL_SOLVER_URL=https://ryangurgell20--prumo-portal-nacional-google-s
 PORTAL_NACIONAL_SOLVER_FALLBACK_URLS=https://fabriciofarofa5--prumo-portal-nacional-google-solver-sol-ffa9e3.modal.run/solve,http://127.0.0.1:8876/solve
 PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS=420
 PORTAL_LOCAL_MAX_SOLVE_SECONDS=360
+PORTAL_LOCAL_MAX_BROWSERS=1
 ```
 
 A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e somente fallback Modal e escala a zero quando ociosa. O master consulta o billing das duas contas e mostra o ultimo endpoint que concluiu uma resolucao.
@@ -532,8 +533,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.95 .
-docker push ryang20/prumo-api:1.0.95
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.96 .
+docker push ryang20/prumo-api:1.0.96
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -544,10 +545,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.95 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.96 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.95
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.96
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

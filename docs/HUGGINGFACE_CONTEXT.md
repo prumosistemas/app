@@ -1,7 +1,7 @@
 # Contexto Hugging Face da Prumo
 
-Atualizado em: **2026-08-13**
-Versao da Prumo: **1.0.95**
+Atualizado em: **2026-08-21**
+Versao da Prumo: **1.0.96**
 
 ## Segredos
 
@@ -90,10 +90,10 @@ token secundario permanece somente no cofre local e nao e enviado ao Modal.
 - O ThinkPad permanece no ultimo fallback.
 - PFX, senha, cookies e arquivos fiscais nunca seguem ao Hugging Face.
 
-Em 12/08/2026, os dois Spaces falhavam antes da analise com `can't start new
-thread`: o desktop permanente mantinha Chrome, Xvfb, Openbox, x11vnc e noVNC
-ativos e esgotava PIDs/threads. A fonte passou a deixar o Chrome real iniciar
-sob demanda e a fazer uma tentativa por egress. Depois do ajuste, os testes
-reais do Modo IA responderam com sucesso em aproximadamente 28 s e 14 s.
-O teste inicial tambem provou que decorar a analise CPU reservava cota ZeroGPU
-sem beneficio e esgotava o pool. Somente o probe oculto permanece decorado.
+Em 21/08/2026, os dois Spaces voltaram a falhar com `can't start new thread`:
+filhos do Chrome sob demanda ainda podiam permanecer órfãos no runtime sem
+`init`. A 1.0.96 ativa subreaper somente nos Spaces, encerra o grupo inteiro do
+Chrome, recolhe filhos adotados, desativa breakpad/crash reporter e limita
+threads de bibliotecas numéricas a uma. O desktop permanente continua
+desativado. A análise CPU não reserva ZeroGPU; somente o probe oculto permanece
+decorado para o runtime aceitar os Spaces existentes.

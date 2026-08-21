@@ -1,13 +1,23 @@
 services:
   prumo-api:
-    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.95}
+    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.96}
     container_name: prumo-api
+    # O resolvedor abre Chrome sob demanda. O init minimo recolhe subprocessos
+    # que terminem depois do pai e impede o esgotamento do limite de PIDs.
+    init: true
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "127.0.0.1:8000:8000"
     env_file: .env
     volumes:
       - /opt/prumo/data:/app/output
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:

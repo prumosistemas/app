@@ -3,6 +3,7 @@ import base64
 import html
 import json
 import os
+import signal
 import shutil
 import socket
 import subprocess
@@ -648,11 +649,15 @@ def open_solver_browser(browser: str, url: str) -> tuple[int, Path, subprocess.P
             "--no-first-run",
             "--disable-default-apps",
             "--disable-background-mode",
+            "--disable-breakpad",
+            "--disable-crash-reporter",
+            "--noerrdialogs",
             *BROWSER_EXTRA_ARGS,
             url,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        start_new_session=(sys.platform != "win32"),
     )
     return port, profile, proc
 
@@ -913,10 +918,21 @@ def close_solver_browser(port: int, proc: subprocess.Popen | None, profile: Path
         pass
 
     if proc and proc.poll() is None:
+        if sys.platform != "win32":
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
         try:
-            proc.wait(timeout=1)
+            proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if sys.platform != "win32":
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+            else:
+                proc.kill()
             try:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
