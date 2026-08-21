@@ -735,7 +735,7 @@ def configure_iss_browser_failover(store: SecretStore, *, apply: bool) -> None:
     payload_b64 = base64.b64encode(json.dumps(tokens).encode("utf-8")).decode("ascii")
     server_script(
         f"""set -eu
-cd /home/server/prumo-src
+cd /opt/prumo/app/deploy
 python3 - '{payload_b64}' <<'PY'
 import base64
 import json
@@ -743,7 +743,7 @@ import os
 import sys
 from pathlib import Path
 
-path = Path('.env')
+path = Path('/opt/prumo/app/deploy/.env')
 tokens = json.loads(base64.b64decode(sys.argv[1]).decode('utf-8'))
 lines = path.read_text(encoding='utf-8').splitlines()
 key = 'BROWSER_CDP_POOL'
@@ -791,7 +791,7 @@ for line in lines:
 if not replaced:
     updated.append(replacement)
 temp = path.with_suffix('.env.tmp')
-temp.write_text('\n'.join(updated) + '\n', encoding='utf-8')
+temp.write_text('\\n'.join(updated) + '\\n', encoding='utf-8')
 os.replace(temp, path)
 print('Pool ISS configurado: ' + ('primario=18 fallback=4 terceiro=8' if 'tertiary' in tokens else 'primario=24 fallback=4') + '; valores nao exibidos.')
 PY
@@ -832,6 +832,65 @@ curl -fsS http://127.0.0.1:8000/
                 recovery_path.unlink(missing_ok=True)
     elif action == "configure-iss-pool":
         configure_iss_browser_failover(store, apply=apply)
+    elif action == "smoke-iss":
+        server_script(
+            r"""set -eu
+docker exec -i prumo-api python - <<'PY'
+import asyncio
+import json
+import tempfile
+
+from flow_core import FlowConfig, create_browser_context
+
+async def main():
+    with tempfile.TemporaryDirectory() as root:
+        cfg = FlowConfig(
+            run_id="ops-smoke-iss",
+            run_dir=root,
+            run_log_file=f"{root}/run.log",
+            cnpj_dir=f"{root}/smoke",
+            step_timeout_sec=30,
+            nav_timeout_ms=30000,
+            selector_timeout_ms=10000,
+            close_timeout_sec=10,
+            goto_retries=1,
+            headless=True,
+        )
+        context, close = await create_browser_context(cfg)
+        page = await context.new_page()
+        await page.goto("data:text/html,<title>Prumo smoke</title>")
+        title = await page.title()
+        await close()
+        print(json.dumps({"browserless": "ok", "title": title}))
+
+asyncio.run(main())
+PY
+""",
+            timeout=180,
+        )
+    elif action == "metrics":
+        server_script(
+            r"""set -eu
+docker exec -i prumo-api python - <<'PY'
+import json
+import os
+import requests
+
+response = requests.get(
+    "http://127.0.0.1:8000/api/internal/runtime-metrics",
+    headers={"X-Internal-Secret": os.environ["ISS_INTERNAL_SECRET"]},
+    timeout=10,
+)
+response.raise_for_status()
+payload = response.json()
+print(json.dumps({
+    "iss": payload.get("iss"),
+    "portal": payload.get("portal"),
+    "queue": payload.get("queue"),
+}, ensure_ascii=False))
+PY
+"""
+        )
     elif action == "logs":
         server_script(f"docker logs --tail {max(1, min(lines, 2000))} prumo-api\n")
     elif action == "runs":
@@ -1211,7 +1270,10 @@ def build_parser() -> argparse.ArgumentParser:
     hf.add_argument("--space-name", action="append", dest="space_names")
 
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
-    server.add_argument("action", choices=["status", "logs", "runs", "deploy", "configure-iss-pool"])
+    server.add_argument(
+        "action",
+        choices=["status", "logs", "runs", "deploy", "configure-iss-pool", "smoke-iss", "metrics"],
+    )
     server.add_argument("--apply", action="store_true")
     server.add_argument("--lines", type=int, default=200)
 

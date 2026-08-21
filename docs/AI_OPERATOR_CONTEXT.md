@@ -239,6 +239,8 @@ python -m ops.prumo_ops modal sync-iss-secret --account fallback --target iss
 python -m ops.prumo_ops modal deploy --account fallback --target iss
 python -m ops.prumo_ops modal smoke-iss --account fallback --target iss
 python -m ops.prumo_ops server configure-iss-pool --apply
+python -m ops.prumo_ops server smoke-iss
+python -m ops.prumo_ops server metrics
 ```
 
 A CLI injeta `MODAL_TOKEN_ID` e `MODAL_TOKEN_SECRET` somente no ambiente do

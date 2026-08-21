@@ -116,6 +116,8 @@ python -m ops.prumo_ops modal sync-iss-secret --account fallback --target iss
 python -m ops.prumo_ops modal deploy --account fallback --target iss
 python -m ops.prumo_ops modal smoke-iss --account fallback --target iss
 python -m ops.prumo_ops server configure-iss-pool --apply
+python -m ops.prumo_ops server smoke-iss
+python -m ops.prumo_ops server metrics
 ```
 
 Repita `sync-iss-secret`, `deploy` e `smoke-iss` com `--account tertiary`
@@ -123,6 +125,10 @@ depois que o perfil `prumo-sistema` estiver no cofre. O pool usa pesos 18/4/8
 com três contas e 24/4 com duas. `workspace disabled` recebe cooldown de 30
 minutos; após o prazo, uma conexão real sonda a conta e o sucesso a devolve ao
 pool. A renovação de créditos não depende de uma data codificada.
+
+`server smoke-iss` abre somente uma página `data:` e não acessa o portal fiscal;
+ele prova conexão CDP e failover. `server metrics` mostra fila e vida do
+agendador sem imprimir segredos.
 
 Relatorio de custo vivo:
 
