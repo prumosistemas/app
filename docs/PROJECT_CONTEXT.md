@@ -36,6 +36,9 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
   configurado. O deploy do Modal principal foi aceito, mas o gateway continuou
   em `404 workspace disabled`; por isso ele permanece automaticamente fora da
   cadeia até a conta voltar.
+- O Modal reserva concluiu o smoke completo `/solve` com a chave pública de
+  teste do hCaptcha em 36,89 s, devolveu token e voltou a zero navegadores
+  ativos. Nenhum token foi registrado ou exibido.
 
 ### Operação 1.0.95 em 2026-08-13
 
