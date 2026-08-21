@@ -38,6 +38,26 @@ DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
 PORTAL_MAX_PERIOD_DAYS = 30
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
 SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "420"))
+
+
+def bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+# Um workspace Modal sem credito responde 404. A quarentena e compartilhada
+# entre runs para nao acrescentar uma falha a cada nota, mas expira sem depender
+# de uma data de cobranca: a proxima atividade sonda o primario e o recoloca na
+# frente automaticamente. O intervalo pode ser ajustado sem novo deploy.
+SOLVER_MODAL_DISABLED_RECHECK_SECONDS = bounded_env_int(
+    "PORTAL_MODAL_DISABLED_RECHECK_SECONDS",
+    30 * 60,
+    5 * 60,
+    6 * 3600,
+)
 # O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
 # residencial do ThinkPad somente quando a tentativa primaria falha.
 DEFAULT_SOLVER_FALLBACK_URL = "http://127.0.0.1:8876/solve"
@@ -1363,7 +1383,7 @@ def solver_url_candidates(primary: str) -> list[str]:
 
 
 def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> list[str]:
-    """Prefere o Modal primario; promove o secundario apenas apos falhas."""
+    """Preserva o Modal primario na frente sempre que sair do cooldown."""
     del request_id
     modal_urls = [
         url for url in candidates
@@ -1372,11 +1392,9 @@ def balance_modal_solver_candidates(candidates: list[str], request_id: str) -> l
     if len(modal_urls) < 2:
         return candidates
     others = [url for url in candidates if url not in modal_urls]
-    with SOLVER_MODAL_ROTATION_LOCK:
-        scores = dict(SOLVER_ENDPOINT_SCORES)
-    # sort e estavel: em empate conserva a ordem configurada (primario antes
-    # do fallback). Um endpoint que falha perde prioridade imediatamente.
-    modal_urls.sort(key=lambda url: scores.get(url, 0), reverse=True)
+    # A lista de entrada ja exclui endpoints em cooldown e conserva a ordem
+    # configurada. Nao use o placar historico para ordenar: se a reserva
+    # continuasse acertando, o primario recuperado nunca seria sondado.
     return modal_urls + others
 
 
@@ -1450,7 +1468,12 @@ def persisted_solver_endpoint_cooldown_remaining(url: str) -> float:
         if endpoint.get("event") != "failure" or endpoint.get("error_kind") != "http_404":
             return 0.0
         occurred_at = datetime.fromisoformat(str(endpoint["at"]))
-        return max(0.0, occurred_at.timestamp() + 6 * 3600 - time.time())
+        return max(
+            0.0,
+            occurred_at.timestamp()
+            + SOLVER_MODAL_DISABLED_RECHECK_SECONDS
+            - time.time(),
+        )
     except (ValueError, TypeError, KeyError, AttributeError):
         return 0.0
 
@@ -1523,7 +1546,7 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
     elif hostname.endswith(".modal.run") and workspace_disabled:
         # Rota desativada por cota/workspace nao e uma falha de um container
         # isolado. Insistir a cada 15 s so acrescenta latencia a todas as notas.
-        cooldown = 6 * 3600
+        cooldown = SOLVER_MODAL_DISABLED_RECHECK_SECONDS
     elif hostname.endswith(".modal.run") and cooldown >= 90:
         # Cada endpoint Modal balanceia dois containers independentes. Um
         # `unusual` confirma somente o egress que recebeu aquela chamada; um

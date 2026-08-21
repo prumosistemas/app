@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.96 - higiene de processos e failover durável**
+Versao: **1.0.97 - retorno automático do Modal principal**
 
 ## Estado atual
 
@@ -12,6 +12,7 @@ Versao: **1.0.96 - higiene de processos e failover durável**
 - API Python no servidor: `prumo-api`.
 - Navegadores: `30` sessoes Modal/turbo.
 - Portal Nacional: Google Modo IA com dois Spaces privados Hugging Face como primeira análise visual; o Modal primário hospeda o navegador e é preferido enquanto saudável, a segunda conta assume falhas/quota e o ThinkPad usa apenas uma vaga de último recurso. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
+- Um Modal sem crédito/`workspace disabled` fica em quarentena compartilhada por 30 minutos. A próxima atividade após o prazo sonda novamente o principal; sucesso o recoloca automaticamente na frente, sem regra de calendário ou intervenção manual.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; frames do Modal permanecem nos Volumes Modal, enquanto uma resolução feita pelo fallback residencial conserva sua própria evidência local pelo mesmo prazo.
 - Cada conta do espelho Modal possui timeout de sincronização e o manifesto conserva somente a janela atual, evitando thread presa e índice crescente indefinidamente.
 - Runs do Portal podem ser continuadas do checkpoint sem reindexar ou perder XML/PDF. Indisponibilidade do Portal ou do solver mantém a run viva, reduz a concorrência para um probe e volta automaticamente à velocidade normal após sucesso. `Unusual traffic` é tratado como falha daquela tentativa, não como objetivo de otimização: endpoints Modal voltam ao pool em 10–15 s e o probe global cresce somente até 120 s. A run publica heartbeat e progresso a cada 10 s.
@@ -97,9 +98,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.96 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.97 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.96
+docker push ryang20/prumo-api:1.0.97
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

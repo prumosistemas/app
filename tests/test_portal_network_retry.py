@@ -271,7 +271,7 @@ def test_primary_modal_is_preferred_and_local_remains_last() -> None:
     assert first[-1] == second[-1] == "http://127.0.0.1:8876/solve"
 
 
-def test_modal_with_recent_success_is_preferred(monkeypatch, tmp_path) -> None:
+def test_recovered_primary_is_preferred_over_fallback_history(monkeypatch, tmp_path) -> None:
     primary = "https://primary--solver.modal.run/solve"
     fallback = "https://fallback--solver.modal.run/solve"
     residential = "http://127.0.0.1:8876/solve"
@@ -281,7 +281,7 @@ def test_modal_with_recent_success_is_preferred(monkeypatch, tmp_path) -> None:
     automation.record_solver_endpoint_event(fallback, "success", "nota-1")
 
     ordered = automation.balance_modal_solver_candidates([primary, fallback, residential], "nota-2")
-    assert ordered == [fallback, primary, residential]
+    assert ordered == [primary, fallback, residential]
 
 
 def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> None:
@@ -411,8 +411,45 @@ def test_disabled_modal_workspace_has_long_shared_cooldown() -> None:
 
     automation.record_solver_endpoint_event(url, "failure", "health", error)
 
-    assert automation.mark_solver_endpoint_unavailable(url, error) == 6 * 3600
-    assert automation.persisted_solver_endpoint_cooldown_remaining(url) > 21_500
+    assert automation.mark_solver_endpoint_unavailable(url, error) == (
+        automation.SOLVER_MODAL_DISABLED_RECHECK_SECONDS
+    )
+    assert automation.persisted_solver_endpoint_cooldown_remaining(url) > (
+        automation.SOLVER_MODAL_DISABLED_RECHECK_SECONDS - 5
+    )
+
+
+def test_disabled_primary_automatically_rejoins_after_shared_cooldown(
+    monkeypatch, tmp_path
+) -> None:
+    primary = "https://primary--solver.modal.run/solve"
+    fallback = "https://fallback--solver.modal.run/solve"
+    residential = "http://127.0.0.1:8876/solve"
+    monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "status.json")
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", fallback)
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URLS", [fallback, residential])
+    monkeypatch.setattr(automation, "SOLVER_MODAL_DISABLED_RECHECK_SECONDS", 300)
+
+    endpoint_file = automation.solver_endpoint_state_file(primary)
+    endpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    endpoint_file.write_text(
+        json.dumps(
+            {
+                "event": "failure",
+                "error_kind": "http_404",
+                "at": "2020-01-01T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    available, wait_seconds = automation.available_solver_url_candidates(primary)
+    assert wait_seconds is None
+    assert automation.balance_modal_solver_candidates(available, "nota") == [
+        primary,
+        fallback,
+        residential,
+    ]
 
 
 def test_explicit_google_block_keeps_modal_pool_available() -> None:

@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.96**
+Versao do app: **1.0.97**
 Atualizado em: **2026-08-21**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -90,12 +90,18 @@ associar o bloqueio à conta.
 Quando a recuperação por Chrome já identifica `/sorry/index`, ela devolve o
 controle imediatamente ao failover e não abre outros perfis no mesmo egress.
 O Modal principal continua preferencial enquanto saudável e a conta reserva é
-promovida após falha, sem alternância 2+2 desnecessária. `404 workspace
-disabled` abre cooldown compartilhado de seis horas; `unusual` continua curto
+usada durante a quarentena, sem alternância 2+2 desnecessária. `404 workspace
+disabled` abre cooldown compartilhado de 30 minutos; `unusual` continua curto
 porque pode pertencer apenas a um contêiner. Threads que aguardaram vaga
 reavaliam o cooldown antes de consultar. As runs publicam
 heartbeat e resumo do índice a cada 10 s; o monitor interno separa runtimes ISS
 e Portal para não classificar um processo vivo como travado.
+
+Na 1.0.97, o cooldown de falta de crédito não depende do dia de renovação. Ao
+expirar, a próxima atividade sonda o Modal principal antes da reserva. Novo 404
+renova a quarentena; sucesso limpa a penalidade e restaura automaticamente o
+principal. `PORTAL_MODAL_DISABLED_RECHECK_SECONDS` permite ajustar o intervalo
+entre 300 e 21600 segundos, com padrão de 1800.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
