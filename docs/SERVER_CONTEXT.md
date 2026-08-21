@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.97
+Versao: 1.0.98
 Data: 2026-08-21
 Modo atual: producao unica, sem homologacao ativa
 
@@ -11,7 +11,7 @@ A Prumo roda em cinco partes:
 1. HTMLs críticos servidos diretamente pelo Cloudflare Worker em `https://app.prumosistemas.com.br`; Netlify permanece como publicação complementar ligada ao GitHub.
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
-4. Navegadores remotos no Modal, app `prumo-browserless`, atualmente com 30 sessoes turbo pela API.
+4. Navegadores remotos nas contas Modal, app `prumo-browserless`, com pesos por conta, cooldown por endpoint e retorno automático.
 5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback. A segunda conta HF esta protegida no cofre, mas ainda sem compute por inelegibilidade ZeroGPU da conta nova.
 
 A checagem de encerramento da escrituração é uma exceção intencional ao caminho Browserless do ISS: `server/iss_closure_scan.py` faz requests diretos do ThinkPad. O limite global padrão é seis sessões HTTP, com até quatro por conta e duas contas orquestradas em paralelo. Assim, usuários diferentes podem verificar ao mesmo tempo sem criar concorrência ilimitada nem ocupar Modal.
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.97",
+  "version": "1.0.98",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -97,7 +97,7 @@ O esperado:
 
 ## Modal
 
-Conta/perfil do Browserless ISS no CLI: `ryanzin` (`ryangurgell20`).
+Contas Browserless ISS: principal `ryangurgell20`, reserva `fabriciofarofa5` e terceira `prumo-sistema` quando autenticada.
 
 App Modal:
 
@@ -112,7 +112,17 @@ Deploy do Modal:
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
 python -m ops.prumo_ops modal deploy --account primary --target iss
+python -m ops.prumo_ops modal sync-iss-secret --account fallback --target iss
+python -m ops.prumo_ops modal deploy --account fallback --target iss
+python -m ops.prumo_ops modal smoke-iss --account fallback --target iss
+python -m ops.prumo_ops server configure-iss-pool --apply
 ```
+
+Repita `sync-iss-secret`, `deploy` e `smoke-iss` com `--account tertiary`
+depois que o perfil `prumo-sistema` estiver no cofre. O pool usa pesos 18/4/8
+com três contas e 24/4 com duas. `workspace disabled` recebe cooldown de 30
+minutos; após o prazo, uma conexão real sonda a conta e o sucesso a devolve ao
+pool. A renovação de créditos não depende de uma data codificada.
 
 Relatorio de custo vivo:
 
@@ -533,8 +543,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.97 .
-docker push ryang20/prumo-api:1.0.97
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.98 .
+docker push ryang20/prumo-api:1.0.98
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -545,10 +555,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.97 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.98 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.97
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.98
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

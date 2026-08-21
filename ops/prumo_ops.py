@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -260,6 +261,12 @@ def netlify_deploy(store: SecretStore, apply: bool) -> None:
 MODAL_ACCOUNTS = {
     "primary": ("MODAL_PRIMARY_TOKEN_ID", "MODAL_PRIMARY_TOKEN_SECRET"),
     "fallback": ("MODAL_FALLBACK_TOKEN_ID", "MODAL_FALLBACK_TOKEN_SECRET"),
+    "tertiary": ("MODAL_TERTIARY_TOKEN_ID", "MODAL_TERTIARY_TOKEN_SECRET"),
+}
+MODAL_WORKSPACES = {
+    "primary": "ryangurgell20",
+    "fallback": "fabriciofarofa5",
+    "tertiary": "prumo-sistema",
 }
 
 HF_ACCOUNTS = {
@@ -460,10 +467,13 @@ def modal_command(
     elif action == "billing":
         modal_run(store, account, ["billing", "report", "--for", "this month", "--json"])
     elif action == "deploy":
-        if target == "iss" and account != "primary":
-            raise OpsError("O Browserless ISS pertence a conta primary.")
         if target == "iss":
-            modal_run(store, account, ["deploy", "deploy/modal_browserless.py"])
+            sizing = (
+                {"PRUMO_MODAL_MAX_CONTAINERS": "8"}
+                if account == "primary"
+                else {"PRUMO_MODAL_MAX_CONTAINERS": "6"}
+            )
+            modal_run(store, account, ["deploy", "deploy/modal_browserless.py"], sizing)
         elif target == "portal":
             sizing = (
                 {"PORTAL_MODAL_MIN_CONTAINERS": "1", "PORTAL_MODAL_BUFFER_CONTAINERS": "1"}
@@ -475,8 +485,6 @@ def modal_command(
         else:
             raise OpsError("Target Modal invalido.")
     elif action == "rollover":
-        if target == "iss" and account != "primary":
-            raise OpsError("O Browserless ISS pertence a conta primary.")
         app_name = (
             "prumo-browserless"
             if target == "iss"
@@ -487,6 +495,56 @@ def modal_command(
         if not app_name:
             raise OpsError("Target Modal invalido.")
         modal_run(store, account, ["app", "rollover", app_name, "--strategy", "recreate"])
+    elif action == "sync-iss-secret":
+        secret_name = f"ISS_BROWSERLESS_TOKEN_{account.upper()}"
+        if not store.has(secret_name):
+            if account == "primary":
+                raise OpsError(
+                    "O token primario existente nao deve ser rotacionado automaticamente. "
+                    "Cadastre ISS_BROWSERLESS_TOKEN_PRIMARY antes desta operacao."
+                )
+            store.set(secret_name, secrets.token_urlsafe(32))
+        token = store.require(secret_name)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", encoding="utf-8", delete=False
+            ) as handle:
+                json.dump({"TOKEN": token}, handle, separators=(",", ":"))
+                temporary_path = Path(handle.name)
+            modal_run(
+                store,
+                account,
+                [
+                    "secret", "create", "prumo-browserless",
+                    "--from-json", str(temporary_path), "--force",
+                ],
+                sensitive_values=[token],
+            )
+            emit({
+                "account": account,
+                "secret": "prumo-browserless",
+                "local_alias": secret_name,
+                "value_printed": False,
+            })
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    elif action == "smoke-iss":
+        secret_name = f"ISS_BROWSERLESS_TOKEN_{account.upper()}"
+        token = store.require(secret_name)
+        workspace = MODAL_WORKSPACES[account]
+        endpoint = f"https://{workspace}--prumo-browserless-browserless-server.modal.run/json/version"
+        started = time.perf_counter()
+        response = requests.get(endpoint, params={"token": token}, timeout=120)
+        if response.status_code != 200:
+            raise OpsError(f"Browserless {account} respondeu HTTP {response.status_code}.")
+        emit({
+            "account": account,
+            "browserless": "ok",
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+            "value_printed": False,
+        })
     elif action == "sync-hf-secret":
         token = hf_token(store, "primary")
         mode = hf_mode or "prefer"
@@ -658,7 +716,93 @@ PY
     )
 
 
-def server_command(action: str, apply: bool, lines: int) -> None:
+def configure_iss_browser_failover(store: SecretStore, *, apply: bool) -> None:
+    if not apply:
+        emit({
+            "would_configure": "BROWSER_CDP_POOL",
+            "primary_weight": 18,
+            "fallback_weight": 4,
+            "tertiary_weight": 8,
+            "restart": "prumo-api",
+            "apply": False,
+        })
+        return
+    tokens = {
+        "fallback": store.require("ISS_BROWSERLESS_TOKEN_FALLBACK"),
+    }
+    if store.has("ISS_BROWSERLESS_TOKEN_TERTIARY"):
+        tokens["tertiary"] = store.require("ISS_BROWSERLESS_TOKEN_TERTIARY")
+    payload_b64 = base64.b64encode(json.dumps(tokens).encode("utf-8")).decode("ascii")
+    server_script(
+        f"""set -eu
+cd /home/server/prumo-src
+python3 - '{payload_b64}' <<'PY'
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path('.env')
+tokens = json.loads(base64.b64decode(sys.argv[1]).decode('utf-8'))
+lines = path.read_text(encoding='utf-8').splitlines()
+key = 'BROWSER_CDP_POOL'
+current = next((line.split('=', 1)[1] for line in lines if line.startswith(key + '=')), '')
+entries = []
+primary_found = False
+for raw in current.split(';;'):
+    entry = raw.strip()
+    if not entry:
+        continue
+    parts = entry.split('|', 2)
+    url = parts[-1]
+    if (
+        'fabriciofarofa5--prumo-browserless' in url
+        or 'prumo-sistema--prumo-browserless' in url
+    ):
+        continue
+    if 'ryangurgell20--prumo-browserless' in url:
+        primary_weight = 18 if 'tertiary' in tokens else 24
+        entries.append(f'modal-primary|{{primary_weight}}|' + url)
+        primary_found = True
+    else:
+        entries.append(entry)
+if not primary_found:
+    raise SystemExit('Pool primario atual nao encontrado; nenhuma alteracao aplicada.')
+fallback = (
+    'modal-fallback|4|wss://fabriciofarofa5--prumo-browserless-'
+    'browserless-server.modal.run?token=' + tokens['fallback']
+)
+entries.append(fallback)
+if 'tertiary' in tokens:
+    entries.append(
+        'modal-tertiary|8|wss://prumo-sistema--prumo-browserless-'
+        'browserless-server.modal.run?token=' + tokens['tertiary']
+    )
+replacement = key + '=' + ';;'.join(entries)
+updated = []
+replaced = False
+for line in lines:
+    if line.startswith(key + '='):
+        updated.append(replacement)
+        replaced = True
+    else:
+        updated.append(line)
+if not replaced:
+    updated.append(replacement)
+temp = path.with_suffix('.env.tmp')
+temp.write_text('\n'.join(updated) + '\n', encoding='utf-8')
+os.replace(temp, path)
+print('Pool ISS configurado: ' + ('primario=18 fallback=4 terceiro=8' if 'tertiary' in tokens else 'primario=24 fallback=4') + '; valores nao exibidos.')
+PY
+docker compose up -d --force-recreate prumo-api
+docker ps --filter name=prumo-api --format '{{{{.Names}}}} {{{{.Status}}}} {{{{.Image}}}}'
+""",
+        timeout=300,
+    )
+
+
+def server_command(store: SecretStore, action: str, apply: bool, lines: int) -> None:
     if action == "status":
         server_script(
             """set -eu
@@ -670,7 +814,7 @@ echo API_HEALTH
 curl -fsS http://127.0.0.1:8000/
 """
         )
-        server_command("runs", apply=False, lines=lines)
+        server_command(store, "runs", apply=False, lines=lines)
         recovery_spec = os.getenv("PRUMO_SERVER_RECOVERY_SPEC", "").strip()
         recovery_path = ROOT / ".ops-server-recovery.json"
         recovery_from_file = False
@@ -686,6 +830,8 @@ curl -fsS http://127.0.0.1:8000/
             server_recover_from_spec(recovery_spec)
             if recovery_from_file:
                 recovery_path.unlink(missing_ok=True)
+    elif action == "configure-iss-pool":
+        configure_iss_browser_failover(store, apply=apply)
     elif action == "logs":
         server_script(f"docker logs --tail {max(1, min(lines, 2000))} prumo-api\n")
     elif action == "runs":
@@ -944,7 +1090,11 @@ def migrate_local(store: SecretStore) -> None:
     modal_config = Path.home() / ".modal.toml"
     if modal_config.is_file():
         data = tomllib.loads(modal_config.read_text(encoding="utf-8"))
-        for profile, prefix in (("ryanzin", "MODAL_PRIMARY"), ("fabriciofarofa5", "MODAL_FALLBACK")):
+        for profile, prefix in (
+            ("ryanzin", "MODAL_PRIMARY"),
+            ("fabriciofarofa5", "MODAL_FALLBACK"),
+            ("prumo-sistema", "MODAL_TERTIARY"),
+        ):
             section = data.get(profile) or {}
             if section.get("token_id") and section.get("token_secret"):
                 values[f"{prefix}_TOKEN_ID"] = str(section["token_id"])
@@ -1043,7 +1193,13 @@ def build_parser() -> argparse.ArgumentParser:
     netlify.add_argument("--apply", action="store_true")
 
     modal = sub.add_parser("modal", help="Modal com token injetado no processo filho")
-    modal.add_argument("action", choices=["status", "logs", "billing", "deploy", "rollover", "sync-hf-secret"])
+    modal.add_argument(
+        "action",
+        choices=[
+            "status", "logs", "billing", "deploy", "rollover",
+            "sync-hf-secret", "sync-iss-secret", "smoke-iss",
+        ],
+    )
     modal.add_argument("--account", choices=sorted(MODAL_ACCOUNTS), default="primary")
     modal.add_argument("--target", choices=["iss", "portal"])
     modal.add_argument("--hf-mode", choices=["off", "prefer", "fallback"])
@@ -1055,7 +1211,7 @@ def build_parser() -> argparse.ArgumentParser:
     hf.add_argument("--space-name", action="append", dest="space_names")
 
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
-    server.add_argument("action", choices=["status", "logs", "runs", "deploy"])
+    server.add_argument("action", choices=["status", "logs", "runs", "deploy", "configure-iss-pool"])
     server.add_argument("--apply", action="store_true")
     server.add_argument("--lines", type=int, default=200)
 
@@ -1082,7 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.area == "hf":
             hf_command(store, args.action, args.account, args.source_dir, args.space_names)
         elif args.area == "server":
-            server_command(args.action, args.apply, args.lines)
+            server_command(store, args.action, args.apply, args.lines)
         elif args.area == "app":
             app_login_smoke(store, args.alias)
     except (OpsError, SecretStoreError, requests.RequestException, subprocess.TimeoutExpired) as exc:

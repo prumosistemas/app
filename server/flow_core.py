@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Tuple
@@ -34,6 +35,8 @@ BASE_DIR = ""
 _BROWSER_POOL_ENV_KEY: tuple[str, str] | None = None
 _BROWSER_POOL: list[tuple[str, str]] = []
 _BROWSER_POOL_CURSOR = 0
+_BROWSER_LABEL_COOLDOWN_UNTIL: dict[str, float] = {}
+_BROWSER_LABEL_LAST_REASON: dict[str, str] = {}
 _BROWSER_PROXY_ENV_KEY: str | None = None
 _BROWSER_PROXY_MAP: dict[str, dict[str, str]] = {}
 _BROWSER_LABEL_ACTIVE: dict[str, int] = {}
@@ -249,15 +252,50 @@ def _parse_browser_cdp_pool() -> list[tuple[str, str]]:
     return _BROWSER_POOL
 
 
-def _next_browser_cdp_target() -> tuple[str, str]:
+def _next_browser_cdp_target(*, now: float | None = None) -> tuple[str, str]:
     pool = _parse_browser_cdp_pool()
     if not pool:
         raise RuntimeError("BROWSER_CDP_URL ou BROWSER_CDP_POOL nao configurado.")
 
     global _BROWSER_POOL_CURSOR
-    target = pool[_BROWSER_POOL_CURSOR % len(pool)]
+    current = time.monotonic() if now is None else now
+    start = _BROWSER_POOL_CURSOR % len(pool)
+    for offset in range(len(pool)):
+        index = (start + offset) % len(pool)
+        label, url = pool[index]
+        if _BROWSER_LABEL_COOLDOWN_UNTIL.get(label, 0.0) <= current:
+            _BROWSER_POOL_CURSOR = index + 1
+            return label, url
+
+    # Se todos estiverem em cooldown, permite uma sondagem no que estiver mais
+    # perto de voltar. Assim o serviço se recupera sozinho de uma pane total.
+    label, url = min(pool, key=lambda item: _BROWSER_LABEL_COOLDOWN_UNTIL.get(item[0], 0.0))
     _BROWSER_POOL_CURSOR += 1
-    return target
+    return label, url
+
+
+def _browser_failure_cooldown_seconds(error: BaseException) -> int:
+    text = str(error).lower()
+    if "workspace" in text and "disabled" in text or "404" in text:
+        return max(60, int(os.getenv("BROWSER_DISABLED_COOLDOWN_SECONDS", "1800")))
+    if "429" in text or "too many requests" in text:
+        return max(15, int(os.getenv("BROWSER_RATE_LIMIT_COOLDOWN_SECONDS", "60")))
+    if any(code in text for code in ("502", "503", "504", "connection refused", "connection closed")):
+        return max(5, int(os.getenv("BROWSER_TRANSIENT_COOLDOWN_SECONDS", "15")))
+    return max(1, int(os.getenv("BROWSER_FAILURE_COOLDOWN_SECONDS", "5")))
+
+
+def _mark_browser_target_failure(label: str, error: BaseException, *, now: float | None = None) -> int:
+    cooldown = _browser_failure_cooldown_seconds(error)
+    current = time.monotonic() if now is None else now
+    _BROWSER_LABEL_COOLDOWN_UNTIL[label] = current + cooldown
+    _BROWSER_LABEL_LAST_REASON[label] = type(error).__name__
+    return cooldown
+
+
+def _mark_browser_target_success(label: str) -> None:
+    _BROWSER_LABEL_COOLDOWN_UNTIL.pop(label, None)
+    _BROWSER_LABEL_LAST_REASON.pop(label, None)
 
 
 async def _register_browser_label(label: str) -> int:
@@ -393,6 +431,7 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
             )
 
             browser = await pw.chromium.connect_over_cdp(browser_cdp_url)
+            _mark_browser_target_success(browser_label)
 
             context_options: dict[str, Any] = {
                 "accept_downloads": True,
@@ -439,7 +478,15 @@ async def create_browser_context(config: FlowConfig) -> Tuple[Any, Callable[[], 
 
         except Exception as e:
             last_err = e
-            logger.warning(f"[browser] falha ao criar browser/context tentativa={attempt}: {e}")
+            cooldown = _mark_browser_target_failure(browser_label, e) if browser_label else 0
+            logger.warning(
+                "[browser] falha ao criar browser/context target=%s tentativa=%s/%s cooldown=%ss: %s",
+                browser_label or "nao_selecionado",
+                attempt,
+                max_attempts,
+                cooldown,
+                e,
+            )
 
             try:
                 if context is not None:

@@ -44,6 +44,56 @@ def test_automatic_schedules_are_evenly_spread_across_day(monkeypatch, tmp_path:
     assert minutes == [0, 480, 960]
 
 
+def test_rebalance_never_skips_an_automatic_job_that_has_not_started_today(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    portal_nacional._save_automatic_state(
+        ctx,
+        {
+            "jobs": [{
+                "id": "cert-1",
+                "cert_id": "cert-1",
+                "enabled": True,
+                "schedule_minute": 720,
+                "last_started_at": "2026-08-20T12:00:00-03:00",
+                "next_run_at": "2026-08-22T12:00:00-03:00",
+            }]
+        },
+    )
+
+    now = datetime(2026, 8, 21, 14, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    portal_nacional._rebalance_automatic_schedules(now)
+
+    job = portal_nacional._load_automatic_state(ctx)["jobs"][0]
+    assert portal_nacional._parse_portal_datetime(job["next_run_at"]) == now
+
+
+def test_rebalance_keeps_next_day_after_job_started_today(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    portal_nacional._save_automatic_state(
+        ctx,
+        {
+            "jobs": [{
+                "id": "cert-1",
+                "cert_id": "cert-1",
+                "enabled": True,
+                "schedule_minute": 720,
+                "last_started_at": "2026-08-21T08:30:00-03:00",
+                "next_run_at": "2026-08-22T12:00:00-03:00",
+            }]
+        },
+    )
+
+    now = datetime(2026, 8, 21, 14, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    portal_nacional._rebalance_automatic_schedules(now)
+
+    next_run = portal_nacional._parse_portal_datetime(
+        portal_nacional._load_automatic_state(ctx)["jobs"][0]["next_run_at"]
+    )
+    assert next_run and next_run.date() == date(2026, 8, 22)
+
+
 def test_automatic_capture_starts_with_four_month_window_then_overlaps() -> None:
     assert portal_nacional._automatic_capture_range({}, date(2026, 8, 10)) == ("09/04/2026", "10/08/2026")
     assert portal_nacional._automatic_capture_range(

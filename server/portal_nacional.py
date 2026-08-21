@@ -244,7 +244,7 @@ def _next_daily_schedule(schedule_minute: int, *, after: datetime | None = None,
 
 
 def _rebalance_automatic_schedules(now: datetime | None = None) -> None:
-    current = now or datetime.now(PORTAL_TIMEZONE)
+    current = (now or datetime.now(PORTAL_TIMEZONE)).astimezone(PORTAL_TIMEZONE)
     with _AUTOMATIC_LOCK:
         grouped: Dict[str, tuple[WorkerContext, Dict[str, Any]]] = {}
         enabled: List[tuple[WorkerContext, Dict[str, Any], Dict[str, Any]]] = []
@@ -264,8 +264,29 @@ def _rebalance_automatic_schedules(now: datetime | None = None) -> None:
             # estiver livre. Rebalanceamentos posteriores preservam essa primeira captura.
             if not job.get("next_run_at"):
                 job["next_run_at"] = current.isoformat(timespec="seconds")
-            elif previous_minute is not None and int(previous_minute) != minute and job.get("last_started_at"):
-                job["next_run_at"] = _next_daily_schedule(minute, after=current).isoformat(timespec="seconds")
+            else:
+                last_started = _parse_portal_datetime(job.get("last_started_at"))
+                started_today = bool(last_started and last_started.date() == current.date())
+                next_run = _parse_portal_datetime(job.get("next_run_at"))
+                if started_today:
+                    # Uma tentativa por dia: depois que iniciou hoje, a próxima é
+                    # sempre amanhã, mesmo que o horário distribuído tenha mudado.
+                    if previous_minute is not None and int(previous_minute) != minute:
+                        job["next_run_at"] = _next_daily_schedule(
+                            minute, after=current, force_next_day=True
+                        ).isoformat(timespec="seconds")
+                else:
+                    # Nunca deixe um rebalanceamento pular a tentativa de hoje.
+                    # Se o horário já passou, fica vencida e entra assim que a fila
+                    # global liberar; se ainda não passou, aguarda o horário de hoje.
+                    today_slot = datetime.combine(
+                        current.date(),
+                        datetime_time(hour=minute // 60, minute=minute % 60),
+                        tzinfo=PORTAL_TIMEZONE,
+                    )
+                    due_today = today_slot if today_slot > current else current
+                    if next_run is None or next_run > due_today:
+                        job["next_run_at"] = due_today.isoformat(timespec="seconds")
             changed_scopes.add(_runtime_key(ctx))
 
         for ctx, state in grouped.values():

@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.97**
+Versao do app: **1.0.98**
 Atualizado em: **2026-08-21**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -60,13 +60,15 @@ permanece até o administrador reativar explicitamente o colaborador.
 | Netlify | site `appprumo`; publicacao complementar automatica pelo GitHub | HTMLs raiz, `netlify.toml` |
 | ThinkPad | API `prumo-api`, dados em `/opt/prumo/data`, codigo em `/home/server/prumo-src` | `server/`, `deploy/docker-compose.yml` |
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
-| Modal fallback | segundo solver Google Modo IA, escala a zero quando ocioso | mesmo arquivo de deploy do Portal |
+| Modal fallback | Browserless ISS de contingência e segundo solver Google Modo IA | mesmos arquivos de deploy |
 | Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `deploy/huggingface/navegador-headless/`, `solver/google_ai_mode/`, `docs/HUGGINGFACE_CONTEXT.md` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker
 e valida `X-Internal-Secret`; o servico no host esta ligado a `127.0.0.1:8000`.
-O ISS usa Browserless Modal direto. No Portal, o hCaptcha roda nas duas contas
+O ISS usa um pool Browserless direto nas duas contas Modal. A principal recebe
+maior peso; falha de quota/workspace abre cooldown e desvia para a reserva. O
+servidor volta a sondar a principal automaticamente. No Portal, o hCaptcha roda nas duas contas
 Modal; a análise Google Modo IA tenta os dois Spaces privados HF, depois o
 egress da conta Modal que hospeda o navegador. O ThinkPad permanece como
 último fallback residencial. A API espelha no ThinkPad imagens-resumo, MP4 e
@@ -74,7 +76,8 @@ eventos de auditoria dos Volumes Modal, com retenção de sete dias.
 
 No Portal Nacional, `Notas automático` persiste somente configuração e IDs em
 `automatic.json`, dentro do escopo do colaborador. O agendador do contêiner
-distribui os horários ao longo do dia, não inicia captura automática enquanto
+distribui os horários ao longo do dia, garante uma tentativa por dia mesmo após
+rebalanceamento, não inicia captura automática enquanto
 outra run do Portal estiver ativa e retém apenas runs automáticas por 123 dias.
 A captura diária sempre baixa XML+PDF e sua primeira janela começa na data
 escolhida na tela.
@@ -232,6 +235,10 @@ python -m ops.prumo_ops modal sync-hf-secret --account fallback --hf-mode prefer
 python -m ops.prumo_ops modal deploy --account primary --target iss
 python -m ops.prumo_ops modal deploy --account primary --target portal
 python -m ops.prumo_ops modal deploy --account fallback --target portal
+python -m ops.prumo_ops modal sync-iss-secret --account fallback --target iss
+python -m ops.prumo_ops modal deploy --account fallback --target iss
+python -m ops.prumo_ops modal smoke-iss --account fallback --target iss
+python -m ops.prumo_ops server configure-iss-pool --apply
 ```
 
 A CLI injeta `MODAL_TOKEN_ID` e `MODAL_TOKEN_SECRET` somente no ambiente do
