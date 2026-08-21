@@ -802,6 +802,91 @@ docker ps --filter name=prumo-api --format '{{{{.Names}}}} {{{{.Status}}}} {{{{.
     )
 
 
+def configure_modal_tertiary(store: SecretStore, *, apply: bool) -> None:
+    endpoint = (
+        "https://prumo-sistema--prumo-portal-nacional-google-solver-"
+        "solver-server.modal.run/solve"
+    )
+    if not apply:
+        emit({
+            "would_configure": "modal_tertiary",
+            "workspace": MODAL_WORKSPACES["tertiary"],
+            "portal_endpoint": endpoint,
+            "values_printed": False,
+            "apply": False,
+        })
+        return
+    token_id = store.require("MODAL_TERTIARY_TOKEN_ID")
+    token_secret = store.require("MODAL_TERTIARY_TOKEN_SECRET")
+    payload = {
+        "workspace": MODAL_WORKSPACES["tertiary"],
+        "token_id": token_id,
+        "token_secret": token_secret,
+        "endpoint": endpoint,
+    }
+    payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    server_script(
+        f"""set -eu
+cd /opt/prumo/app/deploy
+python3 - '{payload_b64}' <<'PY'
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path('/opt/prumo/app/deploy/.env')
+payload = json.loads(base64.b64decode(sys.argv[1]).decode('utf-8'))
+lines = path.read_text(encoding='utf-8').splitlines()
+values = {{}}
+order = []
+for line in lines:
+    if '=' not in line or line.lstrip().startswith('#'):
+        order.append((None, line))
+        continue
+    key, value = line.split('=', 1)
+    values[key] = value
+    order.append((key, None))
+
+raw = values.get('PORTAL_NACIONAL_SOLVER_FALLBACK_URLS', '')
+items = [item.strip() for item in raw.replace(';', ',').split(',') if item.strip()]
+items = [item for item in items if 'prumo-sistema--prumo-portal-nacional-google-solver' not in item]
+local = [item for item in items if '127.0.0.1' in item or 'localhost' in item]
+remote = [item for item in items if item not in local]
+remote.append(payload['endpoint'])
+values.update({{
+    'PORTAL_NACIONAL_SOLVER_FALLBACK_URLS': ','.join(remote + local),
+    'MODAL_TERTIARY_WORKSPACE': payload['workspace'],
+    'MODAL_TERTIARY_TOKEN_ID': payload['token_id'],
+    'MODAL_TERTIARY_TOKEN_SECRET': payload['token_secret'],
+}})
+seen = set()
+updated = []
+for key, literal in order:
+    if key is None:
+        updated.append(literal)
+    elif key not in seen:
+        updated.append(key + '=' + values[key])
+        seen.add(key)
+for key in (
+    'PORTAL_NACIONAL_SOLVER_FALLBACK_URLS',
+    'MODAL_TERTIARY_WORKSPACE',
+    'MODAL_TERTIARY_TOKEN_ID',
+    'MODAL_TERTIARY_TOKEN_SECRET',
+):
+    if key not in seen:
+        updated.append(key + '=' + values[key])
+temp = path.with_suffix('.env.tmp')
+temp.write_text('\\n'.join(updated) + '\\n', encoding='utf-8')
+os.replace(temp, path)
+print('Terceira conta configurada no Portal e no billing; valores nao exibidos.')
+PY
+docker compose up -d --force-recreate prumo-api
+""",
+        timeout=300,
+    )
+
+
 def server_command(store: SecretStore, action: str, apply: bool, lines: int) -> None:
     if action == "status":
         server_script(
@@ -832,6 +917,8 @@ curl -fsS http://127.0.0.1:8000/
                 recovery_path.unlink(missing_ok=True)
     elif action == "configure-iss-pool":
         configure_iss_browser_failover(store, apply=apply)
+    elif action == "configure-tertiary":
+        configure_modal_tertiary(store, apply=apply)
     elif action == "smoke-iss":
         server_script(
             r"""set -eu
@@ -1272,7 +1359,10 @@ def build_parser() -> argparse.ArgumentParser:
     server = sub.add_parser("server", help="ThinkPad via Cloudflare Access SSH")
     server.add_argument(
         "action",
-        choices=["status", "logs", "runs", "deploy", "configure-iss-pool", "smoke-iss", "metrics"],
+        choices=[
+            "status", "logs", "runs", "deploy", "configure-iss-pool",
+            "configure-tertiary", "smoke-iss", "metrics",
+        ],
     )
     server.add_argument("--apply", action="store_true")
     server.add_argument("--lines", type=int, default=200)

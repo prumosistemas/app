@@ -130,6 +130,19 @@ pool. A renovação de créditos não depende de uma data codificada.
 ele prova conexão CDP e failover. `server metrics` mostra fila e vida do
 agendador sem imprimir segredos.
 
+Depois de autenticar o perfil `prumo-sistema`, migre-o para o cofre, publique os
+dois apps e configure o servidor sem copiar credenciais:
+
+```powershell
+python -m ops.prumo_ops secrets migrate-local
+python -m ops.prumo_ops modal sync-iss-secret --account tertiary --target iss
+python -m ops.prumo_ops modal sync-hf-secret --account tertiary --hf-mode prefer
+python -m ops.prumo_ops modal deploy --account tertiary --target iss
+python -m ops.prumo_ops modal deploy --account tertiary --target portal
+python -m ops.prumo_ops server configure-tertiary --apply
+python -m ops.prumo_ops server configure-iss-pool --apply
+```
+
 Relatorio de custo vivo:
 
 ```powershell

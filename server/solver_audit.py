@@ -55,6 +55,7 @@ def source_roots() -> dict[str, Path]:
     return {
         "modal_primary": mirror_root() / "modal_primary",
         "modal_fallback": mirror_root() / "modal_fallback",
+        "modal_tertiary": mirror_root() / "modal_tertiary",
         "thinkpad": _output_root() / "_api_data" / "google_ai_solver_artifacts",
     }
 
@@ -272,7 +273,11 @@ def _prune_local() -> int:
 async def sync_once() -> dict[str, Any]:
     started = time.monotonic()
     results = []
-    for role, prefix in (("modal_primary", "MODAL_PRIMARY"), ("modal_fallback", "MODAL_FALLBACK")):
+    for role, prefix in (
+        ("modal_primary", "MODAL_PRIMARY"),
+        ("modal_fallback", "MODAL_FALLBACK"),
+        ("modal_tertiary", "MODAL_TERTIARY"),
+    ):
         token_id = os.getenv(f"{prefix}_TOKEN_ID", "").strip()
         token_secret = os.getenv(f"{prefix}_TOKEN_SECRET", "").strip()
         if not token_id or not token_secret:

@@ -76,16 +76,18 @@ class AdminSummaryTests(unittest.TestCase):
         env = {
             "PORTAL_NACIONAL_SOLVER_URL": "https://principal.example/solve",
             "PORTAL_NACIONAL_SOLVER_FALLBACK_URLS": (
-                "https://secundario.example/solve,http://127.0.0.1:8876/solve"
+                "https://secundario.example/solve,https://terceiro.example/solve,"
+                "http://127.0.0.1:8876/solve"
             ),
         }
         with patch.dict("os.environ", env, clear=False):
             self.assertEqual(
                 main._portal_modal_endpoints(),
-                (
+                [
                     "https://principal.example/solve",
                     "https://secundario.example/solve",
-                ),
+                    "https://terceiro.example/solve",
+                ],
             )
 
     def test_solver_runtime_status_accepts_string_output_root(self):

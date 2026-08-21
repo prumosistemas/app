@@ -606,21 +606,20 @@ def _modal_endpoint_host(value: str | None) -> str:
         return ""
 
 
-def _portal_modal_endpoints() -> tuple[str, str]:
+def _portal_modal_endpoints() -> list[str]:
     primary = str(os.getenv("PORTAL_NACIONAL_SOLVER_URL", "") or "").strip()
     raw_fallbacks = str(
         os.getenv("PORTAL_NACIONAL_SOLVER_FALLBACK_URLS")
         or os.getenv("PORTAL_NACIONAL_SOLVER_FALLBACK_URL")
         or ""
     )
-    fallback = ""
+    endpoints = [primary] if primary else []
     for candidate in raw_fallbacks.replace(";", ",").replace("\n", ",").split(","):
         candidate = candidate.strip()
         host = _modal_endpoint_host(candidate)
-        if candidate and host not in {"127.0.0.1", "localhost"}:
-            fallback = candidate
-            break
-    return primary, fallback
+        if candidate and host not in {"127.0.0.1", "localhost"} and candidate not in endpoints:
+            endpoints.append(candidate)
+    return endpoints
 
 
 def _portal_solver_runtime_status() -> Dict[str, Any]:
@@ -731,14 +730,14 @@ def _modal_billing_snapshot() -> Dict[str, Any]:
     target_app = str(os.getenv("MODAL_BILLING_APP_NAME", "prumo-portal-nacional-google-solver") or "").strip()
     now_dt = datetime.now(timezone.utc)
     month_start = datetime(now_dt.year, now_dt.month, 1, tzinfo=timezone.utc)
-    primary_endpoint, fallback_endpoint = _portal_modal_endpoints()
+    endpoints = _portal_modal_endpoints()
     runtime = _portal_solver_runtime_status()
     active_host = str(runtime.get("endpoint_host") or "").lower()
     primary = _modal_billing_account_snapshot(
         role="primary",
         label="Principal",
         workspace=str(os.getenv("MODAL_PRIMARY_WORKSPACE") or os.getenv("MODAL_WORKSPACE") or ""),
-        endpoint=primary_endpoint,
+        endpoint=endpoints[0] if endpoints else "",
         token_id=str(os.getenv("MODAL_PRIMARY_TOKEN_ID") or os.getenv("MODAL_TOKEN_ID") or ""),
         token_secret=str(os.getenv("MODAL_PRIMARY_TOKEN_SECRET") or os.getenv("MODAL_TOKEN_SECRET") or ""),
         monthly_credit=_env_decimal("MODAL_PRIMARY_MONTHLY_CREDIT_USD", str(monthly_credit)),
@@ -751,7 +750,7 @@ def _modal_billing_snapshot() -> Dict[str, Any]:
         role="fallback",
         label="Fallback",
         workspace=str(os.getenv("MODAL_FALLBACK_WORKSPACE") or ""),
-        endpoint=fallback_endpoint,
+        endpoint=endpoints[1] if len(endpoints) > 1 else "",
         token_id=str(os.getenv("MODAL_FALLBACK_TOKEN_ID") or ""),
         token_secret=str(os.getenv("MODAL_FALLBACK_TOKEN_SECRET") or ""),
         monthly_credit=_env_decimal("MODAL_FALLBACK_MONTHLY_CREDIT_USD", str(monthly_credit)),
@@ -760,7 +759,20 @@ def _modal_billing_snapshot() -> Dict[str, Any]:
         now_dt=now_dt,
         active_host=active_host,
     )
-    accounts = [primary, fallback]
+    tertiary = _modal_billing_account_snapshot(
+        role="tertiary",
+        label="Terceira conta",
+        workspace=str(os.getenv("MODAL_TERTIARY_WORKSPACE") or ""),
+        endpoint=endpoints[2] if len(endpoints) > 2 else "",
+        token_id=str(os.getenv("MODAL_TERTIARY_TOKEN_ID") or ""),
+        token_secret=str(os.getenv("MODAL_TERTIARY_TOKEN_SECRET") or ""),
+        monthly_credit=_env_decimal("MODAL_TERTIARY_MONTHLY_CREDIT_USD", str(monthly_credit)),
+        target_app=target_app,
+        month_start=month_start,
+        now_dt=now_dt,
+        active_host=active_host,
+    )
+    accounts = [primary, fallback, tertiary]
     return {
         "ok": any(account.get("ok") for account in accounts),
         "source": "modal.Workspace.billing.report",
