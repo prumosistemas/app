@@ -39,6 +39,9 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - O Modal reserva concluiu o smoke completo `/solve` com a chave pública de
   teste do hCaptcha em 36,89 s, devolveu token e voltou a zero navegadores
   ativos. Nenhum token foi registrado ou exibido.
+- O último fallback no ThinkPad concluiu o mesmo smoke em 27,62 s. Depois do
+  encerramento havia somente os sete processos-base do contêiner, nenhum em
+  estado zumbi, `docker-init` como PID 1 e o health do solver em uma vaga.
 
 ### Operação 1.0.95 em 2026-08-13
 
