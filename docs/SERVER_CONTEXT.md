@@ -243,6 +243,10 @@ uma vez e ficam congeladas somente ate o clique; desafios temporais continuam
 com seus quadros. O processo local em `127.0.0.1:8876` e supervisionado por
 `server/start.sh`, reinicia com backoff se cair e permanece com um navegador,
 ultimo na cadeia e separado dos workers Browserless do ISS.
+Uma outage integral e fatiada em dez minutos de probes. Ao fim da fatia, a run
+fica `aguardando_solver`, libera o agendador para outra empresa e e retomada em
+15 minutos. Na retomada apenas um item sonda a cadeia; os quatro workers so
+voltam apos sucesso.
 
 Em 2026-07-15 foram parados o app Florence remanescente em `ryangurgell20` e o
 terceiro deploy legado deste solver em `jorhinhogames`. Como esse workspace

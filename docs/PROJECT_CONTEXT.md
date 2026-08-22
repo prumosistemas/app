@@ -31,6 +31,10 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - O resolvedor local continua sendo o ultimo fallback e limitado a um browser.
   `server/start.sh` agora o supervisiona e reinicia com backoff se o processo
   cair; a fila e os workers Browserless do ISS Fortaleza permanecem separados.
+- Uma cadeia totalmente bloqueada nao monopoliza as notas automaticas. A run
+  tenta por dez minutos, persiste `aguardando_solver`, libera a agenda e volta
+  em 15 minutos com um unico probe; os outros certificados vencidos podem
+  tentar no intervalo.
 
 - As seis automações habilitadas foram auditadas em produção e permanecem
   distribuídas a cada quatro horas. Todas tentaram rodar no dia; cinco falharam

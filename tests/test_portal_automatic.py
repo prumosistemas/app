@@ -239,6 +239,78 @@ def test_scheduler_resumes_orphaned_automatic_checkpoint(monkeypatch, tmp_path: 
     assert started["retry_only"] is True
 
 
+def test_scheduler_skips_deferred_solver_run_until_retry_time(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    run_dir = portal_nacional._runs_root(ctx) / "run-waiting"
+    run_dir.mkdir(parents=True)
+    portal_nacional._save_json(
+        run_dir / "run.json",
+        {
+            "run_id": run_dir.name,
+            "status": "aguardando_solver",
+            "solver_retry_at": "2026-08-11T18:15:00-03:00",
+            "config": {"automatic": True},
+        },
+    )
+    job = {"last_run_ids": [run_dir.name]}
+
+    monkeypatch.setattr(
+        portal_nacional,
+        "_active_runtime",
+        lambda _ctx: None,
+    )
+    monkeypatch.setattr(
+        portal_nacional,
+        "datetime",
+        type(
+            "FrozenDateTime",
+            (datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: datetime(
+                        2026, 8, 11, 18, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE
+                    )
+                )
+            },
+        ),
+    )
+
+    assert portal_nacional._stale_automatic_run_dirs(ctx, job) == []
+
+
+def test_sequence_worker_defers_entire_batch_on_solver_outage(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    run_dirs = []
+    for name in ("run-recebidas", "run-emitidas"):
+        run_dir = portal_nacional._runs_root(ctx) / name
+        run_dir.mkdir(parents=True)
+        portal_nacional._save_json(
+            run_dir / "run.json",
+            {"run_id": name, "status": "criada", "config": {"automatic": True}},
+        )
+        run_dirs.append(run_dir)
+
+    monkeypatch.setattr(portal_nacional, "_run_process", lambda *_args: 75)
+    scope = "empresa:usuario"
+    portal_nacional._RUNTIME[scope] = {"stop_requested": False}
+    portal_nacional._sequence_worker(scope, run_dirs, retry_only=True)
+
+    runs = [portal_nacional._load_json(path / "run.json", {}) for path in run_dirs]
+    assert [run["status"] for run in runs] == [
+        "aguardando_solver",
+        "aguardando_solver",
+    ]
+    assert all(run.get("solver_retry_at") for run in runs)
+
+
 def test_automatic_accumulated_download_deduplicates_and_honors_cutoff(monkeypatch, tmp_path: Path) -> None:
     _configure_storage(monkeypatch, tmp_path)
     ctx = _ctx("empresa", "usuario")

@@ -148,6 +148,63 @@ def test_solver_outage_gate_probes_one_item_before_reopening_pool(
     assert index["totals"]["baixados"] == 6
 
 
+def test_deferred_run_resumes_with_one_probe_before_full_pool(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(automation, "require_solver_api", lambda url: url)
+    monkeypatch.setattr(
+        automation,
+        "portal_session_keepalive",
+        lambda *_args, **_kwargs: automation.nullcontext(),
+    )
+
+    def fake_download(_session, item, *_args, **_kwargs):
+        target = tmp_path / f"{item['id']}.xml"
+        target.write_text("<NFSe />", encoding="utf-8")
+        return {
+            "ok": True,
+            "files": [str(target)],
+            "files_by_tipo": {"xml": str(target)},
+            "methods_by_tipo": {"xml": "captcha_xml"},
+            "method": "captcha_xml",
+        }
+
+    monkeypatch.setattr(automation, "download_item_requests", fake_download)
+    session_path = tmp_path / "session.json"
+    index_path = tmp_path / "indice.json"
+    session_path.write_text(json.dumps({"cookies": []}), encoding="utf-8")
+    index = automation.load_index(index_path, "recebidas")
+    index["status"] = "aguardando_solver"
+    index["events"].append({"event": "solver_outage_deferred"})
+    index["items"] = {
+        f"nota-{number}": {
+            "id": f"nota-{number}",
+            "page": 1,
+            "status": "pendente",
+        }
+        for number in range(1, 4)
+    }
+
+    automation.run_requests_downloads(
+        index,
+        index_path,
+        session_path,
+        "https://solver.example/solve",
+        tmp_path / "downloads",
+        0,
+        4,
+        tipo_download="xml",
+    )
+
+    events = [event["event"] for event in index["events"]]
+    probe_at = events.index("solver_outage_probe_started")
+    closed_at = events.index("solver_outage_gate_closed")
+    assert probe_at < closed_at
+    assert events[probe_at + 1] == "item_downloaded"
+    assert index["totals"]["baixados"] == 3
+
+
 def test_portal_index_retries_503_with_growing_backoff(monkeypatch, tmp_path: Path) -> None:
     responses = []
     for status, body in ((503, "temporariamente indisponivel"), (200, "Total de 0 registros")):

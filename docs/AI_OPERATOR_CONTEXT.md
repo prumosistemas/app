@@ -115,6 +115,10 @@ esperas longas. Cenas visuais estaticas usam um quadro coerente, congelado ate
 o clique; desafios temporais continuam animados e mantem captura propria. O
 resolvedor residencial segue com um navegador e ultimo na ordem, agora sob um
 supervisor com reinicio limitado, sem afetar os slots Browserless do ISS.
+Se toda a cadeia permanecer indisponivel por dez minutos, uma run salva o
+checkpoint, cede a vaga e fica `aguardando_solver`; automaticas retomam em 15
+minutos com um unico probe. Assim uma empresa bloqueada nao impede as demais de
+fazerem a tentativa diaria.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

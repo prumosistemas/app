@@ -2104,6 +2104,10 @@ def is_transient_solver_outage(result: dict) -> bool:
     )
 
 
+class SolverOutageDeferred(RuntimeError):
+    """A run preservou o checkpoint e deve ceder a vez antes de continuar."""
+
+
 def retry_backoff_seconds(retry_level: int, outage_streak: int) -> int:
     item_delay = min(2 ** max(1, retry_level), 30)
     if outage_streak <= 0:
@@ -2163,6 +2167,12 @@ def run_requests_downloads(
             item["status"] = "pendente"
     if max_items:
         pending = pending[:max_items]
+    previous_status = str(index.get("status") or "")
+    previous_event = (index.get("events") or [{}])[-1]
+    resume_outage_gate = (
+        previous_status == "aguardando_solver"
+        or str(previous_event.get("event") or "") == "solver_outage_deferred"
+    )
     save_index(index_path, index, "baixando_requests", "requests_download_started", pending=len(pending), concurrency=concurrency, tipo_download=tipo_download, tipos=tipos_download)
 
     def session_snapshot() -> dict:
@@ -2177,7 +2187,14 @@ def run_requests_downloads(
     max_workers = max(1, concurrency)
     started_count = 0
     solver_outage_streak = 0
-    solver_outage_gate_open = False
+    solver_outage_gate_open = resume_outage_gate
+    solver_outage_slice_started = time.monotonic() if resume_outage_gate else None
+    solver_outage_slice_seconds = bounded_env_int(
+        "PORTAL_SOLVER_OUTAGE_SLICE_SECONDS",
+        10 * 60,
+        2 * 60,
+        60 * 60,
+    )
 
     def submit_next(
         executor: concurrent.futures.ThreadPoolExecutor,
@@ -2221,8 +2238,13 @@ def run_requests_downloads(
     ), concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures: dict[concurrent.futures.Future, str] = {}
         outage_probe_futures: set[concurrent.futures.Future] = set()
-        while queue and len(futures) < max_workers:
-            submit_next(executor, futures)
+        initial_limit = 1 if solver_outage_gate_open else max_workers
+        while queue and len(futures) < initial_limit:
+            submit_next(
+                executor,
+                futures,
+                outage_probe=solver_outage_gate_open,
+            )
 
         while futures:
             done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
@@ -2366,6 +2388,7 @@ def run_requests_downloads(
                 if not solver_outage_gate_open:
                     solver_outage_streak = 1
                     solver_outage_gate_open = True
+                    solver_outage_slice_started = time.monotonic()
                     save_index(
                         index_path,
                         index,
@@ -2388,6 +2411,22 @@ def run_requests_downloads(
 
             if solver_outage_gate_open and not futures and queue:
                 retry_delay = retry_backoff_seconds(1, solver_outage_streak)
+                slice_started = solver_outage_slice_started or time.monotonic()
+                remaining = solver_outage_slice_seconds - (
+                    time.monotonic() - slice_started
+                )
+                if remaining <= 0:
+                    save_index(
+                        index_path,
+                        index,
+                        "aguardando_solver",
+                        "solver_outage_deferred",
+                        solver_outage_streak=solver_outage_streak,
+                        queue=len(queue),
+                    )
+                    raise SolverOutageDeferred(
+                        "Cadeia visual temporariamente indisponivel; checkpoint preservado."
+                    )
                 save_index(
                     index_path,
                     index,
@@ -2397,7 +2436,20 @@ def run_requests_downloads(
                     solver_outage_streak=solver_outage_streak,
                     items=len(queue),
                 )
-                time.sleep(retry_delay)
+                wait_seconds = min(float(retry_delay), max(0.0, remaining))
+                time.sleep(wait_seconds)
+                if wait_seconds < retry_delay:
+                    save_index(
+                        index_path,
+                        index,
+                        "aguardando_solver",
+                        "solver_outage_deferred",
+                        solver_outage_streak=solver_outage_streak,
+                        queue=len(queue),
+                    )
+                    raise SolverOutageDeferred(
+                        "Cadeia visual temporariamente indisponivel; checkpoint preservado."
+                    )
                 submit_next(executor, futures, outage_probe=True)
             elif not solver_outage_gate_open:
                 if retry_items and not futures:
@@ -2820,20 +2872,34 @@ def main() -> int:
     print(f"Indice: {index_path}")
     print(f"API resolvedora externa: {SOLVER_API_URL}")
     print(f"Concorrencia: {args.concorrencia}")
-    run_requests_downloads(
-        index=index,
-        index_path=index_path,
-        session_path=session_path,
-        solver_url=SOLVER_API_URL,
-        download_dir=download_dir,
-        max_items=args.max,
-        concurrency=args.concorrencia,
-        max_attempts=args.retries,
-        cert_index=args.cert_index,
-        tipo_download=args.tipo_download,
-        pfx_file=pfx_file,
-        pfx_password_file=pfx_password_file,
-    )
+    try:
+        run_requests_downloads(
+            index=index,
+            index_path=index_path,
+            session_path=session_path,
+            solver_url=SOLVER_API_URL,
+            download_dir=download_dir,
+            max_items=args.max,
+            concurrency=args.concorrencia,
+            max_attempts=args.retries,
+            cert_index=args.cert_index,
+            tipo_download=args.tipo_download,
+            pfx_file=pfx_file,
+            pfx_password_file=pfx_password_file,
+        )
+    except SolverOutageDeferred:
+        consolidate_page_totals(index)
+        save_index(
+            index_path,
+            index,
+            "aguardando_solver",
+            "requests_run_deferred",
+        )
+        print(
+            "Cadeia visual indisponivel; checkpoint salvo para continuar depois.",
+            flush=True,
+        )
+        return 75
     consolidate_page_totals(index)
     final_status = final_download_status(index, args.max)
     save_index(index_path, index, final_status, "requests_run_finished")

@@ -55,6 +55,10 @@ PORTAL_AUTOMATIC_POLL_SECONDS = max(
     10,
     min(300, int(os.getenv("PORTAL_AUTOMATIC_POLL_SECONDS", "30"))),
 )
+PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES = max(
+    5,
+    min(120, int(os.getenv("PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES", "15"))),
+)
 PORTAL_RUN_HEARTBEAT_SECONDS = max(
     5,
     min(60, int(os.getenv("PORTAL_RUN_HEARTBEAT_SECONDS", "10"))),
@@ -1115,7 +1119,7 @@ def _run_process(scope: str, run_dir: Path, cfg: Dict[str, Any], retry_only: boo
 
 def _sequence_worker(scope: str, jobs: List[Path], retry_only: bool = False) -> None:
     try:
-        for run_dir in jobs:
+        for job_index, run_dir in enumerate(jobs):
             run = _load_json(run_dir / "run.json", {})
             cfg = dict(run.get("config") or {})
             with _LOCK:
@@ -1125,6 +1129,19 @@ def _sequence_worker(scope: str, jobs: List[Path], retry_only: bool = False) -> 
                     break
             try:
                 code = _run_process(scope, run_dir, cfg, retry_only)
+                if code == 75:
+                    retry_at = (
+                        datetime.now(PORTAL_TIMEZONE)
+                        + timedelta(minutes=PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES)
+                    ).isoformat(timespec="seconds")
+                    for deferred_dir in jobs[job_index:]:
+                        _update_run(
+                            deferred_dir,
+                            status="aguardando_solver",
+                            solver_retry_at=retry_at,
+                            last_error=None,
+                        )
+                    break
                 summary = _summarize_index(run_dir / "indice.json") if (run_dir / "indice.json").exists() else {}
                 status = _final_run_status(summary, code)
                 with _LOCK:
@@ -1275,15 +1292,21 @@ def _stale_automatic_run_dirs(ctx: WorkerContext, job: Dict[str, Any]) -> List[P
         return []
     candidates: List[Path] = []
     has_orphan = False
+    deferred_ready = False
+    current = datetime.now(PORTAL_TIMEZONE)
     for value in list(job.get("last_run_ids") or []):
         run_dir = _runs_root(ctx) / safe_slug(value, "run")
         run = _load_json(run_dir / "run.json", {})
         status = str(run.get("status") or "")
         if status in {"criada", "rodando"}:
             has_orphan = True
+        elif status == "aguardando_solver":
+            retry_at = _parse_portal_datetime(run.get("solver_retry_at"))
+            if not retry_at or retry_at <= current:
+                deferred_ready = True
         if status and status != "finalizado":
             candidates.append(run_dir)
-    return candidates if has_orphan else []
+    return candidates if has_orphan or deferred_ready else []
 
 
 def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any]:
