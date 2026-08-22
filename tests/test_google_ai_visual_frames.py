@@ -165,6 +165,21 @@ def test_official_origin_document_keeps_token_in_page() -> None:
     assert "fetch('/token" not in page
 
 
+def test_point_prompt_omits_grid_contract() -> None:
+    prompt = SOLVER._unified_visual_prompt(
+        "Click the animal that does not match",
+        1000,
+        640,
+        point_only=True,
+    )
+
+    assert '"acao": "clicar_ponto"' in prompt
+    assert '"objetos"' in prompt
+    assert '"escolha"' in prompt
+    assert '"tile_1"' not in prompt
+    assert '"resposta_direta":' not in prompt
+
+
 def test_inject_solver_document_uses_top_frame(monkeypatch) -> None:
     calls: list[tuple[str, dict | None]] = []
     page = {

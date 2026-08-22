@@ -56,6 +56,22 @@ def test_destination_question_keeps_trajectory_override():
     assert solver._question_wants_trajectory_destination(
         "Clique no destino para onde o objeto vai chegar"
     )
+    assert solver._temporal_capture_plan(
+        "Clique no destino para onde o objeto vai chegar"
+    ) == (12, 180)
+
+
+def test_static_question_uses_one_coherent_frame():
+    solver = _solver()
+
+    assert solver._temporal_capture_plan(
+        "Click the animal that does not match"
+    ) == (1, 180)
+    classification = solver._classify_visual_challenge(
+        "Click the animal that does not match"
+    )
+    assert classification["max_same_scene_attempts"] == 2
+    assert classification["max_sequence_attempts"] >= 10
 
 
 def test_montage_coordinates_return_to_original_frame():
@@ -180,7 +196,7 @@ def test_unknown_repeated_scene_still_rotates_early():
     assert classification["max_same_scene_attempts"] == 1
 
 
-def test_click_does_not_wait_after_legacy_visual_cleanup(monkeypatch):
+def test_click_happens_before_frozen_animation_is_restored(monkeypatch):
     solver = _solver()
     events = []
     monkeypatch.setattr(
@@ -201,4 +217,4 @@ def test_click_does_not_wait_after_legacy_visual_cleanup(monkeypatch):
 
     choice = {"x_percent_na_imagem": 20, "y_percent_na_imagem": 80}
     assert solver._click_non_9_choice_frozen(9222, choice)
-    assert events == [("restore", 9222), ("click", 9222, choice)]
+    assert events == [("click", 9222, choice), ("restore", 9222)]

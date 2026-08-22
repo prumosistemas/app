@@ -37,9 +37,6 @@ start_local_portal_solver() {
   fi
 
   mkdir -p "$state_dir" "$artifact_dir"
-  # O PID gravado pertence ao container anterior e pode coincidir com um novo
-  # processo após recreate, deixando toda recuperação bloqueada por engano.
-  rm -f "$state_dir/.session_recovery.lock"
   start_artifact_retention "$artifact_dir"
   wrapper="/tmp/prumo-google-chrome"
   cat > "$wrapper" <<EOF
@@ -64,15 +61,39 @@ EOF
   export PORTAL_SOLVER_OPEN_FAILURE_LIMIT=1
   export PRUMO_ENABLE_CHILD_SUBREAPER=0
 
-  xvfb-run -a python -u "$solver_dir/api_resolvedora_resolver_google_ia.py" \
-    --port 8876 \
-    --browser "$wrapper" \
-    --max-browsers "${PORTAL_LOCAL_MAX_BROWSERS:-1}" \
-    --max-provider-failures "${PORTAL_LOCAL_PROVIDER_FAILURE_LIMIT:-5}" \
-    --max-solver-failures 20 \
-    --max-solve-seconds "${PORTAL_LOCAL_MAX_SOLVE_SECONDS:-360}" \
-    >> "$artifact_dir/service.log" 2>&1 &
-  echo "[startup] resolvedor residencial do Portal iniciado em 127.0.0.1:8876"
+  (
+    backoff=5
+    while true; do
+      # O PID gravado pertence ao processo anterior e pode coincidir com um
+      # processo novo, bloqueando a recuperacao por engano.
+      rm -f "$state_dir/.session_recovery.lock"
+      started_at="$(date +%s)"
+      if xvfb-run -a python -u "$solver_dir/api_resolvedora_resolver_google_ia.py" \
+        --port 8876 \
+        --browser "$wrapper" \
+        --max-browsers "${PORTAL_LOCAL_MAX_BROWSERS:-1}" \
+        --max-provider-failures "${PORTAL_LOCAL_PROVIDER_FAILURE_LIMIT:-5}" \
+        --max-solver-failures 20 \
+        --max-solve-seconds "${PORTAL_LOCAL_MAX_SOLVE_SECONDS:-360}" \
+        >> "$artifact_dir/service.log" 2>&1; then
+        exit_code=0
+      else
+        exit_code=$?
+      fi
+      runtime="$(( $(date +%s) - started_at ))"
+      if [ "$runtime" -ge 300 ]; then
+        backoff=5
+      fi
+      echo "$(date -Iseconds) supervisor: solver saiu codigo=$exit_code runtime=${runtime}s; reinicio em ${backoff}s" \
+        >> "$artifact_dir/service.log"
+      sleep "$backoff"
+      if [ "$runtime" -lt 300 ] && [ "$backoff" -lt 120 ]; then
+        backoff="$((backoff * 2))"
+        [ "$backoff" -le 120 ] || backoff=120
+      fi
+    done
+  ) &
+  echo "[startup] resolvedor residencial supervisionado em 127.0.0.1:8876"
 }
 
 start_local_portal_solver

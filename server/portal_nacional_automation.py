@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 import requests
 import websocket
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -832,6 +832,68 @@ def requests_session_from_data(session_data: dict) -> requests.Session:
             path=cookie.get("path") or "/",
         )
     return session
+
+
+def portal_session_keepalive_once(session_data: dict, target_url: str) -> str:
+    """Toca a sessao ASP.NET sem baixar nota nem abrir outro navegador."""
+    session = requests_session_from_data(session_data)
+    try:
+        response = session.get(
+            target_url,
+            headers={"Referer": "https://www.nfse.gov.br/EmissorNacional/Dashboard"},
+            timeout=30,
+            allow_redirects=True,
+        )
+        if response_is_login(response):
+            return "login"
+        if response.status_code >= 500:
+            return f"http_{response.status_code}"
+        return "ok"
+    finally:
+        session.close()
+
+
+@contextmanager
+def portal_session_keepalive(session_provider, target_url: str):
+    """Mantem a mesma sessao viva enquanto uma IA pode levar varios minutos."""
+    interval = bounded_env_int(
+        "PORTAL_SESSION_KEEPALIVE_SECONDS",
+        240,
+        60,
+        900,
+    )
+    stop = threading.Event()
+
+    def loop() -> None:
+        failures = 0
+        while not stop.wait(interval):
+            try:
+                result = portal_session_keepalive_once(session_provider(), target_url)
+                if result == "ok":
+                    failures = 0
+                    continue
+                failures += 1
+                print(
+                    f"[Sessao] keepalive sem confirmacao ({result}); "
+                    "a renovacao continua protegida pelo fluxo principal.",
+                    flush=True,
+                )
+            except Exception as exc:
+                failures += 1
+                if failures == 1 or failures % 3 == 0:
+                    print(
+                        f"[Sessao] keepalive oscilou ({type(exc).__name__}); "
+                        "downloads continuam.",
+                        flush=True,
+                    )
+
+    thread = threading.Thread(target=loop, name="portal-session-keepalive", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2)
 
 
 PORTAL_INDEX_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
@@ -2083,6 +2145,7 @@ def run_requests_downloads(
             tipos=tipos_download,
         )
     session_data = json.loads(session_path.read_text(encoding="utf-8"))
+    session_data_lock = threading.Lock()
     update_certificate_in_index(index, session_data)
     items = list(index.get("items", {}).values())
     items.sort(key=lambda item: (int(item.get("page") or 0), item.get("id") or ""))
@@ -2102,16 +2165,26 @@ def run_requests_downloads(
         pending = pending[:max_items]
     save_index(index_path, index, "baixando_requests", "requests_download_started", pending=len(pending), concurrency=concurrency, tipo_download=tipo_download, tipos=tipos_download)
 
+    def session_snapshot() -> dict:
+        with session_data_lock:
+            return json.loads(json.dumps(session_data))
+
     def worker(item: dict) -> tuple[str, dict]:
-        local_session = requests_session_from_data(session_data)
+        local_session = requests_session_from_data(session_snapshot())
         return item["id"], download_item_requests(local_session, item, solver_url, download_dir, tipo_download=tipo_download)
 
     queue = list(pending)
     max_workers = max(1, concurrency)
     started_count = 0
     solver_outage_streak = 0
+    solver_outage_gate_open = False
 
-    def submit_next(executor: concurrent.futures.ThreadPoolExecutor, futures: dict) -> bool:
+    def submit_next(
+        executor: concurrent.futures.ThreadPoolExecutor,
+        futures: dict,
+        *,
+        outage_probe: bool = False,
+    ) -> bool:
         nonlocal started_count
         if not queue:
             return False
@@ -2124,12 +2197,30 @@ def run_requests_downloads(
         meta["updated_at"] = now_iso()
         meta.setdefault("attempts", []).append({"at": now_iso(), "attempt": attempts, "mode": "requests", "status": "started"})
         started_count += 1
-        save_index(index_path, index, "baixando_requests", "item_started", id=key, attempt=attempts, active=len(futures) + 1, queue=len(queue))
-        futures[executor.submit(worker, item)] = key
+        save_index(
+            index_path,
+            index,
+            "aguardando_solver" if outage_probe else "baixando_requests",
+            "solver_outage_probe_started" if outage_probe else "item_started",
+            id=key,
+            attempt=attempts,
+            active=len(futures) + 1,
+            queue=len(queue),
+            solver_outage_streak=solver_outage_streak,
+        )
+        future = executor.submit(worker, item)
+        futures[future] = key
+        if outage_probe:
+            outage_probe_futures.add(future)
         return True
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    keepalive_target = MODE_URLS.get(str(index.get("modo") or ""), TARGET_URL)
+    with portal_session_keepalive(
+        session_snapshot,
+        keepalive_target,
+    ), concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures: dict[concurrent.futures.Future, str] = {}
+        outage_probe_futures: set[concurrent.futures.Future] = set()
         while queue and len(futures) < max_workers:
             submit_next(executor, futures)
 
@@ -2139,10 +2230,13 @@ def run_requests_downloads(
             outage_retry_ids: set[str] = set()
             login_errors = []
             saw_solver_outage = False
+            saw_outage_probe_failure = False
             saw_success = False
 
             for future in done:
                 key = futures.pop(future)
+                was_outage_probe = future in outage_probe_futures
+                outage_probe_futures.discard(future)
                 try:
                     _, result = future.result()
                 except Exception as exc:
@@ -2175,6 +2269,10 @@ def run_requests_downloads(
                 reason = str(result.get("reason") or "")
                 transient_solver_outage = is_transient_solver_outage(result)
                 saw_solver_outage = saw_solver_outage or transient_solver_outage
+                saw_outage_probe_failure = (
+                    saw_outage_probe_failure
+                    or (transient_solver_outage and was_outage_probe)
+                )
                 attempts = int(index["items"][key].get("requests_attempts") or 1)
                 index["items"][key]["last_error"] = result
                 if result.get("files_by_tipo"):
@@ -2222,7 +2320,7 @@ def run_requests_downloads(
             if login_errors:
                 save_index(index_path, index, "renovando_sessao", "requests_login_failed", errors=login_errors, active=len(futures), queue=len(queue))
                 print("Sessao caiu no requests. Renovando sessao pelo certificado do indice...")
-                session_data = regenerate_session(
+                renewed_session_data = regenerate_session(
                     index,
                     index_path,
                     session_path,
@@ -2231,6 +2329,8 @@ def run_requests_downloads(
                     pfx_file,
                     pfx_password_file,
                 )
+                with session_data_lock:
+                    session_data = renewed_session_data
 
             retry_items = [
                 item for item in retry_items
@@ -2239,33 +2339,86 @@ def run_requests_downloads(
                 or login_errors
             ]
             retry_items.sort(key=lambda item: (int(item.get("page") or 0), item.get("id") or ""))
-            queue.extend(retry_items)
+            if solver_outage_gate_open or saw_solver_outage:
+                # A mesma nota vira sonda. Isso evita espalhar uma oscilacao
+                # temporaria pelos demais itens ainda nem iniciados.
+                retry_ids = {item.get("id") for item in retry_items}
+                queue = retry_items + [
+                    item for item in queue if item.get("id") not in retry_ids
+                ]
+            else:
+                queue.extend(retry_items)
 
             if saw_success:
+                if solver_outage_gate_open:
+                    save_index(
+                        index_path,
+                        index,
+                        "baixando_requests",
+                        "solver_outage_gate_closed",
+                        solver_outage_streak=solver_outage_streak,
+                        active=len(futures),
+                        queue=len(queue),
+                    )
+                solver_outage_gate_open = False
                 solver_outage_streak = 0
             elif saw_solver_outage:
-                solver_outage_streak += 1
-            else:
+                if not solver_outage_gate_open:
+                    solver_outage_streak = 1
+                    solver_outage_gate_open = True
+                    save_index(
+                        index_path,
+                        index,
+                        "aguardando_solver",
+                        "solver_outage_gate_opened",
+                        solver_outage_streak=solver_outage_streak,
+                        active=len(futures),
+                        queue=len(queue),
+                    )
+                elif saw_outage_probe_failure:
+                    # Falhas das quatro requisicoes que ja estavam em voo sao
+                    # uma unica queda. So uma sonda sequencial nova aumenta o
+                    # degrau de backoff.
+                    solver_outage_streak += 1
+            elif solver_outage_gate_open and not login_errors:
+                # Houve resposta funcional da infraestrutura; um erro proprio
+                # da nota nao justifica manter o pool inteiro fechado.
+                solver_outage_gate_open = False
                 solver_outage_streak = 0
 
-            if retry_items:
-                retry_level = max(int(item.get("requests_attempts") or 1) for item in retry_items)
-                retry_delay = retry_backoff_seconds(retry_level, solver_outage_streak)
+            if solver_outage_gate_open and not futures and queue:
+                retry_delay = retry_backoff_seconds(1, solver_outage_streak)
                 save_index(
                     index_path,
                     index,
-                    "baixando_requests",
-                    "retry_backoff_wait",
+                    "aguardando_solver",
+                    "solver_outage_probe_wait",
                     seconds=retry_delay,
-                    retry_level=retry_level,
                     solver_outage_streak=solver_outage_streak,
-                    items=len(retry_items),
+                    items=len(queue),
                 )
                 time.sleep(retry_delay)
-
-            active_limit = 1 if solver_outage_streak > 0 else max_workers
-            while queue and len(futures) < active_limit:
-                submit_next(executor, futures)
+                submit_next(executor, futures, outage_probe=True)
+            elif not solver_outage_gate_open:
+                if retry_items and not futures:
+                    retry_level = max(
+                        int(item.get("requests_attempts") or 1)
+                        for item in retry_items
+                    )
+                    retry_delay = retry_backoff_seconds(retry_level, 0)
+                    save_index(
+                        index_path,
+                        index,
+                        "baixando_requests",
+                        "retry_backoff_wait",
+                        seconds=retry_delay,
+                        retry_level=retry_level,
+                        solver_outage_streak=0,
+                        items=len(retry_items),
+                    )
+                    time.sleep(retry_delay)
+                while queue and len(futures) < max_workers:
+                    submit_next(executor, futures)
 
             save_index(index_path, index, "baixando_requests", "requests_pool_tick", started=started_count, active=len(futures), queue=len(queue))
 

@@ -48,6 +48,106 @@ def test_nfse_session_retries_only_safe_methods() -> None:
     assert "POST" not in retry.allowed_methods
 
 
+def test_portal_keepalive_uses_existing_session_without_download(monkeypatch) -> None:
+    calls = []
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            response = requests.Response()
+            response.status_code = 200
+            response.url = url
+            response._content = b"Total de 0 registros"
+            return response
+
+        def close(self):
+            calls.append(("close", {}))
+
+    monkeypatch.setattr(
+        automation,
+        "requests_session_from_data",
+        lambda _data: FakeSession(),
+    )
+
+    result = automation.portal_session_keepalive_once(
+        {"cookies": [{"name": "Emissor", "value": "indireto"}]},
+        automation.MODE_URLS["recebidas"],
+    )
+
+    assert result == "ok"
+    assert calls[0][0] == automation.MODE_URLS["recebidas"]
+    assert calls[-1][0] == "close"
+
+
+def test_solver_outage_gate_probes_one_item_before_reopening_pool(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(automation, "require_solver_api", lambda url: url)
+    monkeypatch.setattr(
+        automation,
+        "portal_session_keepalive",
+        lambda *_args, **_kwargs: automation.nullcontext(),
+    )
+    sleeps = []
+    monkeypatch.setattr(automation.time, "sleep", sleeps.append)
+    calls: dict[str, int] = {}
+
+    def fake_download(_session, item, *_args, **_kwargs):
+        key = item["id"]
+        calls[key] = calls.get(key, 0) + 1
+        if key in {"nota-1", "nota-2", "nota-3", "nota-4"} and calls[key] == 1:
+            return {
+                "ok": False,
+                "reason": "solver:all_endpoints_failed: 503 Service Unavailable",
+            }
+        target = tmp_path / f"{key}.xml"
+        target.write_text("<NFSe />", encoding="utf-8")
+        return {
+            "ok": True,
+            "files": [str(target)],
+            "files_by_tipo": {"xml": str(target)},
+            "methods_by_tipo": {"xml": "captcha_xml"},
+            "method": "captcha_xml",
+        }
+
+    monkeypatch.setattr(automation, "download_item_requests", fake_download)
+    session_path = tmp_path / "session.json"
+    index_path = tmp_path / "indice.json"
+    session_path.write_text(json.dumps({"cookies": []}), encoding="utf-8")
+    index = automation.load_index(index_path, "recebidas")
+    index["items"] = {
+        f"nota-{number}": {
+            "id": f"nota-{number}",
+            "page": 1,
+            "status": "pendente",
+        }
+        for number in range(1, 7)
+    }
+
+    automation.run_requests_downloads(
+        index,
+        index_path,
+        session_path,
+        "https://solver.example/solve",
+        tmp_path / "downloads",
+        0,
+        4,
+        max_attempts=3,
+        tipo_download="xml",
+    )
+
+    event_names = [event["event"] for event in index["events"]]
+    assert "solver_outage_gate_opened" in event_names
+    assert "solver_outage_probe_started" in event_names
+    assert "solver_outage_gate_closed" in event_names
+    assert event_names.index("solver_outage_probe_started") < event_names.index(
+        "solver_outage_gate_closed"
+    )
+    assert sleeps[0] == 10
+    assert index["totals"]["baixados"] == 6
+
+
 def test_portal_index_retries_503_with_growing_backoff(monkeypatch, tmp_path: Path) -> None:
     responses = []
     for status, body in ((503, "temporariamente indisponivel"), (200, "Total de 0 registros")):

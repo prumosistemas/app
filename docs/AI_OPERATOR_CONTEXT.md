@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.98**
-Atualizado em: **2026-08-21**
+Versao do app: **1.0.99**
+Atualizado em: **2026-08-22**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -106,6 +106,15 @@ expirar, a próxima atividade sonda o Modal principal antes da reserva. Novo 404
 renova a quarentena; sucesso limpa a penalidade e restaura automaticamente o
 principal. `PORTAL_MODAL_DISABLED_RECHECK_SECONDS` permite ajustar o intervalo
 entre 300 e 21600 segundos, com padrão de 1800.
+
+Na 1.0.99, uma indisponibilidade simultanea dos resolvedores abre um portao por
+run: os trabalhos ja iniciados terminam, uma unica nota passa a sondar a cadeia
+com backoff de 10/20/30/60/90/120 segundos e os quatro downloads so reabrem
+apos sucesso confirmado. Um keepalive HTTP preserva a sessao do Portal durante
+esperas longas. Cenas visuais estaticas usam um quadro coerente, congelado ate
+o clique; desafios temporais continuam animados e mantem captura propria. O
+resolvedor residencial segue com um navegador e ultimo na ordem, agora sob um
+supervisor com reinicio limitado, sem afetar os slots Browserless do ISS.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

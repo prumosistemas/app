@@ -399,7 +399,17 @@ def _temporal_capture_plan(question: str) -> tuple[int, int]:
         # (8,7 s contra 9,4 s), mas cortam 37,5% da serializacao CDP, JPEGs e
         # processamento. O mapa de ocupacao agrega a janela inteira.
         return 30, 300
-    return 4, 180
+    if _question_wants_trajectory_destination(question) or any(
+        term in (question or "").casefold()
+        for term in (
+            "move", "moves", "movement", "moving", "mudanca", "mudança",
+            "movimento", "animado", "animação", "animated", "animation",
+        )
+    ):
+        return 12, 180
+    # Uma cena estatica pode mudar enquanto quatro quadros sao coletados. Use
+    # um estado coerente e preserve esse mesmo estado ate o clique.
+    return 1, 180
 
 
 def _classify_visual_challenge(question: str) -> dict[str, Any]:
@@ -425,7 +435,9 @@ def _classify_visual_challenge(question: str) -> dict[str, Any]:
         max_sequence_attempts = 2
     elif normalized:
         category, difficulty, max_same_scene_attempts = "visual_static", "baixa", 2
-        max_sequence_attempts = 3
+        # O fingerprint limita repeticoes da mesma cena. O hCaptcha pode
+        # apresentar varias cenas legitimas em sequencia antes de emitir token.
+        max_sequence_attempts = 12
     else:
         category, difficulty, max_same_scene_attempts = "unknown", "alta", 1
         max_sequence_attempts = 2
@@ -789,6 +801,8 @@ def _capture_visual_canvas_sequence(
     interval_ms: int = 180,
 ) -> list[Path]:
     """Le quadros contiguos do proprio canvas, evitando latencia de screenshots CDP."""
+    capture_count = max(1, frame_count)
+    freeze_static = capture_count == 1
     page = legacy.challenge_page(port)
     if not page:
         return []
@@ -876,8 +890,24 @@ new Promise(async (resolve) => {{
   let cycleDifference = null;
   let maximumChangedRatio = 0;
   let maximumMeanDelta = 0;
+  let animationFrozen = false;
+  if ({str(freeze_static).lower()}) {{
+    if (!window.__prumoOriginalRequestAnimationFrame) {{
+      window.__prumoOriginalRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+    }}
+    const nativeRequestAnimationFrame = window.__prumoOriginalRequestAnimationFrame;
+    await new Promise((done) => nativeRequestAnimationFrame(() => nativeRequestAnimationFrame(done)));
+    window.__prumoFrozenAnimationCallbacks = [];
+    window.requestAnimationFrame = (callback) => {{
+      if (typeof callback === 'function') window.__prumoFrozenAnimationCallbacks.push(callback);
+      return 0;
+    }};
+    window.__prumoAnimationFrozen = true;
+    animationFrozen = true;
+    await new Promise((done) => setTimeout(done, 45));
+  }}
   try {{
-    for (let i = 0; i < {max(2, frame_count)}; i++) {{
+    for (let i = 0; i < {capture_count}; i++) {{
       frames.push(src.toDataURL('image/jpeg', 0.86));
       const signature = motionSignature();
       if (!initialSignature) {{
@@ -895,7 +925,7 @@ new Promise(async (resolve) => {{
         // poucos pixels da cena. So aceite retorno depois de uma janela longa,
         // movimento comprovado e diferenca relativa pequena.
         if (
-          {max(2, frame_count)} > 16 &&
+          {capture_count} > 16 &&
           elapsed >= 7000 &&
           movedEnough &&
           returnedNearStart
@@ -904,13 +934,12 @@ new Promise(async (resolve) => {{
           break;
         }}
       }}
-      if (i + 1 < {max(2, frame_count)}) {{
+      if (i + 1 < {capture_count}) {{
         await new Promise((done) => setTimeout(done, {max(40, interval_ms)}));
       }}
     }}
-    // Nao altere requestAnimationFrame nem temporizadores do hCaptcha. A
-    // evidência enviada à IA já foi salva e os alvos clicáveis são estáticos;
-    // congelar o iframe pode invalidar o estado temporal do desafio.
+    // Somente cenas semanticamente estaticas ficam congeladas entre captura e
+    // clique. Sequencias temporais continuam vivas.
     frames[frames.length - 1] = src.toDataURL('image/jpeg', 0.88);
   }} catch (error) {{
     return resolve({{error: String(error)}});
@@ -926,6 +955,7 @@ new Promise(async (resolve) => {{
     cycle_difference: cycleDifference,
     maximum_changed_ratio: maximumChangedRatio,
     maximum_mean_delta: maximumMeanDelta,
+    animation_frozen: animationFrozen,
     frames
   }});
 }})
@@ -988,6 +1018,7 @@ new Promise(async (resolve) => {{
                     "cycle_difference": data.get("cycle_difference"),
                     "maximum_changed_ratio": data.get("maximum_changed_ratio"),
                     "maximum_mean_delta": data.get("maximum_mean_delta"),
+                    "animation_frozen": bool(data.get("animation_frozen")),
                     "capture_method": "canvas_to_data_url_sequence",
                 },
                 ensure_ascii=False,
@@ -1008,11 +1039,17 @@ def _restore_visual_animation(port: int) -> None:
             client.eval(
                 """
 (() => {
-  if (window.__prumoOriginalRequestAnimationFrame) {
-    window.requestAnimationFrame = window.__prumoOriginalRequestAnimationFrame;
-  }
+  const original = window.__prumoOriginalRequestAnimationFrame;
+  const queued = Array.isArray(window.__prumoFrozenAnimationCallbacks)
+    ? window.__prumoFrozenAnimationCallbacks.slice(-4)
+    : [];
+  if (original) window.requestAnimationFrame = original;
+  window.__prumoFrozenAnimationCallbacks = [];
   window.__prumoAnimationFrozen = false;
-  return true;
+  if (original) {
+    for (const callback of queued) original(callback);
+  }
+  return {restored: Boolean(original), resumed_callbacks: queued.length};
 })()
 """
             )
@@ -1026,11 +1063,13 @@ _legacy_click_non_9_choice = legacy.click_non_9_choice
 
 
 def _click_non_9_choice_frozen(port: int, escolha: dict) -> bool:
-    # Compatibilidade defensiva para páginas que tenham sobrevivido a um
-    # rollover antigo. A v28 não congela a animação em momento algum.
-    _restore_visual_animation(port)
     started = time.perf_counter()
-    success = _legacy_click_non_9_choice(port, escolha)
+    try:
+        success = _legacy_click_non_9_choice(port, escolha)
+    finally:
+        # As coordenadas pertencem ao quadro congelado; reanime somente depois
+        # do clique para que o alvo nao mude sob o cursor.
+        _restore_visual_animation(port)
     legacy.audit_event(
         "click_point",
         x=round(float(escolha.get("x") or 0), 2),
@@ -1700,6 +1739,7 @@ def _unified_visual_prompt(
     reference_present: bool = False,
     temporal_layout: str = "single",
     temporal_span_ms: int = 0,
+    point_only: bool = False,
 ) -> str:
     size_note = (
         f"Dimensoes da area clicavel: {image_width} x {image_height} pixels."
@@ -1748,6 +1788,55 @@ mencionar movimento, trajetoria, mudanca ou destino.
         '"confianca": 0.0, "motivo": "curto"}}'
         for number in range(1, 10)
     )
+    if point_only:
+        interaction_note = (
+            'Use "clicar_ponto" e localize um unico objeto/destino. '
+            "Nao gere tiles nem resposta_direta."
+        )
+        format_contract = """
+{
+  "acao": "clicar_ponto",
+  "descricao_geral": "curta",
+  "objetos": {
+    "objeto_1": {
+      "nome": "nome curto",
+      "caixa": {"x1": 80, "y1": 100, "x2": 310, "y2": 500},
+      "corresponde_pergunta": true,
+      "confianca": 0.95,
+      "motivo": "curto"
+    }
+  },
+  "escolha": {
+    "objeto": "objeto_1",
+    "x": 195,
+    "y": 300,
+    "descricao_do_alvo": "nome curto",
+    "argumento": "curto",
+    "confianca": 0.95
+  },
+  "observacoes": "curta"
+}
+""".strip()
+    else:
+        interaction_note = """
+Use UM UNICO contrato para qualquer desafio visual. Nao classifique por formato.
+Escolha "selecionar_regioes" para marcar uma ou mais regioes, ou "clicar_ponto" para
+um unico objeto/destino. Quando houver nove regioes, numere 1 2 3 / 4 5 6 / 7 8 9.
+""".strip()
+        format_contract = f"""
+{{
+  "acao": "selecionar_regioes ou clicar_ponto",
+  "descricao_geral": "curta",
+{tiles},
+  "resposta_direta": "2,5",
+  "objetos": {{}},
+  "escolha": {{}},
+  "observacoes": "curta"
+}}
+
+Para "selecionar_regioes", preencha tile_1..tile_9 e resposta_direta. Para
+"clicar_ponto", deixe os tiles false e preencha objetos/escolha.
+""".strip()
     return f"""
 Analise SOMENTE os pixels da imagem anexada. Nao pesquise na web, nao consulte paginas,
 nao use fontes externas e nao forneca links ou citacoes.
@@ -1757,9 +1846,7 @@ Pergunta original: "{captcha_question}"
 {reference_note}
 {sequence_note}
 
-Use UM UNICO contrato para qualquer desafio visual. Nao classifique por formato.
-Escolha "selecionar_regioes" para marcar uma ou mais regioes, ou "clicar_ponto" para
-um unico objeto/destino. Quando houver nove regioes, numere 1 2 3 / 4 5 6 / 7 8 9.
+{interaction_note}
 
 Regras:
 - responda literalmente e examine todas as alternativas;
@@ -1771,35 +1858,8 @@ Regras:
 - nao invente objetos, nao use arrays/listas JSON nem colchetes;
 - retorne somente JSON valido, sem Markdown ou texto adicional.
 
-Formato obrigatorio, mantendo TODAS as chaves:
-{{
-  "acao": "selecionar_regioes ou clicar_ponto",
-  "descricao_geral": "curta",
-{tiles},
-  "resposta_direta": "2,5",
-  "objetos": {{
-    "objeto_1": {{
-      "nome": "nome curto",
-      "caixa": {{"x1": 80, "y1": 100, "x2": 310, "y2": 500}},
-      "corresponde_pergunta": true,
-      "confianca": 0.95,
-      "motivo": "curto"
-    }}
-  }},
-  "escolha": {{
-    "objeto": "objeto_1",
-    "x": 195,
-    "y": 300,
-    "descricao_do_alvo": "nome curto",
-    "argumento": "curto",
-    "confianca": 0.95
-  }},
-  "observacoes": "curta"
-}}
-
-Para "selecionar_regioes", preencha tile_1..tile_9 e resposta_direta, use objetos={{}}
-e escolha vazia com x=0,y=0. Para "clicar_ponto", deixe os tiles como false e
-resposta_direta vazia, depois preencha objetos e escolha.
+Formato obrigatorio:
+{format_contract}
 """.strip()
 
 
@@ -2417,6 +2477,7 @@ def analyze_visual_with_google_ai(
                     else "overlay"
                 ),
                 temporal_span_ms=temporal_span_ms,
+                point_only=True,
             ),
         )
         raw_answer = result.answer
