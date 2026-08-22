@@ -2133,6 +2133,7 @@ def run_requests_downloads(
     tipo_download: str = "xml",
     pfx_file: str | None = None,
     pfx_password_file: str | None = None,
+    defer_on_solver_outage: bool = False,
 ) -> None:
     solver_url = require_solver_api(solver_url)
     tipos_download = normalize_download_tipos(tipo_download)
@@ -2412,10 +2413,13 @@ def run_requests_downloads(
             if solver_outage_gate_open and not futures and queue:
                 retry_delay = retry_backoff_seconds(1, solver_outage_streak)
                 slice_started = solver_outage_slice_started or time.monotonic()
-                remaining = solver_outage_slice_seconds - (
-                    time.monotonic() - slice_started
+                remaining = (
+                    solver_outage_slice_seconds
+                    - (time.monotonic() - slice_started)
+                    if defer_on_solver_outage
+                    else float("inf")
                 )
-                if remaining <= 0:
+                if defer_on_solver_outage and remaining <= 0:
                     save_index(
                         index_path,
                         index,
@@ -2438,7 +2442,7 @@ def run_requests_downloads(
                 )
                 wait_seconds = min(float(retry_delay), max(0.0, remaining))
                 time.sleep(wait_seconds)
-                if wait_seconds < retry_delay:
+                if defer_on_solver_outage and wait_seconds < retry_delay:
                     save_index(
                         index_path,
                         index,
@@ -2793,6 +2797,11 @@ def main() -> int:
     parser.add_argument("--sem-navegador", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--forcar-indexar", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--download-browser", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--defer-solver-outage",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     SOLVER_API_URL = args.solver_url
 
@@ -2886,6 +2895,7 @@ def main() -> int:
             tipo_download=args.tipo_download,
             pfx_file=pfx_file,
             pfx_password_file=pfx_password_file,
+            defer_on_solver_outage=args.defer_solver_outage,
         )
     except SolverOutageDeferred:
         consolidate_page_totals(index)

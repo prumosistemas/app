@@ -239,6 +239,107 @@ def test_scheduler_resumes_orphaned_automatic_checkpoint(monkeypatch, tmp_path: 
     assert started["retry_only"] is True
 
 
+def test_solver_outage_deferral_is_enabled_only_for_automatic_runs(tmp_path: Path) -> None:
+    cfg = {
+        "modo": "recebidas",
+        "tipo_download": "ambos",
+        "cert_index": 0,
+        "concorrencia": 4,
+        "retries": 8,
+        "data_inicial": "01/08/2026",
+        "data_final": "22/08/2026",
+    }
+
+    manual = portal_nacional._build_command(cfg, tmp_path / "manual", retry_only=True)
+    automatic = portal_nacional._build_command(
+        {**cfg, "automatic": True},
+        tmp_path / "automatic",
+        retry_only=True,
+    )
+
+    assert "--defer-solver-outage" not in manual
+    assert "--defer-solver-outage" in automatic
+
+
+def test_scheduler_starts_fresh_due_job_before_deferred_retry(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    waiting_ctx = _ctx("empresa", "usuario-esperando")
+    due_ctx = _ctx("empresa", "usuario-novo")
+    waiting_dir = portal_nacional._runs_root(waiting_ctx) / "run-waiting"
+    waiting_dir.mkdir(parents=True)
+    portal_nacional._save_json(
+        waiting_dir / "run.json",
+        {
+            "run_id": waiting_dir.name,
+            "status": "aguardando_solver",
+            "solver_retry_at": "2026-08-11T17:45:00-03:00",
+            "config": {"automatic": True},
+        },
+    )
+    waiting_state = {
+        "jobs": [
+            {
+                "id": "waiting",
+                "last_run_ids": [waiting_dir.name],
+                "next_run_at": "2026-08-12T09:00:00-03:00",
+            }
+        ]
+    }
+    due_state = {
+        "jobs": [
+            {
+                "id": "due",
+                "enabled": True,
+                "next_run_at": "2026-08-11T17:50:00-03:00",
+            }
+        ]
+    }
+    records = [
+        (waiting_ctx, waiting_state, waiting_state["jobs"][0]),
+        (due_ctx, due_state, due_state["jobs"][0]),
+    ]
+    started = {}
+    monkeypatch.setattr(portal_nacional, "_automatic_records", lambda: records)
+    monkeypatch.setattr(portal_nacional, "_rebalance_automatic_schedules", lambda now=None: None)
+    monkeypatch.setattr(portal_nacional, "_reconcile_automatic_state", lambda *_args: False)
+    monkeypatch.setattr(portal_nacional, "_cleanup_automatic_runs", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(portal_nacional, "_any_portal_runtime_active", lambda: False)
+    monkeypatch.setattr(
+        portal_nacional,
+        "_start_jobs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("checkpoint deferido furou a fila diaria")
+        ),
+    )
+    monkeypatch.setattr(
+        portal_nacional,
+        "_start_automatic_job",
+        lambda ctx, job, reason: started.update(
+            {"ctx": ctx, "job": job, "reason": reason}
+        )
+        or [tmp_path / "fresh-run"],
+    )
+    monkeypatch.setattr(
+        portal_nacional,
+        "_record_automatic_started",
+        lambda _ctx, _state, job, run_dirs, **_kwargs: job.update(
+            {"last_run_ids": [path.name for path in run_dirs]}
+        ),
+    )
+
+    result = portal_nacional._run_automatic_scheduler_cycle(
+        datetime(2026, 8, 11, 18, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    )
+
+    assert result["started"] is True
+    assert result["job_id"] == "due"
+    assert started["ctx"] == due_ctx
+    assert started["reason"] == "schedule"
+
+
 def test_scheduler_skips_deferred_solver_run_until_retry_time(
     monkeypatch,
     tmp_path: Path,

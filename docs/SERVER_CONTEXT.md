@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.99
+Versao: 1.0.100
 Data: 2026-08-21
 Modo atual: producao unica, sem homologacao ativa
 
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.99",
+  "version": "1.0.100",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -235,7 +235,7 @@ PORTAL_LOCAL_MAX_BROWSERS=1
 
 A conta `ryangurgell20` continua principal e volta a ser escolhida automaticamente quando o cooldown expira ou a quota mensal reseta. `fabriciofarofa5` e `prumo-sistema` são contingências Modal e escalam a zero quando ociosas. O master consulta o billing das três contas e mostra o último endpoint que concluiu uma resolução.
 
-Na 1.0.99, os quatro downloads de uma run deixam de girar a fila inteira se a
+Na 1.0.100, os quatro downloads de uma run deixam de girar a fila inteira se a
 cadeia visual oscilar. Depois de drenar requisicoes ja iniciadas, uma unica nota
 faz probes com backoff crescente e um sucesso reabre o pool. A mesma sessao do
 Portal recebe keepalive HTTP durante as esperas. Cenas estaticas sao capturadas
@@ -243,10 +243,11 @@ uma vez e ficam congeladas somente ate o clique; desafios temporais continuam
 com seus quadros. O processo local em `127.0.0.1:8876` e supervisionado por
 `server/start.sh`, reinicia com backoff se cair e permanece com um navegador,
 ultimo na cadeia e separado dos workers Browserless do ISS.
-Uma outage integral e fatiada em dez minutos de probes. Ao fim da fatia, a run
-fica `aguardando_solver`, libera o agendador para outra empresa e e retomada em
-15 minutos. Na retomada apenas um item sonda a cadeia; os quatro workers so
-voltam apos sucesso.
+Uma outage integral mantem runs manuais em um unico probe ate recuperacao ou
+parada explicita. Para runs automaticas, ela e fatiada em dez minutos: a run
+fica `aguardando_solver`, libera o agendador e e retomada em 15 minutos. Jobs
+diarios ainda nao iniciados tem prioridade sobre retries deferidos. Na retomada
+apenas um item sonda a cadeia; os quatro workers so voltam apos sucesso.
 
 Em 2026-07-15 foram parados o app Florence remanescente em `ryangurgell20` e o
 terceiro deploy legado deste solver em `jorhinhogames`. Como esse workspace
@@ -580,8 +581,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.99 .
-docker push ryang20/prumo-api:1.0.99
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.100 .
+docker push ryang20/prumo-api:1.0.100
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -592,10 +593,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.99 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.100 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.99
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.100
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

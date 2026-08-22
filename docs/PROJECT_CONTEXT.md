@@ -19,7 +19,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 ## Estado validado em 2026-08-22
 
-### Operação 1.0.99 em 2026-08-22
+### Operação 1.0.100 em 2026-08-22
 
 - O Portal mantem quatro downloads em condicao saudavel, mas fecha o pool
   diante de indisponibilidade da cadeia de solver. Uma unica nota sonda a
@@ -32,9 +32,10 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
   `server/start.sh` agora o supervisiona e reinicia com backoff se o processo
   cair; a fila e os workers Browserless do ISS Fortaleza permanecem separados.
 - Uma cadeia totalmente bloqueada nao monopoliza as notas automaticas. A run
-  tenta por dez minutos, persiste `aguardando_solver`, libera a agenda e volta
-  em 15 minutos com um unico probe; os outros certificados vencidos podem
-  tentar no intervalo.
+  automatica tenta por dez minutos, persiste `aguardando_solver`, libera a
+  agenda e volta em 15 minutos com um unico probe. Capturas diarias ainda nao
+  iniciadas passam antes dos retries deferidos. Runs manuais nao cedem a vaga:
+  ficam no probe ate recuperacao ou parada explicita do usuario.
 
 - As seis automações habilitadas foram auditadas em produção e permanecem
   distribuídas a cada quatro horas. Todas tentaram rodar no dia; cinco falharam
@@ -216,7 +217,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - A prova Loquicenter entrou pelo certificado na segunda tentativa, mas a primeira janela de recebidas recebeu HTTP 503 no endpoint oficial. A causa foi classificada como `portal_indisponivel_temporario`, distinta de certificado, captcha e erro de nota.
 - A API 1.0.60 repete a indexação para HTTP 429/500/502/503/504 e falhas de rede em até oito tentativas, com intervalos crescentes de 15, 30, 60, 120, 240 e até 300 segundos. A run permanece ativa e a tela informa a causa e a próxima espera.
 
-- API alvo atual: 1.0.99, preservando autenticação direta no ThinkPad e seleção adaptativa entre HF, as contas Modal e o fallback residencial.
+- API alvo atual: 1.0.100, preservando autenticação direta no ThinkPad e seleção adaptativa entre HF, as contas Modal e o fallback residencial.
 - Portal 1.0.72: a ação visível `Continuar` retoma emitidas e recebidas incompletas em sequência, preserva índice e arquivos válidos e mantém indisponibilidades transitórias em espera. Outage do solver não consome tentativas da nota; após falha, a concorrência cai para um probe e o Modal com sucesso recente passa a ser preferido. Respostas HTTP 503 agora preservam `reason/error` do JSON; `google_ai_request_failed`, `unusual traffic` e `/sorry/index` aplicam cooldown de 300 segundos somente ao endpoint Modal explicitamente bloqueado, enquanto 5xx genérico mantém cooldown curto para aproveitar outros containers do pool.
 - Portal 1.0.73: a recuperação de sessão do Modo IA cria um grupo de processos próprio no Linux e encerra toda a árvore do Chromium ao terminar. Isso impede o acúmulo observado na Loquicenter (8.438 tarefas no contêiner), que degradava o solver residencial até `Resource temporarily unavailable`.
 - Portal Alan/Loquicenter em 07/08/2026: recebidas preservadas em 72 XML/72 PDFs; emitidas retomadas somente em XML, sem reindexar e preservando 274 PDFs existentes. Backup local anterior à retomada em `Downloads/Prumo-Alan-Loquicenter-20260807`, contendo arquivos e os quatro JSONs de índice/estado, sem certificado, senha ou sessão.
@@ -235,7 +236,7 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 - Login Firefox: Bearer atual tem precedência sobre cookie antigo, as páginas autenticadas usam mesma origem e login/admin/master são entregues pelo Worker com `Cache-Control: no-store`.
 - Login/Worker: o incidente `1101` de 2026-07-17 revelou rejeições assíncronas escapando do `try/catch` porque os handlers eram retornados sem `await`. Todas as rotas assíncronas agora são aguardadas dentro da barreira de erro; respostas HTML de infraestrutura são reduzidas a uma mensagem segura com código de suporte, sem inserir o documento da Cloudflare no formulário.
 - Monitor do ThinkPad: segredo sincronizado, arquivo de ambiente em modo `600` e `/api/internal/runtime-metrics` respondendo 200.
-- Imagem alvo do servidor: `ryang20/prumo-api:1.0.99`; o deploy mantém automaticamente a atual e as duas anteriores como rollback local.
+- Imagem alvo do servidor: `ryang20/prumo-api:1.0.100`; o deploy mantém automaticamente a atual e as duas anteriores como rollback local.
 - Cloudflare: Worker `morning-credit-8a59` no deploy `b8dd0650-6555-41d1-bdac-aa34bda09e35`; bundle local validado em dry-run com 119,98 KiB gzip e zero vulnerabilidades no `npm audit`.
 - Modal: somente `ryangurgell20` e `fabriciofarofa5` permanecem como solvers Portal ativos. O app Florence e os apps Prumo da conta desabilitada `jorhinhogames` foram parados em 2026-07-15; `prumo-browserless` foi migrado para `ryangurgell20` e validado por handshake real.
 - Servidor: Docker, cloudflared, monitor e Fail2ban ativos; 23% do disco usado, 72 GiB livres e artefatos do solver em 3,0 GiB após a primeira compactacao.
@@ -259,5 +260,5 @@ O Prumo centraliza automações fiscais para ISS Fortaleza e Portal Nacional de 
 
 - O deploy automático Netlify pode ser ignorado por limite de créditos da conta. As telas críticas atualizadas continuam ao vivo pelas rotas do Worker Cloudflare, sem deploy manual obrigatório.
 - Debug visual fica por sete dias. Após 15 minutos, conteúdo textual é gzipado e PNG vira WebP lossless; o compose limita logs Docker a 3 x 10 MiB.
-- O registro Docker externo não é necessário no caminho normal: a imagem 1.0.99 é construída diretamente no ThinkPad após `git pull`. O deploy mantém somente a atual e duas anteriores como rollback local.
+- O registro Docker externo não é necessário no caminho normal: a imagem 1.0.100 é construída diretamente no ThinkPad após `git pull`. O deploy mantém somente a atual e duas anteriores como rollback local.
 - O resolvedor anterior foi removido. O único caminho permitido para hCaptcha é o Google Modo IA versionado em `solver/google_ai_mode`, direto pelo Modal. A proxy do servidor só poderá ser ativada após autenticação de máquina no Cloudflare Access.

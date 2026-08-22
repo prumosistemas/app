@@ -1049,6 +1049,8 @@ def _build_command(cfg: Dict[str, Any], run_dir: Path, retry_only: bool) -> List
         cmd.append("--recriar-index")
         if cfg.get("renovar_sessao"):
             cmd.append("--renovar-inicio")
+    if cfg.get("automatic"):
+        cmd.append("--defer-solver-outage")
     return cmd
 
 
@@ -1287,7 +1289,12 @@ def _record_automatic_started(
     _save_automatic_state(ctx, state)
 
 
-def _stale_automatic_run_dirs(ctx: WorkerContext, job: Dict[str, Any]) -> List[Path]:
+def _stale_automatic_run_dirs(
+    ctx: WorkerContext,
+    job: Dict[str, Any],
+    *,
+    allow_deferred: bool = True,
+) -> List[Path]:
     if _active_runtime(ctx):
         return []
     candidates: List[Path] = []
@@ -1306,7 +1313,7 @@ def _stale_automatic_run_dirs(ctx: WorkerContext, job: Dict[str, Any]) -> List[P
                 deferred_ready = True
         if status and status != "finalizado":
             candidates.append(run_dir)
-    return candidates if has_orphan or deferred_ready else []
+    return candidates if has_orphan or (allow_deferred and deferred_ready) else []
 
 
 def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any]:
@@ -1324,8 +1331,11 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
     if _any_portal_runtime_active():
         return {"started": False, "reason": "portal_busy"}
 
+    # Uma run interrompida por processo/deploy retoma primeiro. Uma run que
+    # cedeu voluntariamente por indisponibilidade visual espera: ela nao pode
+    # furar a fila de capturas diarias que ainda nem tiveram sua primeira vez.
     for ctx, state, job in records:
-        stale_dirs = _stale_automatic_run_dirs(ctx, job)
+        stale_dirs = _stale_automatic_run_dirs(ctx, job, allow_deferred=False)
         if not stale_dirs:
             continue
         _start_jobs(ctx, stale_dirs, retry_only=True)
@@ -1348,6 +1358,24 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
         if next_run and next_run <= current:
             due.append((next_run, _runtime_key(ctx), str(job.get("id") or ""), ctx, state, job))
     if not due:
+        # Somente depois das capturas novas elegiveis retomamos checkpoints
+        # deferidos. Assim uma pane longa nao monopoliza sempre os primeiros
+        # certificados da lista.
+        for ctx, state, job in records:
+            stale_dirs = _stale_automatic_run_dirs(ctx, job)
+            if not stale_dirs:
+                continue
+            _start_jobs(ctx, stale_dirs, retry_only=True)
+            job["last_status"] = "rodando"
+            job["last_error"] = None
+            _save_automatic_state(ctx, state)
+            return {
+                "started": True,
+                "reason": "checkpoint_resume",
+                "scope": _runtime_key(ctx),
+                "job_id": job.get("id"),
+                "run_ids": [path.name for path in stale_dirs],
+            }
         return {"started": False, "reason": "nothing_due"}
 
     _next_run, _scope, _job_id, ctx, state, job = min(due, key=lambda item: item[:3])

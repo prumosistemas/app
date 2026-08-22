@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.99**
+Versao do app: **1.0.100**
 Atualizado em: **2026-08-22**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -107,7 +107,7 @@ renova a quarentena; sucesso limpa a penalidade e restaura automaticamente o
 principal. `PORTAL_MODAL_DISABLED_RECHECK_SECONDS` permite ajustar o intervalo
 entre 300 e 21600 segundos, com padrão de 1800.
 
-Na 1.0.99, uma indisponibilidade simultanea dos resolvedores abre um portao por
+Na 1.0.100, uma indisponibilidade simultanea dos resolvedores abre um portao por
 run: os trabalhos ja iniciados terminam, uma unica nota passa a sondar a cadeia
 com backoff de 10/20/30/60/90/120 segundos e os quatro downloads so reabrem
 apos sucesso confirmado. Um keepalive HTTP preserva a sessao do Portal durante
@@ -115,10 +115,11 @@ esperas longas. Cenas visuais estaticas usam um quadro coerente, congelado ate
 o clique; desafios temporais continuam animados e mantem captura propria. O
 resolvedor residencial segue com um navegador e ultimo na ordem, agora sob um
 supervisor com reinicio limitado, sem afetar os slots Browserless do ISS.
-Se toda a cadeia permanecer indisponivel por dez minutos, uma run salva o
-checkpoint, cede a vaga e fica `aguardando_solver`; automaticas retomam em 15
-minutos com um unico probe. Assim uma empresa bloqueada nao impede as demais de
-fazerem a tentativa diaria.
+Runs manuais permanecem nesse probe ate a rota voltar ou o usuario parar. Runs
+automaticas salvam o checkpoint apos dez minutos, cedem a vaga e ficam
+`aguardando_solver`; retomam em 15 minutos com um unico probe. Capturas diarias
+ainda nao iniciadas passam antes de retries deferidos, impedindo que os
+primeiros certificados monopolizem a agenda durante uma pane longa.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
