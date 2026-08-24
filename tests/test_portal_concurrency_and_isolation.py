@@ -84,6 +84,31 @@ def test_retry_without_overrides_preserves_xml_only_configuration() -> None:
     assert resumed["retries"] == 8
 
 
+def test_continue_preserves_automatic_capture_metadata() -> None:
+    cfg = {
+        "modo": "recebidas",
+        "tipo_download": "ambos",
+        "data_inicial": "20/08/2026",
+        "data_final": "24/08/2026",
+        "cert_id": "certificado",
+        "retries": 8,
+        "automatic": True,
+        "automatic_job_id": "job-certificado",
+        "automatic_reason": "schedule",
+        "automatic_retention_days": 123,
+    }
+
+    resumed = portal_nacional._retry_config(
+        cfg,
+        portal_nacional.PortalContinuePayload(run_ids=["run-1"]),
+    )
+
+    assert resumed["automatic"] is True
+    assert resumed["automatic_job_id"] == "job-certificado"
+    assert resumed["automatic_reason"] == "schedule"
+    assert resumed["automatic_retention_days"] == 123
+
+
 def test_download_keeps_xml_checkpoint_when_pdf_solver_raises(monkeypatch, tmp_path: Path) -> None:
     calls = []
 

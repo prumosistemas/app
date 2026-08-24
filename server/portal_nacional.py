@@ -110,7 +110,7 @@ class PortalAutomaticPayload(BaseModel):
 
 def _retry_config(cfg: Dict[str, Any], payload: PortalRetryPayload) -> Dict[str, Any]:
     values = payload.model_dump(exclude={"run_ids"}, exclude_none=True)
-    return _normalize_cfg(
+    normalized = _normalize_cfg(
         {
             **cfg,
             **values,
@@ -120,6 +120,18 @@ def _retry_config(cfg: Dict[str, Any], payload: PortalRetryPayload) -> Dict[str,
             "renovar_sessao": False,
         }
     )
+    # Continuar/retry altera apenas parametros operacionais da mesma run. Nao
+    # transforme uma captura agendada em manual, pois isso a remove do
+    # historico acumulado e da reconciliacao diaria.
+    for key in (
+        "automatic",
+        "automatic_job_id",
+        "automatic_reason",
+        "automatic_retention_days",
+    ):
+        if key in cfg:
+            normalized[key] = cfg[key]
+    return normalized
 
 
 def _now_iso() -> str:
