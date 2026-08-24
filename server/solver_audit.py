@@ -24,6 +24,9 @@ SYNC_ACCOUNT_TIMEOUT_SECONDS = max(
 )
 RETENTION_DAYS = max(1, int(os.getenv("PORTAL_DEBUG_RETENTION_DAYS", "7")))
 MAX_BOOTSTRAP_CHALLENGES = max(10, int(os.getenv("PORTAL_SOLVER_AUDIT_BOOTSTRAP_DIRS", "40")))
+MAX_ARTIFACT_DIRS_PER_REQUEST = max(
+    1, min(8, int(os.getenv("PORTAL_SOLVER_AUDIT_DIRS_PER_REQUEST", "3")))
+)
 
 SUMMARY_NAMES = {
     "desafio.png", "desafio.webp", "desafio-anotado-google-ia.png",
@@ -140,6 +143,22 @@ def _build_missing_local_videos(root: Path, limit: int = 4) -> tuple[int, int]:
     created = 0
     frames_removed = 0
     for folder in folders:
+        frames = [
+            *folder.glob("quadro-*.jpg"),
+            *folder.glob("quadro-*.png"),
+        ]
+        if len(frames) == 1 and any(
+            (folder / name).is_file()
+            for name in ("desafio.webp", "desafio.png")
+        ):
+            # Em desafio estatico, desafio.* ja e a copia do unico quadro.
+            # Manter os dois duplicava dezenas de milhares de imagens.
+            try:
+                frames[0].unlink()
+                frames_removed += 1
+            except OSError:
+                pass
+            continue
         video = folder / "captura-temporal.mp4"
         if not video.is_file() or video.stat().st_size <= 0:
             if created >= max(1, limit):
@@ -157,6 +176,20 @@ def _build_missing_local_videos(root: Path, limit: int = 4) -> tuple[int, int]:
             except OSError:
                 pass
     return created, frames_removed
+
+
+def _remove_superseded_images(root: Path) -> int:
+    """Prefere WebP quando a conversao comprovada ja existe no espelho."""
+    removed = 0
+    for path in root.rglob("*.png"):
+        compact = path.with_suffix(".webp")
+        try:
+            if compact.is_file() and compact.stat().st_size > 0:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -267,7 +300,7 @@ def _prune_local() -> int:
                 removed += 1
         except OSError:
             continue
-    return removed
+    return removed + _remove_superseded_images(root)
 
 
 async def sync_once() -> dict[str, Any]:
@@ -347,9 +380,16 @@ def _artifact_list(root: Path, request_id: str) -> list[dict[str, str]]:
     if not challenge_root.is_dir():
         return []
     result = []
-    for folder in challenge_root.iterdir():
-        if not folder.is_dir() or request_id not in folder.name:
-            continue
+    folders = sorted(
+        (
+            folder
+            for folder in challenge_root.iterdir()
+            if folder.is_dir() and request_id in folder.name
+        ),
+        key=lambda folder: folder.stat().st_mtime,
+        reverse=True,
+    )[:MAX_ARTIFACT_DIRS_PER_REQUEST]
+    for folder in folders:
         for path in folder.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in SAFE_MEDIA_SUFFIXES:
                 continue
@@ -367,6 +407,14 @@ def _summarize(source: str, root: Path, path: Path) -> dict[str, Any] | None:
     events = _read_events(path)
     if not events:
         return None
+    # O mesmo ID de nota e reutilizado nas retomadas. Resuma somente a ultima
+    # chamada HTTP; acumular semanas de tentativas fazia um reject imediato
+    # parecer um solve de minutos e inflava unusual/cliques/rotas.
+    last_start = max(
+        (index for index, event in enumerate(events) if event.get("event") == "solve_received"),
+        default=0,
+    )
+    events = events[last_start:]
     first, last = events[0], events[-1]
     request_id = str(first.get("request_id") or path.stem)
     attempts = [event for event in events if event.get("event") == "provider_attempt"]

@@ -72,6 +72,30 @@ def test_solver_audit_summarizes_route_clicks_and_unusual(monkeypatch, tmp_path:
     assert row["clicks"][0]["x"] == 100
 
 
+def test_solver_audit_summarizes_only_latest_http_attempt(monkeypatch, tmp_path: Path) -> None:
+    root = tmp_path / "thinkpad"
+    audit = root / "auditoria" / "2026-08-24" / "req-repeat.jsonl"
+    audit.parent.mkdir(parents=True)
+    events = [
+        {"timestamp": "2026-08-24T10:00:00+00:00", "elapsed_seconds": 0, "event": "solve_received", "request_id": "req-repeat"},
+        {"timestamp": "2026-08-24T10:00:10+00:00", "elapsed_seconds": 10, "event": "provider_success", "request_id": "req-repeat", "route": "huggingface:one"},
+        {"timestamp": "2026-08-24T10:00:11+00:00", "elapsed_seconds": 11, "event": "solve_finished", "request_id": "req-repeat", "success": True, "reason": "token"},
+        {"timestamp": "2026-08-24T11:00:00+00:00", "elapsed_seconds": 0, "event": "solve_received", "request_id": "req-repeat"},
+        {"timestamp": "2026-08-24T11:00:00+00:00", "elapsed_seconds": 0.1, "event": "solve_rejected", "request_id": "req-repeat", "reason": "provider_circuit_open"},
+        {"timestamp": "2026-08-24T11:00:00+00:00", "elapsed_seconds": 0.2, "event": "solve_finished", "request_id": "req-repeat", "success": False, "reason": "provider_circuit_open"},
+    ]
+    audit.write_text("\n".join(json.dumps(item) for item in events), encoding="utf-8")
+    monkeypatch.setattr(solver_audit, "source_roots", lambda: {"thinkpad": root})
+    monkeypatch.setattr(solver_audit, "mirror_root", lambda: tmp_path / "mirror")
+
+    row = solver_audit.list_solver_audits(10)["audits"][0]
+
+    assert row["success"] is False
+    assert row["reason"] == "provider_circuit_open"
+    assert row["route_successes"] == []
+    assert row["duration_seconds"] == 0.2
+
+
 def test_solver_audit_rejects_path_escape(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(solver_audit, "source_roots", lambda: {"thinkpad": tmp_path})
     with pytest.raises((ValueError, FileNotFoundError)):

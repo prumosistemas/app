@@ -1,5 +1,17 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.101 (24/08/2026)
+
+- O desafio observado foi de ponto livre com a pergunta para localizar o animal
+  diferente. A imagem trocava de estado durante a resposta da IA. O CDP agora
+  pausa o tempo virtual do iframe entre captura e clique; a validacao ao vivo
+  continua obrigatoria antes de qualquer clique.
+- Uma falha completa nao derruba mais um container Modal na primeira ocorrencia:
+  o limite padrao passou a duas falhas consecutivas. O ThinkPad segue por ultimo
+  e respeita o prazo real do circuito residencial antes de ser sondado de novo.
+- `request_ended_early` fica reservado a encerramento realmente incompleto;
+  rejeicao por circuito e registrada com sua causa real.
+
 ## Arquitetura ativa
 
 - A API Prumo executa `server/portal_nacional_automation.py` e persiste cada run em `/opt/prumo/data`.

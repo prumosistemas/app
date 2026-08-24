@@ -71,7 +71,7 @@ MIN_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_MIN_CONTAINERS", "1")))
 BUFFER_CONTAINERS = max(0, int(os.environ.get("PORTAL_MODAL_BUFFER_CONTAINERS", "1")))
 PROVIDER_FAILURE_LIMIT = max(
     1,
-    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "1"))),
+    min(10, int(os.environ.get("PORTAL_MODAL_PROVIDER_FAILURE_LIMIT", "2"))),
 )
 
 google_state = modal.Volume.from_name(

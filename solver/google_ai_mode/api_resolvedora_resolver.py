@@ -2757,6 +2757,13 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                     "provider_state": fatal_state["provider_state"],
                     "solver_state": fatal_state["solver_state"],
                 }, ensure_ascii=False).encode("utf-8"))
+                audit_event(
+                    "solve_finished",
+                    success=False,
+                    reason=fatal_state["reason"],
+                    fatal=True,
+                )
+                audit_finished = True
                 return
 
             if not sitekey:
@@ -2765,6 +2772,8 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": "sitekey obrigatorio"}).encode())
+                audit_event("solve_finished", success=False, reason="sitekey_missing")
+                audit_finished = True
                 return
             
             LAST_SOLVER_ERROR.value = None

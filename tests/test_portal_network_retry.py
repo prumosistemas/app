@@ -544,11 +544,19 @@ def test_google_session_failure_cools_only_that_endpoint() -> None:
     ) == 300
 
 
-def test_local_google_session_failure_does_not_hide_residential_fallback() -> None:
+def test_local_google_session_failure_temporarily_cools_residential_fallback() -> None:
     assert automation.mark_solver_endpoint_unavailable(
         "http://127.0.0.1:8876/solve",
         RuntimeError("solver:google_ai_request_failed: sessao anonima indisponivel"),
-    ) == 0
+    ) == automation.SOLVER_LOCAL_BLOCK_COOLDOWN_SECONDS
+
+
+def test_local_circuit_respects_solver_retry_after() -> None:
+    error = RuntimeError("solver:provider_circuit_open: unusual traffic")
+    error.retry_after_seconds = 900
+    assert automation.mark_solver_endpoint_unavailable(
+        "http://127.0.0.1:8876/solve", error
+    ) == 900
 
 
 def test_modal_container_outage_has_short_pool_cooldown() -> None:

@@ -58,6 +58,12 @@ SOLVER_MODAL_DISABLED_RECHECK_SECONDS = bounded_env_int(
     5 * 60,
     6 * 3600,
 )
+SOLVER_LOCAL_BLOCK_COOLDOWN_SECONDS = bounded_env_int(
+    "PORTAL_LOCAL_SOLVER_BLOCK_COOLDOWN_SECONDS",
+    5 * 60,
+    60,
+    60 * 60,
+)
 # O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
 # residencial do ThinkPad somente quando a tentativa primaria falha.
 DEFAULT_SOLVER_FALLBACK_URL = "http://127.0.0.1:8876/solve"
@@ -1600,11 +1606,22 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         getattr(getattr(exc, "response", None), "status_code", None) == 404
         or "workspace" in detail and "disabled" in detail
     )
-    if is_local_solver_url(url) and "google_ai_request_failed" in detail:
-        # Uma resposta vazia pertence ao solve/navegador atual. Resfriar o
-        # endpoint local removia o ultimo fallback das outras threads, que
-        # entao falhavam usando apenas os Modals em circuito.
-        cooldown = 0
+    if is_local_solver_url(url) and (
+        explicit_google_block
+        or "provider_circuit_open" in detail
+        or "solver_circuit_open" in detail
+    ):
+        # O ThinkPad possui um unico egress residencial. Diferente do endpoint
+        # Modal, uma resposta de bloqueio/circuito aqui representa toda a rota,
+        # portanto repeti-la em cada nota apenas acrescenta latencia e Chrome.
+        # Se a API informou quando seu circuito reabre, respeite esse prazo;
+        # caso contrario publique uma pausa curta e volte a sonda-la sozinho.
+        retry_after = int(getattr(exc, "retry_after_seconds", 0) or 0)
+        cooldown = max(
+            cooldown,
+            retry_after,
+            SOLVER_LOCAL_BLOCK_COOLDOWN_SECONDS,
+        )
     elif hostname.endswith(".modal.run") and workspace_disabled:
         # Rota desativada por cota/workspace nao e uma falha de um container
         # isolado. Insistir a cada 15 s so acrescenta latencia a todas as notas.
@@ -1721,6 +1738,16 @@ def solve_captcha_once(
         # Preserve o status para a politica de cooldown distinguir 5xx
         # generico de bloqueio Google explicito, mesmo com corpo JSON valido.
         error.response = response
+        retry_values = []
+        for state_name in ("provider_state", "solver_state"):
+            state = failed.get(state_name)
+            if isinstance(state, dict):
+                try:
+                    retry_values.append(int(state.get("retry_after_seconds") or 0))
+                except (TypeError, ValueError):
+                    pass
+        if retry_values:
+            error.retry_after_seconds = max(retry_values)
         raise error
     response.raise_for_status()
     data = solver_response_json(response)

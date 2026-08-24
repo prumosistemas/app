@@ -23,21 +23,14 @@ if str(SERVER) not in sys.path:
 from solver_audit import list_solver_audits, resolve_audit_file  # noqa: E402
 
 
-def _copy_recent_thinkpad(export: Path, rows: list[dict], root: Path) -> None:
+def _copy_recent_artifacts(export: Path, rows: list[dict]) -> None:
     for row in rows:
-        if row.get("source") != "thinkpad":
-            continue
-        request_id = str(row.get("request_id") or "")
-        for audit in root.glob(f"auditoria/*/{request_id}.jsonl"):
-            target = export / "thinkpad_recente" / audit.relative_to(root)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(audit, target)
         for artifact in row.get("artifacts") or []:
             try:
-                source = resolve_audit_file("thinkpad", artifact["path"])
+                source = resolve_audit_file(str(row.get("source")), artifact["path"])
             except (ValueError, FileNotFoundError, KeyError):
                 continue
-            target = export / "thinkpad_recente" / source.relative_to(root)
+            target = export / str(row.get("source")) / artifact["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
 
@@ -240,13 +233,9 @@ def main() -> None:
     export = Path(args.output).resolve()
     export.mkdir(parents=True, exist_ok=False)
     output_root = Path(__import__("os").environ.get("ISS_OUTPUT_ROOT", str(ROOT / "server" / "output")))
-    mirror = output_root / "_api_data" / "portal_solver_audit"
-    if mirror.exists():
-        shutil.copytree(mirror, export / "modal_espelho", dirs_exist_ok=True)
     report = list_solver_audits(args.limit)
     rows = report.get("audits") or []
-    thinkpad_root = output_root / "_api_data" / "google_ai_solver_artifacts"
-    _copy_recent_thinkpad(export, rows, thinkpad_root)
+    _copy_recent_artifacts(export, rows)
     active = _copy_active_run(export, output_root / "empresas")
     snapshot = _snapshot(rows, active, report.get("sync") or {})
     (export / "auditoria-resumo.json").write_text(

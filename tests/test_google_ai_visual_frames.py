@@ -1,4 +1,6 @@
 import importlib.util
+import base64
+import io
 import os
 import time
 from pathlib import Path
@@ -107,6 +109,60 @@ def test_linux_chrome_recovery_stops_the_entire_process_group(
 def test_empty_visual_frame_is_retryable_without_provider_penalty() -> None:
     with pytest.raises(SOLVER.VisualFrameNotReadyError):
         SOLVER._parse_non9_objects({"objetos": {}})
+
+
+def test_static_canvas_pauses_virtual_time_until_click(monkeypatch, tmp_path: Path) -> None:
+    buffer = io.BytesIO()
+    SOLVER.legacy.Image.new("RGB", (1000, 940), "purple").save(buffer, format="JPEG")
+    data_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    calls: list[tuple[str, dict | None]] = []
+
+    class FakeSocket:
+        @staticmethod
+        def settimeout(_seconds: float) -> None:
+            return None
+
+    class FakeClient:
+        ws = FakeSocket()
+
+        def __init__(self, _url: str) -> None:
+            pass
+
+        @staticmethod
+        def eval(_expression: str, await_promise: bool = False):
+            if await_promise:
+                return {
+                    "width": 1000,
+                    "height": 940,
+                    "top_cut_native": 0,
+                    "interval_ms": 180,
+                    "frames": [data_url],
+                }
+            return {"restored": True}
+
+        @staticmethod
+        def call(method: str, params: dict | None = None):
+            calls.append((method, params))
+            return {}
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "challenge_page",
+        lambda _port: {"webSocketDebuggerUrl": "ws://challenge"},
+    )
+    monkeypatch.setattr(SOLVER.legacy, "CdpClient", FakeClient)
+    monkeypatch.setattr(SOLVER.legacy, "png_seems_blank", lambda _path: False)
+
+    frames = SOLVER._capture_visual_canvas_sequence(9222, tmp_path, frame_count=1)
+    SOLVER._restore_visual_animation(9222)
+
+    policies = [params["policy"] for method, params in calls if method == "Emulation.setVirtualTimePolicy"]
+    assert frames
+    assert policies == ["pause", "advance"]
 
 
 def test_malformed_visual_objects_remain_provider_errors() -> None:

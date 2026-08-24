@@ -962,6 +962,19 @@ new Promise(async (resolve) => {{
 """,
                 await_promise=True,
             )
+            if freeze_static and isinstance(data, dict) and data.get("frames"):
+                # O desafio atual troca os animais por timers internos mesmo
+                # depois de substituir requestAnimationFrame. Pause o relogio
+                # virtual do alvo enquanto a IA externa responde; comandos CDP
+                # e o clique continuam disponiveis e o relogio volta logo apos.
+                try:
+                    client.call(
+                        "Emulation.setVirtualTimePolicy",
+                        {"policy": "pause"},
+                    )
+                    data["virtual_time_frozen"] = True
+                except Exception:
+                    data["virtual_time_frozen"] = False
         finally:
             client.close()
     except Exception as exc:
@@ -1019,6 +1032,7 @@ new Promise(async (resolve) => {{
                     "maximum_changed_ratio": data.get("maximum_changed_ratio"),
                     "maximum_mean_delta": data.get("maximum_mean_delta"),
                     "animation_frozen": bool(data.get("animation_frozen")),
+                    "virtual_time_frozen": bool(data.get("virtual_time_frozen")),
                     "capture_method": "canvas_to_data_url_sequence",
                 },
                 ensure_ascii=False,
@@ -1053,6 +1067,13 @@ def _restore_visual_animation(port: int) -> None:
 })()
 """
             )
+            try:
+                client.call(
+                    "Emulation.setVirtualTimePolicy",
+                    {"policy": "advance"},
+                )
+            except Exception:
+                pass
         finally:
             client.close()
     except Exception:

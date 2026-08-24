@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.100**
-Atualizado em: **2026-08-22**
+Versao do app: **1.0.101**
+Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -120,6 +120,12 @@ automaticas salvam o checkpoint apos dez minutos, cedem a vaga e ficam
 `aguardando_solver`; retomam em 15 minutos com um unico probe. Capturas diarias
 ainda nao iniciadas passam antes de retries deferidos, impedindo que os
 primeiros certificados monopolizem a agenda durante uma pane longa.
+
+Na 1.0.101, cenas de animais que parecem estaticas mas mudam enquanto a IA
+responde pausam o relogio virtual do iframe ate o clique. O ThinkPad respeita o
+`retry_after` do proprio circuito e deixa de ser sondado em cada nota durante
+bloqueio residencial. Rejeicoes normais de circuito tambem deixaram de aparecer
+na auditoria como `request_ended_early`.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
