@@ -145,3 +145,20 @@ Run do Alan/SIM7: `20260714-114741-emitidas-20260601-20260630-cert-202607131415-
 - Logs e imagens de captcha são publicados no Volume privado a cada minuto, com nome por container, e continuam sujeitos à retenção de sete dias.
 - No retry controlado do Gabriel em 2026-07-18, dois itens terminaram 2/2. A run passou de 7 para 9 baixadas e encerrou `finalizado_parcial`, com 23 pendentes apenas pelo limite do teste. O último hCaptcha exigiu 13 respostas visuais válidas e concluiu no fallback residencial, sem navegador órfão.
 - Na run completa Alan/SIM7, 62 XMLs antigos não referenciados foram removidos somente depois da validação dos 374 XMLs e 374 PDFs do índice; a pós-condição permaneceu 374/374.
+
+## Continuidade visual e retomada automática - 2026-08-24
+
+- O solver `v51-post-submit-transition` não usa relógio virtual do CDP. Depois
+  do clique, compara a impressão visual do desafio e reconhece a etapa seguinte
+  sem reclicar o checkbox. Em produção, uma etapa nova apareceu em cerca de um
+  segundo e uma chamada real devolveu token em 30 segundos.
+- `Continuar` preserva `automatic`, o ID do agendamento, o motivo e a retenção.
+  Assim, uma captura diária retomada não reaparece como manual nem sai do
+  histórico acumulado.
+- HF continua na frente; os Modal reserva e terceiro vêm depois; o ThinkPad é o
+  último recurso. Uma queda simultânea abre uma única sonda sequencial, mantém
+  as notas pendentes sem consumir tentativas e devolve a run ao scheduler.
+- A cadeia inteira de resolvedores tem orçamento total padrão de 480 segundos.
+  O timeout de 420 segundos deixa de se multiplicar por cada endpoint durante
+  indisponibilidade geral. O valor pode ser ajustado por
+  `PORTAL_NACIONAL_SOLVER_CHAIN_TIMEOUT_SECONDS` entre 120 e 900 segundos.

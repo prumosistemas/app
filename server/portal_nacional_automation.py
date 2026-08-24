@@ -38,6 +38,10 @@ DEFAULT_INDEX_FILE = BASE_DIR / "indice_nfse.json"
 PORTAL_MAX_PERIOD_DAYS = 30
 SOLVER_API_URL = "http://127.0.0.1:8765/solve"
 SOLVER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PORTAL_NACIONAL_SOLVER_TIMEOUT_SECONDS", "420"))
+SOLVER_CHAIN_TIMEOUT_SECONDS = max(
+    120,
+    min(900, int(os.environ.get("PORTAL_NACIONAL_SOLVER_CHAIN_TIMEOUT_SECONDS", "480"))),
+)
 
 
 def bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -1718,14 +1722,22 @@ def solve_captcha_once(
     sitekey: str,
     request_id: str,
     page_url: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> str | None:
+    request_timeout = max(
+        1.0,
+        min(
+            float(timeout_seconds or SOLVER_REQUEST_TIMEOUT_SECONDS),
+            float(SOLVER_REQUEST_TIMEOUT_SECONDS),
+        ),
+    )
     payload = {"sitekey": sitekey, "request_id": request_id}
     if page_url:
         payload["url"] = page_url
     response = requests.post(
         solver_url,
         json=payload,
-        timeout=SOLVER_REQUEST_TIMEOUT_SECONDS,
+        timeout=request_timeout,
     )
     if response.status_code >= 400:
         try:
@@ -1753,11 +1765,12 @@ def solve_captcha_once(
     data = solver_response_json(response)
     if data.get("accepted") and data.get("job_id"):
         job_url = solver_api_job_url(solver_url, str(data["job_id"]))
-        deadline = time.monotonic() + SOLVER_REQUEST_TIMEOUT_SECONDS
+        deadline = time.monotonic() + request_timeout
         poll_failures = 0
         while time.monotonic() < deadline:
             try:
-                poll = requests.get(job_url, timeout=20)
+                remaining = max(1.0, deadline - time.monotonic())
+                poll = requests.get(job_url, timeout=min(20.0, remaining))
             except requests.RequestException as exc:
                 poll_failures += 1
                 delay = min(2 * poll_failures, 12)
@@ -1787,11 +1800,16 @@ def solve_captcha_with_url(
     page_url: str | None = None,
 ) -> str | None:
     errors = []
+    chain_deadline = time.monotonic() + SOLVER_CHAIN_TIMEOUT_SECONDS
     candidates = balance_modal_solver_candidates(
         wait_for_solver_candidates(solver_url),
         request_id,
     )
     for candidate in candidates:
+        remaining_chain = chain_deadline - time.monotonic()
+        if remaining_chain <= 0:
+            errors.append("solver_chain_timeout")
+            break
         request_lock = modal_solver_request_lock(candidate)
         with request_lock if request_lock is not None else nullcontext():
             # Outra thread pode ter descoberto o bloqueio enquanto esta
@@ -1807,7 +1825,14 @@ def solve_captcha_with_url(
                 )
                 continue
             try:
-                token = solve_captcha_once(candidate, sitekey, request_id, page_url)
+                remaining_chain = max(1.0, chain_deadline - time.monotonic())
+                token = solve_captcha_once(
+                    candidate,
+                    sitekey,
+                    request_id,
+                    page_url,
+                    timeout_seconds=remaining_chain,
+                )
                 clear_solver_endpoint_cooldown(candidate)
                 record_solver_endpoint_event(candidate, "success", request_id)
                 return token

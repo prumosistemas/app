@@ -310,7 +310,7 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "https://fallback.example/solve")
 
-    def fake_solve(url, sitekey, request_id, page_url=None):
+    def fake_solve(url, sitekey, request_id, page_url=None, timeout_seconds=None):
         calls.append(url)
         if "primary" in url:
             raise requests.ConnectionError("offline")
@@ -321,6 +321,39 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
 
     assert token == "token-fallback"
     assert calls == ["https://primary.example/solve", "https://fallback.example/solve"]
+
+
+def test_solver_chain_has_one_total_timeout_budget(monkeypatch) -> None:
+    clock = {"now": 100.0}
+    timeouts = []
+    candidates = [
+        "https://solver-1.example/solve",
+        "https://solver-2.example/solve",
+        "https://solver-3.example/solve",
+    ]
+    monkeypatch.setattr(automation, "SOLVER_CHAIN_TIMEOUT_SECONDS", 480)
+    monkeypatch.setattr(automation.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(automation, "wait_for_solver_candidates", lambda _primary: candidates)
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    monkeypatch.setattr(automation, "mark_solver_endpoint_unavailable", lambda *args: 0)
+
+    def fake_solve(
+        _url,
+        _sitekey,
+        _request_id,
+        _page_url=None,
+        timeout_seconds=None,
+    ):
+        timeouts.append(round(float(timeout_seconds)))
+        clock["now"] += 300
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    with pytest.raises(RuntimeError, match="solver_chain_timeout"):
+        automation.solve_captcha_with_url(candidates[0], "key", "run")
+
+    assert timeouts == [480, 180]
 
 
 def test_cold_health_timeout_keeps_primary_for_real_post(monkeypatch) -> None:
@@ -343,7 +376,7 @@ def test_visual_failure_tries_second_modal_before_local_solver(monkeypatch) -> N
     )
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "https://modal-2.example/solve")
 
-    def fake_solve(url, sitekey, request_id, page_url=None):
+    def fake_solve(url, sitekey, request_id, page_url=None, timeout_seconds=None):
         calls.append(url)
         if "primary" in url:
             raise RuntimeError("solver:visual_challenge_not_ready: grade movel")
@@ -363,7 +396,7 @@ def test_solver_failure_message_redacts_url_queries(monkeypatch) -> None:
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URLS", [])
     monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", "")
 
-    def fake_solve(url, sitekey, request_id, page_url=None):
+    def fake_solve(url, sitekey, request_id, page_url=None, timeout_seconds=None):
         raise RuntimeError(
             "solver:failed: https://solver.example/solve?token=segredo&attempt=abc"
         )
@@ -456,7 +489,7 @@ def test_visual_failure_tries_second_modal_before_residential(monkeypatch) -> No
     monkeypatch.setattr(automation, "mark_solver_endpoint_unavailable", lambda *args: 0)
     monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
 
-    def fake_solve(url, _sitekey, _request_id, _page_url=None):
+    def fake_solve(url, _sitekey, _request_id, _page_url=None, timeout_seconds=None):
         calls.append(url)
         if url == primary:
             raise RuntimeError("solver:visual_challenge_not_opened")
