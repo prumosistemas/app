@@ -139,6 +139,9 @@ adiantar timers do widget. A captura conserva somente a pausa local de
 `requestAnimationFrame`, valida o quadro corrente antes do clique e identifica
 a etapa seguinte por assinatura do canvas/DOM. Assim a automacao continua no
 iframe aberto em vez de reclicar o checkbox depois de uma resposta correta.
+Como cada rota e o coordenador do ThinkPad ja possuem cooldown, o circuito
+agregado do container reabre em 60 s, evitando somar cinco minutos a uma falha
+transitoria sem aumentar a pressao continua nos provedores.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

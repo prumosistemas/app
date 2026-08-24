@@ -12,6 +12,9 @@
 - O evento `post_submit_transition` registra `next_stage` ou `timeout`, com o
   ultimo estado compacto, para separar erro de entendimento visual de falha na
   transicao do widget.
+- O circuito agregado dos provedores Modal reabre em 60 s. Os cooldowns de
+  cada Space/egress e o probe com backoff do ThinkPad continuam protegendo os
+  serviços; o agregado deixa de acrescentar cinco minutos de indisponibilidade.
 
 ## Ajuste 1.0.102 (24/08/2026)
 
