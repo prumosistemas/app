@@ -1,5 +1,14 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.104 (24/08/2026)
+
+- O circuito do solver e compartilhado por todas as runs e persiste em dados.
+  Somente um checkpoint recebe o lease de sonda durante bloqueio simultaneo.
+- A retomada ignora heartbeat ao localizar o ultimo evento significativo e nao
+  religa quatro navegadores depois de `solver_outage_deferred`.
+- O primeiro token reabre a concorrencia em 1→2→4. A rota HF/Modal/ThinkPad e
+  o tempo da resolucao ficam no indice sem payload ou credenciais.
+
 ## Ajuste 1.0.103 (24/08/2026)
 
 - Removido o relogio virtual sintetico do CDP do caminho visual. O modo

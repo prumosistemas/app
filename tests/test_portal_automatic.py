@@ -15,6 +15,11 @@ def _configure_storage(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(portal_nacional, "OUTPUT_ROOT", str(tmp_path))
     monkeypatch.setattr(
         portal_nacional,
+        "PORTAL_SOLVER_GLOBAL_STATE_FILE",
+        tmp_path / "solver-global.json",
+    )
+    monkeypatch.setattr(
+        portal_nacional,
         "member_output_root",
         lambda ctx: str(tmp_path / "empresas" / ctx.company_id / "colaboradores" / ctx.user_id),
     )

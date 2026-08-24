@@ -37,6 +37,14 @@ LEGACY_PROVIDER_MODEL = "disabled"
 BASE_DIR = Path(__file__).resolve().parent
 API_DIR = BASE_DIR / "api"
 SOLVER_API_VERSION = "2026-07-06-triple-key-profile-cleanup"
+
+
+def solver_response_metadata() -> dict:
+    """Metadados operacionais sanitizados adicionados à resposta de sucesso."""
+
+    return {}
+
+
 SOLVER_PROFILES = API_DIR / "chrome-profiles-hcaptcha"
 CAPTCHA_DIR = API_DIR / "hcaptcha-imagens"
 CHALLENGES_DIR = CAPTCHA_DIR / "desafios"
@@ -2801,6 +2809,7 @@ class SolverRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 response = {"token": token, "success": True, "request_id": request_id}
+                response.update(solver_response_metadata())
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
                 audit_event("solve_finished", success=True, reason="token", token_length=len(token))
                 audit_finished = True

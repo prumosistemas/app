@@ -36,6 +36,7 @@ from portal_nacional_competencia import (
     normalize_competencia,
     summarize_competencias,
 )
+from portal_solver_state import blocked_seconds as global_solver_blocked_seconds
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,6 +45,18 @@ DEFAULT_SOLVER_URL = os.getenv(
     "PORTAL_NACIONAL_SOLVER_URL",
     "https://ryangurgell20--prumo-portal-nacional-google-solver-solve-d8ccea.modal.run/solve",
 ).strip()
+PORTAL_SOLVER_STATUS_FILE = Path(
+    os.environ.get(
+        "PORTAL_NACIONAL_SOLVER_STATUS_FILE",
+        str(Path(OUTPUT_ROOT) / "_api_data" / "portal_solver_status.json"),
+    )
+)
+PORTAL_SOLVER_GLOBAL_STATE_FILE = Path(
+    os.environ.get(
+        "PORTAL_NACIONAL_SOLVER_GLOBAL_STATE_FILE",
+        str(PORTAL_SOLVER_STATUS_FILE.with_name("portal_solver_global.json")),
+    )
+)
 PORTAL_DOWNLOAD_CONCURRENCY = max(
     1,
     min(8, int(os.getenv("PORTAL_NACIONAL_DOWNLOAD_CONCURRENCY", "4"))),
@@ -1144,9 +1157,18 @@ def _sequence_worker(scope: str, jobs: List[Path], retry_only: bool = False) -> 
             try:
                 code = _run_process(scope, run_dir, cfg, retry_only)
                 if code == 75:
+                    global_wait = global_solver_blocked_seconds(
+                        PORTAL_SOLVER_GLOBAL_STATE_FILE
+                    )
+                    retry_seconds = min(
+                        PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES * 60,
+                        max(30, int(global_wait + 0.999)) if global_wait else (
+                            PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES * 60
+                        ),
+                    )
                     retry_at = (
                         datetime.now(PORTAL_TIMEZONE)
-                        + timedelta(minutes=PORTAL_AUTOMATIC_SOLVER_RETRY_MINUTES)
+                        + timedelta(seconds=retry_seconds)
                     ).isoformat(timespec="seconds")
                     for deferred_dir in jobs[job_index:]:
                         _update_run(
@@ -1373,6 +1395,15 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
         # Somente depois das capturas novas elegiveis retomamos checkpoints
         # deferidos. Assim uma pane longa nao monopoliza sempre os primeiros
         # certificados da lista.
+        global_wait = global_solver_blocked_seconds(
+            PORTAL_SOLVER_GLOBAL_STATE_FILE
+        )
+        if global_wait > 0:
+            return {
+                "started": False,
+                "reason": "solver_global_cooldown",
+                "retry_in_seconds": round(global_wait, 1),
+            }
         for ctx, state, job in records:
             stale_dirs = _stale_automatic_run_dirs(ctx, job)
             if not stale_dirs:

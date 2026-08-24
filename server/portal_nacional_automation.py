@@ -22,6 +22,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from portal_nacional_competencia import competencia_from_xml_path
+from portal_solver_state import (
+    acquire_probe as acquire_global_solver_probe,
+    blocked_seconds as global_solver_blocked_seconds,
+    mark_outage as mark_global_solver_outage,
+    mark_success as mark_global_solver_success,
+    release_probe as release_global_solver_probe,
+    snapshot as global_solver_snapshot,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_FILE = BASE_DIR / "sessao_nfse.txt"
@@ -115,9 +123,96 @@ SOLVER_STATUS_LOCK = threading.Lock()
 SOLVER_STATUS_FILE = Path(
     os.environ.get(
         "PORTAL_NACIONAL_SOLVER_STATUS_FILE",
-        str(BASE_DIR / "portal_solver_status.json"),
+        str(
+            Path(os.environ.get("ISS_OUTPUT_ROOT", str(BASE_DIR)))
+            / "_api_data"
+            / "portal_solver_status.json"
+        ),
     )
 )
+SOLVER_ROUTE_BY_REQUEST: dict[str, str] = {}
+SOLVER_ROUTE_BY_REQUEST_LOCK = threading.Lock()
+SOLVER_GLOBAL_STATE_FILE = Path(
+    os.environ.get(
+        "PORTAL_NACIONAL_SOLVER_GLOBAL_STATE_FILE",
+        str(SOLVER_STATUS_FILE.with_name("portal_solver_global.json")),
+    )
+)
+
+
+def solver_error_kind(exc: Exception | None) -> str | None:
+    if exc is None:
+        return None
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return f"http_{status}" if status else type(exc).__name__
+
+
+def solver_error_reason_class(exc: Exception | None) -> str | None:
+    if exc is None:
+        return None
+    detail = str(exc or "").lower()
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 404 or "workspace" in detail and "disabled" in detail:
+        return "workspace_disabled"
+    if any(marker in detail for marker in ("unusual traffic", "sorry/index", "google_ai_request_failed")):
+        return "google_block"
+    if "provider_circuit_open" in detail or "solver_circuit_open" in detail:
+        return "provider_circuit"
+    if status:
+        return f"http_{status}"
+    if isinstance(exc, requests.RequestException):
+        return "transport"
+    return type(exc).__name__[:80]
+
+
+def _persist_solver_endpoint_payload(url: str, payload: dict) -> None:
+    """Atualiza o resumo e o arquivo por rota sem expor query ou payload."""
+
+    temporary: Path | None = None
+    endpoint_temporary: Path | None = None
+    try:
+        with SOLVER_STATUS_LOCK:
+            SOLVER_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                previous = json.loads(SOLVER_STATUS_FILE.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                previous = {}
+            if not isinstance(previous, dict):
+                previous = {}
+            endpoint_history = previous.get("endpoints", {})
+            if not isinstance(endpoint_history, dict):
+                endpoint_history = {}
+            label = solver_endpoint_label(url)
+            prior_endpoint = endpoint_history.get(label, {})
+            if not isinstance(prior_endpoint, dict):
+                prior_endpoint = {}
+            endpoint_payload = {**prior_endpoint, **payload}
+            endpoint_history[label] = endpoint_payload
+            summary_payload = {**payload, "endpoints": endpoint_history}
+            temporary = SOLVER_STATUS_FILE.with_name(
+                f".{SOLVER_STATUS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            temporary.write_text(
+                json.dumps(summary_payload, ensure_ascii=False), encoding="utf-8"
+            )
+            temporary.replace(SOLVER_STATUS_FILE)
+            endpoint_file = solver_endpoint_state_file(url)
+            endpoint_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint_temporary = endpoint_file.with_name(
+                f".{endpoint_file.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
+            endpoint_temporary.write_text(
+                json.dumps(endpoint_payload, ensure_ascii=False), encoding="utf-8"
+            )
+            endpoint_temporary.replace(endpoint_file)
+    except OSError:
+        pass
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        if endpoint_temporary is not None:
+            endpoint_temporary.unlink(missing_ok=True)
 
 
 def record_solver_endpoint_event(
@@ -132,53 +227,19 @@ def record_solver_endpoint_event(
         adjustment = 2 if event == "success" else -3
         SOLVER_ENDPOINT_SCORES[url] = max(-12, min(12, current_score + adjustment))
     parsed = urlparse(url)
-    payload = {
+    payload: dict = {
         "endpoint_host": (parsed.hostname or "").lower(),
         "event": event,
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "request_id": str(request_id)[-80:],
     }
     if exc is not None:
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", None)
-        payload["error_kind"] = f"http_{status}" if status else type(exc).__name__
-    temporary: Path | None = None
-    endpoint_temporary: Path | None = None
-    try:
-        with SOLVER_STATUS_LOCK:
-            SOLVER_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            previous: dict = {}
-            try:
-                previous = json.loads(SOLVER_STATUS_FILE.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError):
-                previous = {}
-            endpoint_history = previous.get("endpoints", {}) if isinstance(previous, dict) else {}
-            if not isinstance(endpoint_history, dict):
-                endpoint_history = {}
-            endpoint_history[solver_endpoint_label(url)] = dict(payload)
-            payload["endpoints"] = endpoint_history
-            temporary = SOLVER_STATUS_FILE.with_name(
-                f".{SOLVER_STATUS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-            )
-            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(SOLVER_STATUS_FILE)
-            endpoint_file = solver_endpoint_state_file(url)
-            endpoint_file.parent.mkdir(parents=True, exist_ok=True)
-            endpoint_temporary = endpoint_file.with_name(
-                f".{endpoint_file.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-            )
-            endpoint_temporary.write_text(
-                json.dumps(endpoint_history[solver_endpoint_label(url)], ensure_ascii=False),
-                encoding="utf-8",
-            )
-            endpoint_temporary.replace(endpoint_file)
-    except OSError:
-        pass
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-        if endpoint_temporary is not None:
-            endpoint_temporary.unlink(missing_ok=True)
+        payload["error_kind"] = solver_error_kind(exc)
+        payload["reason_class"] = solver_error_reason_class(exc)
+    else:
+        # Sucesso substitui integralmente uma quarentena persistida anterior.
+        payload.update({"cooldown_until": None, "cooldown_seconds": 0})
+    _persist_solver_endpoint_payload(url, payload)
 
 
 def find_browser(explicit: str | None = None) -> str:
@@ -1476,6 +1537,17 @@ def solver_endpoint_label(url: str) -> str:
     return parsed._replace(query="", fragment="").geturl()
 
 
+def solver_provider_name(url: str, primary: str) -> str:
+    if is_local_solver_url(url):
+        return "thinkpad"
+    candidates = solver_url_candidates(primary)
+    modal_urls = [candidate for candidate in candidates if is_modal_solver_url(candidate)]
+    if url in modal_urls:
+        position = modal_urls.index(url)
+        return "modal_primary" if position == 0 else f"modal_fallback_{position}"
+    return "solver_external"
+
+
 def sanitized_solver_error(exc: Exception) -> str:
     """Mantem a causa operacional, removendo URLs e parametros sensiveis."""
     detail = str(exc or "solver_error")
@@ -1526,7 +1598,7 @@ def solver_endpoint_state_file(url: str) -> Path:
 
 
 def persisted_solver_endpoint_cooldown_remaining(url: str) -> float:
-    """Compartilha entre runs o bloqueio longo de endpoints Modal 404."""
+    """Compartilha entre subprocessos cooldowns operacionais de cada rota."""
     try:
         endpoint = json.loads(solver_endpoint_state_file(url).read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
@@ -1537,6 +1609,11 @@ def persisted_solver_endpoint_cooldown_remaining(url: str) -> float:
         except (OSError, ValueError, TypeError, AttributeError):
             return 0.0
     try:
+        cooldown_until = endpoint.get("cooldown_until")
+        if cooldown_until:
+            expires_at = datetime.fromisoformat(str(cooldown_until))
+            return max(0.0, expires_at.timestamp() - time.time())
+        # Compatibilidade com arquivos escritos antes da v52.
         if endpoint.get("event") != "failure" or endpoint.get("error_kind") != "http_404":
             return 0.0
         occurred_at = datetime.fromisoformat(str(endpoint["at"]))
@@ -1643,12 +1720,34 @@ def mark_solver_endpoint_unavailable(url: str, exc: Exception) -> int:
         SOLVER_ENDPOINT_COOLDOWNS[url] = max(
             SOLVER_ENDPOINT_COOLDOWNS.get(url, 0.0), time.monotonic() + cooldown
         )
+    occurred_at = datetime.now().astimezone()
+    _persist_solver_endpoint_payload(
+        url,
+        {
+            "endpoint_host": hostname,
+            "event": "failure",
+            "at": occurred_at.isoformat(timespec="seconds"),
+            "error_kind": solver_error_kind(exc),
+            "reason_class": solver_error_reason_class(exc),
+            "cooldown_seconds": cooldown,
+            "cooldown_until": (
+                occurred_at + timedelta(seconds=cooldown)
+            ).isoformat(timespec="seconds"),
+        },
+    )
     return cooldown
 
 
 def clear_solver_endpoint_cooldown(url: str) -> None:
     with SOLVER_ENDPOINT_COOLDOWN_LOCK:
         SOLVER_ENDPOINT_COOLDOWNS.pop(url, None)
+    _persist_solver_endpoint_payload(
+        url,
+        {
+            "cooldown_seconds": 0,
+            "cooldown_until": None,
+        },
+    )
 
 
 def available_solver_url_candidates(primary: str) -> tuple[list[str], float | None]:
@@ -1715,6 +1814,26 @@ def solver_response_json(response: requests.Response) -> dict:
     if not isinstance(data, dict):
         raise RuntimeError("solver:invalid_json_object")
     return data
+
+
+def remember_solver_route(request_id: str, data: dict) -> None:
+    route = str(data.get("provider_route") or "").strip()
+    if not route:
+        return
+    # Apenas rotas conhecidas; nunca aceite URL, query, fragmento ou token.
+    route = route.split("?", 1)[0].split("#", 1)[0]
+    if route.startswith("huggingface:"):
+        space_id = re.sub(r"[^a-zA-Z0-9_./-]+", "_", route.split(":", 1)[1])
+        route = f"huggingface:{space_id[:120]}"
+    elif route != "modal_direct":
+        route = "unknown"
+    with SOLVER_ROUTE_BY_REQUEST_LOCK:
+        SOLVER_ROUTE_BY_REQUEST[str(request_id)] = route
+
+
+def take_solver_route(request_id: str) -> str | None:
+    with SOLVER_ROUTE_BY_REQUEST_LOCK:
+        return SOLVER_ROUTE_BY_REQUEST.pop(str(request_id), None)
 
 
 def solve_captcha_once(
@@ -1786,6 +1905,7 @@ def solve_captcha_once(
         else:
             raise RuntimeError("solver:async_job_timeout")
     if data.get("success") and data.get("token"):
+        remember_solver_route(request_id, data)
         return data["token"]
     reason = data.get("reason") or data.get("error") or "solver_no_token"
     detail = data.get("error") or reason
@@ -1798,6 +1918,7 @@ def solve_captcha_with_url(
     sitekey: str,
     request_id: str,
     page_url: str | None = None,
+    trace: dict | None = None,
 ) -> str | None:
     errors = []
     chain_deadline = time.monotonic() + SOLVER_CHAIN_TIMEOUT_SECONDS
@@ -1825,6 +1946,7 @@ def solve_captcha_with_url(
                 )
                 continue
             try:
+                attempt_started = time.monotonic()
                 remaining_chain = max(1.0, chain_deadline - time.monotonic())
                 token = solve_captcha_once(
                     candidate,
@@ -1835,6 +1957,21 @@ def solve_captcha_with_url(
                 )
                 clear_solver_endpoint_cooldown(candidate)
                 record_solver_endpoint_event(candidate, "success", request_id)
+                inner_route = take_solver_route(request_id)
+                if trace is not None:
+                    endpoint_provider = solver_provider_name(candidate, solver_url)
+                    trace.update(
+                        {
+                            "provider": (
+                                f"{endpoint_provider}:{inner_route}"
+                                if inner_route
+                                else endpoint_provider
+                            ),
+                            "duration_seconds": round(
+                                max(0.0, time.monotonic() - attempt_started), 3
+                            ),
+                        }
+                    )
                 return token
             except Exception as exc:
                 record_solver_endpoint_event(candidate, "failure", request_id, exc)
@@ -1966,11 +2103,13 @@ def download_item_tipo_requests(session: requests.Session, item: dict, solver_ur
         return {"ok": False, "reason": "sitekey_not_found", "tipo": tipo, "url": response.url, "html": str(snippet_path)}
 
     # Regra intencional: um captcha por arquivo. XML e PDF nao reaproveitam token.
+    solver_trace: dict = {}
     token = solve_captcha_with_url(
         solver_url,
         modal["sitekey"],
         f"{item['id']}-{tipo}",
         modal.get("modal_url") or response.url,
+        trace=solver_trace,
     )
     if not token:
         return {"ok": False, "reason": "solver_no_token", "tipo": tipo}
@@ -1987,7 +2126,14 @@ def download_item_tipo_requests(session: requests.Session, item: dict, solver_ur
         )
     if expected_response_ok(submitted, tipo):
         path = save_response_file(submitted, item, download_dir, tipo)
-        return {"ok": True, "tipo": tipo, "file": str(path), "method": f"requests_captcha_{tipo}"}
+        return {
+            "ok": True,
+            "tipo": tipo,
+            "file": str(path),
+            "method": f"requests_captcha_{tipo}",
+            "solver_provider": solver_trace.get("provider"),
+            "solver_duration_seconds": solver_trace.get("duration_seconds"),
+        }
 
     target_dir = download_dir_for_tipo(download_dir, tipo)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -2082,6 +2228,8 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
     tipos = item_required_tipos(item, normalize_download_tipos(tipo_download))
     files_by_tipo = dict(item.get("files_by_tipo") or {})
     methods_by_tipo = dict(item.get("methods_by_tipo") or {})
+    solver_providers_by_tipo = dict(item.get("solver_providers_by_tipo") or {})
+    solver_durations_by_tipo = dict(item.get("solver_durations_by_tipo") or {})
     errors = []
 
     for tipo in tipos:
@@ -2106,6 +2254,10 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
         if result.get("ok"):
             files_by_tipo[tipo] = result.get("file")
             methods_by_tipo[tipo] = result.get("method")
+            if result.get("solver_provider"):
+                solver_providers_by_tipo[tipo] = result["solver_provider"]
+            if result.get("solver_duration_seconds") is not None:
+                solver_durations_by_tipo[tipo] = result["solver_duration_seconds"]
         else:
             errors.append(result)
             break
@@ -2118,6 +2270,8 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
             "errors": errors,
             "files_by_tipo": files_by_tipo,
             "methods_by_tipo": methods_by_tipo,
+            "solver_providers_by_tipo": solver_providers_by_tipo,
+            "solver_durations_by_tipo": solver_durations_by_tipo,
             "competencia": competence,
         }
 
@@ -2127,6 +2281,8 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
         "files": files,
         "files_by_tipo": files_by_tipo,
         "methods_by_tipo": methods_by_tipo,
+        "solver_providers_by_tipo": solver_providers_by_tipo,
+        "solver_durations_by_tipo": solver_durations_by_tipo,
         "method": "+".join(methods_by_tipo.get(tipo, tipo) for tipo in tipos),
         "tipo_download": tipo_download,
         "competencia": competence,
@@ -2154,6 +2310,43 @@ def is_transient_solver_outage(result: dict) -> bool:
             "name or service not known",
         )
     )
+
+
+def solver_outage_reason_class(result: dict) -> str:
+    detail = json.dumps(result or {}, ensure_ascii=False).lower()
+    if any(marker in detail for marker in ("unusual traffic", "sorry/index", "google_ai_request_failed")):
+        return "google_block"
+    if "provider_circuit_open" in detail or "solver_circuit_open" in detail:
+        return "provider_circuit"
+    if "429" in detail or "too many requests" in detail:
+        return "http_429"
+    if "503" in detail or "service unavailable" in detail:
+        return "http_503"
+    if "all_endpoints_failed" in detail:
+        return "all_endpoints_failed"
+    return "solver_transport"
+
+
+def last_significant_solver_event(index: dict) -> str:
+    """Ignora heartbeats para preservar o gate ao retomar um checkpoint."""
+
+    outage_events = {
+        "solver_outage_deferred",
+        "solver_outage_gate_opened",
+        "solver_outage_probe_wait",
+        "solver_outage_probe_started",
+        "item_waiting_solver",
+    }
+    healthy_events = {
+        "solver_outage_gate_closed",
+        "item_downloaded",
+        "requests_download_finished",
+    }
+    for entry in reversed(list(index.get("events") or [])):
+        event = str((entry or {}).get("event") or "")
+        if event in outage_events or event in healthy_events:
+            return event
+    return ""
 
 
 class SolverOutageDeferred(RuntimeError):
@@ -2220,12 +2413,85 @@ def run_requests_downloads(
             item["status"] = "pendente"
     if max_items:
         pending = pending[:max_items]
+    if not pending:
+        save_index(
+            index_path,
+            index,
+            "baixando_requests",
+            "requests_download_finished",
+        )
+        return
     previous_status = str(index.get("status") or "")
-    previous_event = (index.get("events") or [{}])[-1]
+    previous_event = last_significant_solver_event(index)
+    global_state = global_solver_snapshot(SOLVER_GLOBAL_STATE_FILE)
+    global_remaining = global_solver_blocked_seconds(SOLVER_GLOBAL_STATE_FILE)
+    global_unhealthy = str(global_state.get("state") or "healthy") in {
+        "blocked",
+        "probing",
+    }
+    global_owner = "run-" + hashlib.sha256(
+        str(index_path.resolve()).encode("utf-8")
+    ).hexdigest()[:24]
+
+    def claim_global_probe() -> bool:
+        """Automatica cede a vez; manual aguarda sem furar o lease global."""
+
+        while True:
+            if acquire_global_solver_probe(
+                SOLVER_GLOBAL_STATE_FILE,
+                global_owner,
+                lease_seconds=max(900, SOLVER_CHAIN_TIMEOUT_SECONDS + 120),
+            ):
+                return True
+            if defer_on_solver_outage:
+                return False
+            remaining = global_solver_blocked_seconds(SOLVER_GLOBAL_STATE_FILE)
+            wait_seconds = (
+                min(max(1.0, remaining), 120.0) if remaining > 0 else 5.0
+            )
+            save_index(
+                index_path,
+                index,
+                "aguardando_solver",
+                "solver_global_circuit_wait" if remaining > 0 else "solver_global_probe_busy",
+                seconds=round(wait_seconds, 1),
+            )
+            time.sleep(wait_seconds)
+
     resume_outage_gate = (
         previous_status == "aguardando_solver"
-        or str(previous_event.get("event") or "") == "solver_outage_deferred"
+        or previous_event in {
+            "solver_outage_deferred",
+            "solver_outage_gate_opened",
+            "solver_outage_probe_wait",
+            "solver_outage_probe_started",
+            "item_waiting_solver",
+        }
+        or global_unhealthy
     )
+    if resume_outage_gate and defer_on_solver_outage and global_remaining > 0:
+        save_index(
+            index_path,
+            index,
+            "aguardando_solver",
+            "solver_global_circuit_wait",
+            seconds=round(global_remaining, 1),
+            reason_class=global_state.get("reason_class"),
+        )
+        raise SolverOutageDeferred(
+            "Circuito global do resolvedor em cooldown; checkpoint preservado."
+        )
+    if resume_outage_gate and not claim_global_probe():
+        save_index(
+            index_path,
+            index,
+            "aguardando_solver",
+            "solver_global_probe_busy",
+        )
+        if defer_on_solver_outage:
+            raise SolverOutageDeferred(
+                "Outra run esta verificando o resolvedor; checkpoint preservado."
+            )
     save_index(index_path, index, "baixando_requests", "requests_download_started", pending=len(pending), concurrency=concurrency, tipo_download=tipo_download, tipos=tipos_download)
 
     def session_snapshot() -> dict:
@@ -2241,6 +2507,7 @@ def run_requests_downloads(
     started_count = 0
     solver_outage_streak = 0
     solver_outage_gate_open = resume_outage_gate
+    current_worker_limit = 1 if solver_outage_gate_open else max_workers
     solver_outage_slice_started = time.monotonic() if resume_outage_gate else None
     solver_outage_slice_seconds = bounded_env_int(
         "PORTAL_SOLVER_OUTAGE_SLICE_SECONDS",
@@ -2291,8 +2558,7 @@ def run_requests_downloads(
     ), concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures: dict[concurrent.futures.Future, str] = {}
         outage_probe_futures: set[concurrent.futures.Future] = set()
-        initial_limit = 1 if solver_outage_gate_open else max_workers
-        while queue and len(futures) < initial_limit:
+        while queue and len(futures) < current_worker_limit:
             submit_next(
                 executor,
                 futures,
@@ -2307,6 +2573,8 @@ def run_requests_downloads(
             saw_solver_outage = False
             saw_outage_probe_failure = False
             saw_success = False
+            outage_reason_classes: set[str] = set()
+            success_providers: set[str] = set()
 
             for future in done:
                 key = futures.pop(future)
@@ -2319,6 +2587,15 @@ def run_requests_downloads(
 
                 if result.get("ok"):
                     saw_success = True
+                    success_providers.update(
+                        str(value)
+                        for value in (result.get("solver_providers_by_tipo") or {}).values()
+                        if value
+                    )
+                    if not success_providers and "captcha" in str(result.get("method") or ""):
+                        # Compatibilidade com checkpoints v51, que registravam
+                        # o metodo mas ainda nao o provedor sanitizado.
+                        success_providers.add("solver_chain")
                     index["items"][key]["status"] = "baixado"
                     existing_files = list(index["items"][key].get("files") or [])
                     for file_path in result.get("files", []) or []:
@@ -2331,19 +2608,37 @@ def run_requests_downloads(
                     existing_methods_by_tipo = dict(index["items"][key].get("methods_by_tipo") or {})
                     existing_methods_by_tipo.update(result.get("methods_by_tipo", {}) or {})
                     index["items"][key]["methods_by_tipo"] = existing_methods_by_tipo
+                    existing_providers = dict(index["items"][key].get("solver_providers_by_tipo") or {})
+                    existing_providers.update(result.get("solver_providers_by_tipo", {}) or {})
+                    index["items"][key]["solver_providers_by_tipo"] = existing_providers
+                    existing_durations = dict(index["items"][key].get("solver_durations_by_tipo") or {})
+                    existing_durations.update(result.get("solver_durations_by_tipo", {}) or {})
+                    index["items"][key]["solver_durations_by_tipo"] = existing_durations
                     index["items"][key]["tipo_download"] = tipo_download
                     index["items"][key]["downloaded_at"] = now_iso()
                     index["items"][key]["download_method"] = result.get("method")
                     if result.get("competencia"):
                         index["items"][key]["competencia"] = result["competencia"]
                     index["items"][key].pop("last_error", None)
-                    save_index(index_path, index, "baixando_requests", "item_downloaded", id=key, method=result.get("method"), active=len(futures), queue=len(queue))
+                    save_index(
+                        index_path,
+                        index,
+                        "baixando_requests",
+                        "item_downloaded",
+                        id=key,
+                        method=result.get("method"),
+                        solver_providers=sorted(set(existing_providers.values())),
+                        active=len(futures),
+                        queue=len(queue),
+                    )
                     print(f"Baixado via requests: {key}")
                     continue
 
                 reason = str(result.get("reason") or "")
                 transient_solver_outage = is_transient_solver_outage(result)
                 saw_solver_outage = saw_solver_outage or transient_solver_outage
+                if transient_solver_outage:
+                    outage_reason_classes.add(solver_outage_reason_class(result))
                 saw_outage_probe_failure = (
                     saw_outage_probe_failure
                     or (transient_solver_outage and was_outage_probe)
@@ -2359,6 +2654,10 @@ def run_requests_downloads(
                     index["items"][key]["files"] = existing_files
                 if result.get("methods_by_tipo"):
                     index["items"][key]["methods_by_tipo"] = result.get("methods_by_tipo", {})
+                if result.get("solver_providers_by_tipo"):
+                    index["items"][key]["solver_providers_by_tipo"] = result.get("solver_providers_by_tipo", {})
+                if result.get("solver_durations_by_tipo"):
+                    index["items"][key]["solver_durations_by_tipo"] = result.get("solver_durations_by_tipo", {})
                 if result.get("competencia"):
                     index["items"][key]["competencia"] = result["competencia"]
 
@@ -2424,8 +2723,15 @@ def run_requests_downloads(
             else:
                 queue.extend(retry_items)
 
-            if saw_success:
-                if solver_outage_gate_open:
+            if success_providers:
+                success_provider = ",".join(sorted(success_providers)) or "solver_chain"
+                mark_global_solver_success(
+                    SOLVER_GLOBAL_STATE_FILE,
+                    global_owner,
+                    provider=success_provider,
+                )
+                was_recovering = solver_outage_gate_open
+                if was_recovering:
                     save_index(
                         index_path,
                         index,
@@ -2437,11 +2743,25 @@ def run_requests_downloads(
                     )
                 solver_outage_gate_open = False
                 solver_outage_streak = 0
+                if was_recovering:
+                    current_worker_limit = min(2, max_workers)
+                    save_index(
+                        index_path,
+                        index,
+                        "baixando_requests",
+                        "solver_recovery_ramp",
+                        concurrency=current_worker_limit,
+                        target=max_workers,
+                    )
+                elif current_worker_limit < max_workers:
+                    current_worker_limit = max_workers
             elif saw_solver_outage:
+                publish_global_outage = False
                 if not solver_outage_gate_open:
                     solver_outage_streak = 1
                     solver_outage_gate_open = True
                     solver_outage_slice_started = time.monotonic()
+                    publish_global_outage = True
                     save_index(
                         index_path,
                         index,
@@ -2456,14 +2776,39 @@ def run_requests_downloads(
                     # uma unica queda. So uma sonda sequencial nova aumenta o
                     # degrau de backoff.
                     solver_outage_streak += 1
+                    publish_global_outage = True
+                if publish_global_outage:
+                    # Avanca uma unica vez por lote/probe, nunca uma vez para
+                    # cada uma das quatro notas que ja estavam em voo.
+                    mark_global_solver_outage(
+                        SOLVER_GLOBAL_STATE_FILE,
+                        global_owner,
+                        ",".join(sorted(outage_reason_classes)) or "solver_outage",
+                        minimum_delay=retry_backoff_seconds(1, solver_outage_streak),
+                    )
+            elif saw_success:
+                # Download direto nao passou pelo resolvedor. Ele comprova que
+                # o Portal esta acessivel, mas nao que a cadeia visual voltou.
+                # Se a run ja estava em gate, mantenha a proxima nota como uma
+                # unica sonda; em estado saudavel nao ha nada a alterar.
+                pass
             elif solver_outage_gate_open and not login_errors:
                 # Houve resposta funcional da infraestrutura; um erro proprio
                 # da nota nao justifica manter o pool inteiro fechado.
                 solver_outage_gate_open = False
                 solver_outage_streak = 0
+                mark_global_solver_success(
+                    SOLVER_GLOBAL_STATE_FILE,
+                    global_owner,
+                    provider="functional_response",
+                )
 
             if solver_outage_gate_open and not futures and queue:
                 retry_delay = retry_backoff_seconds(1, solver_outage_streak)
+                retry_delay = max(
+                    retry_delay,
+                    int(global_solver_blocked_seconds(SOLVER_GLOBAL_STATE_FILE) + 0.999),
+                )
                 slice_started = solver_outage_slice_started or time.monotonic()
                 remaining = (
                     solver_outage_slice_seconds
@@ -2479,6 +2824,10 @@ def run_requests_downloads(
                         "solver_outage_deferred",
                         solver_outage_streak=solver_outage_streak,
                         queue=len(queue),
+                    )
+                    release_global_solver_probe(
+                        SOLVER_GLOBAL_STATE_FILE,
+                        global_owner,
                     )
                     raise SolverOutageDeferred(
                         "Cadeia visual temporariamente indisponivel; checkpoint preservado."
@@ -2503,10 +2852,26 @@ def run_requests_downloads(
                         solver_outage_streak=solver_outage_streak,
                         queue=len(queue),
                     )
+                    release_global_solver_probe(
+                        SOLVER_GLOBAL_STATE_FILE,
+                        global_owner,
+                    )
                     raise SolverOutageDeferred(
                         "Cadeia visual temporariamente indisponivel; checkpoint preservado."
                     )
-                submit_next(executor, futures, outage_probe=True)
+                if claim_global_probe():
+                    submit_next(executor, futures, outage_probe=True)
+                else:
+                    save_index(
+                        index_path,
+                        index,
+                        "aguardando_solver",
+                        "solver_global_probe_busy",
+                        queue=len(queue),
+                    )
+                    raise SolverOutageDeferred(
+                        "Outra run assumiu a sonda global; checkpoint preservado."
+                    )
             elif not solver_outage_gate_open:
                 if retry_items and not futures:
                     retry_level = max(
@@ -2525,7 +2890,7 @@ def run_requests_downloads(
                         items=len(retry_items),
                     )
                     time.sleep(retry_delay)
-                while queue and len(futures) < max_workers:
+                while queue and len(futures) < current_worker_limit:
                     submit_next(executor, futures)
 
             save_index(index_path, index, "baixando_requests", "requests_pool_tick", started=started_count, active=len(futures), queue=len(queue))

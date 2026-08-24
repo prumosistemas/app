@@ -11,6 +11,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 import portal_nacional_automation as automation  # noqa: E402
+import portal_solver_state as solver_state  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +21,11 @@ def clear_solver_endpoint_cooldowns(monkeypatch, tmp_path):
     automation.SOLVER_MODAL_REQUEST_LOCKS.clear()
     automation.SOLVER_MODAL_ROTATION_COUNTER = 0
     monkeypatch.setattr(automation, "SOLVER_STATUS_FILE", tmp_path / "solver-status.json")
+    monkeypatch.setattr(
+        automation,
+        "SOLVER_GLOBAL_STATE_FILE",
+        tmp_path / "solver-global.json",
+    )
     yield
     automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
     automation.SOLVER_ENDPOINT_SCORES.clear()
@@ -144,7 +150,10 @@ def test_solver_outage_gate_probes_one_item_before_reopening_pool(
     assert event_names.index("solver_outage_probe_started") < event_names.index(
         "solver_outage_gate_closed"
     )
-    assert sleeps[0] == 10
+    ramps = [event for event in index["events"] if event["event"] == "solver_recovery_ramp"]
+    assert ramps[0]["concurrency"] == 2
+    assert ramps[0]["target"] == 4
+    assert sleeps[0] == 30
     assert index["totals"]["baixados"] == 6
 
 
@@ -175,8 +184,9 @@ def test_deferred_run_resumes_with_one_probe_before_full_pool(
     index_path = tmp_path / "indice.json"
     session_path.write_text(json.dumps({"cookies": []}), encoding="utf-8")
     index = automation.load_index(index_path, "recebidas")
-    index["status"] = "aguardando_solver"
+    index["status"] = "baixando_requests"
     index["events"].append({"event": "solver_outage_deferred"})
+    index["events"].append({"event": "requests_pool_tick"})
     index["items"] = {
         f"nota-{number}": {
             "id": f"nota-{number}",
@@ -534,6 +544,27 @@ def test_solver_receives_real_nfse_page_context(monkeypatch) -> None:
     assert captured["url"] == page_url
 
 
+def test_solver_success_route_is_sanitized_and_consumed(monkeypatch) -> None:
+    def fake_post(*_args, **_kwargs):
+        return FakeResponse(
+            200,
+            {
+                "success": True,
+                "token": "token-ok",
+                "provider_route": "huggingface:conta/space?token=nao-vaza",
+            },
+        )
+
+    monkeypatch.setattr(automation.requests, "post", fake_post)
+
+    assert automation.solve_captcha_once(
+        "https://solver.example/solve", "key", "nota-rota"
+    ) == "token-ok"
+    route = automation.take_solver_route("nota-rota")
+    assert route == "huggingface:conta/space"
+    assert automation.take_solver_route("nota-rota") is None
+
+
 def test_solver_async_urls_preserve_access_token() -> None:
     solver = "https://solver.example/internal/solve?token=segredo"
     assert automation.solver_api_health_url(solver) == (
@@ -615,6 +646,33 @@ def test_disabled_modal_workspace_has_long_shared_cooldown() -> None:
     assert automation.persisted_solver_endpoint_cooldown_remaining(url) > (
         automation.SOLVER_MODAL_DISABLED_RECHECK_SECONDS - 5
     )
+
+
+def test_transient_modal_cooldown_survives_subprocess_memory_reset() -> None:
+    response = requests.Response()
+    response.status_code = 503
+    error = requests.HTTPError("service unavailable", response=response)
+    url = "https://conta--solver.modal.run/solve"
+
+    assert automation.mark_solver_endpoint_unavailable(url, error) == 15
+    automation.SOLVER_ENDPOINT_COOLDOWNS.clear()
+
+    assert automation.persisted_solver_endpoint_cooldown_remaining(url) > 10
+
+
+def test_global_probe_lease_allows_only_one_owner(tmp_path: Path) -> None:
+    path = tmp_path / "global.json"
+
+    assert solver_state.acquire_probe(path, "run-a", lease_seconds=120)
+    assert not solver_state.acquire_probe(path, "run-b", lease_seconds=120)
+
+    state = solver_state.mark_outage(path, "run-a", "google_block")
+    assert state["state"] == "blocked"
+    assert solver_state.blocked_seconds(path) > 20
+
+    solver_state.mark_success(path, "run-a", provider="modal_primary")
+    assert solver_state.blocked_seconds(path) == 0
+    assert solver_state.acquire_probe(path, "run-b", lease_seconds=120)
 
 
 def test_disabled_primary_automatically_rejoins_after_shared_cooldown(

@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.103**
+Versao do app: **1.0.104**
 Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -142,6 +142,14 @@ iframe aberto em vez de reclicar o checkbox depois de uma resposta correta.
 Como cada rota e o coordenador do ThinkPad ja possuem cooldown, o circuito
 agregado do container reabre em 60 s, evitando somar cinco minutos a uma falha
 transitoria sem aumentar a pressao continua nos provedores.
+
+Na 1.0.104, o portao do resolvedor passa a ser global e persistente em
+`/opt/prumo/data/_api_data/portal_solver_global.json`. Cooldowns de 404,
+429/503 e bloqueio Google sobrevivem aos subprocessos; heartbeats nao apagam o
+ultimo evento significativo. Uma unica run recebe o lease de sonda e a
+concorrencia volta gradualmente de 1 para 2 e 4 apos sucesso. O indice registra
+somente rota logica e duracao sanitizadas (`huggingface:<space>`, Modal direto
+ou ThinkPad), sem token, URL do captcha ou credencial.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

@@ -49,7 +49,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-24-google-ai-mode-v51-post-submit-transition"
+SOLVER_API_VERSION = "2026-08-24-google-ai-mode-v52-global-circuit-telemetry"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -111,6 +111,16 @@ detector = _load_module(DETECTOR_CLIENT_PATH, "_portal_modo_ia_detector_visual")
 
 # Estado e artefatos exclusivos desta API do Google Modo IA.
 legacy.SOLVER_API_VERSION = SOLVER_API_VERSION
+
+
+def _solver_response_metadata() -> dict[str, str]:
+    with PROVIDER_STATS_LOCK:
+        route = str(PROVIDER_STATS.get("last_route") or "unknown")
+    # A rota contém apenas o nome lógico/Space, nunca token ou payload.
+    return {"provider_route": route[:160]}
+
+
+legacy.solver_response_metadata = _solver_response_metadata
 legacy.SOLVER_PROFILES = API_DIR / "chrome-profiles-hcaptcha-google-ia"
 legacy.CAPTCHA_DIR = Path(
     os.environ.get(

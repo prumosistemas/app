@@ -1,6 +1,6 @@
 # Operacao Prumo Detalhada
 
-Este documento e a fonte de contexto operacional da versao 1.0.103.
+Este documento e a fonte de contexto operacional da versao 1.0.104.
 
 ## Estado desejado
 
@@ -14,7 +14,7 @@ Este documento e a fonte de contexto operacional da versao 1.0.103.
 - Browserless local desligado.
 - Modal `prumo-browserless` em múltiplas contas, com seleção ponderada, cooldown por endpoint e retorno automático.
 - Modal `prumo-portal-nacional-google-solver` separado, com Google Modo IA, usado so para resolver hCaptcha do Portal Nacional.
-- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver aguardam com um unico probe, sem consumir a tentativa da nota. HTTP 503 preserva o motivo JSON; `unusual` nao encerra a run e o endpoint Modal balanceado volta ao pool em 10–15 segundos. O backoff de recuperacao cresce ate 120 segundos.
+- Portal retomavel por checkpoint: `Continuar` processa todas as partes incompletas sem reconstruir um indice valido. Outages HTTP/solver usam um unico probe global com lease persistente, sem consumir a tentativa da nota. HTTP 503 preserva o motivo JSON; `unusual` nao encerra a run e o endpoint Modal balanceado volta ao pool em 10–15 segundos. A recuperacao reabre a concorrencia em 1→2→4.
 - Captura automática diária do Portal distribuída pelas 24 horas, com uma execução automática global por vez, sem pular a tentativa do dia após rebalanceamento, primeira janela de 123 dias, sobreposição de dois dias e retenção de 123 dias.
 - Histórico automático separado por certificado, inclusive para ciclos com erro, com contagem incremental deduplicada e download filtrável por data de emissão e competência.
 - GitHub, pasta local e servidor na mesma versao.

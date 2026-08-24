@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.103 - transicao visual coerente apos o clique**
+Versao: **1.0.104 - circuito global e recuperacao progressiva do solver**
 
 ## Estado atual
 
@@ -13,6 +13,7 @@ Versao: **1.0.103 - transicao visual coerente apos o clique**
 - Navegadores ISS: Browserless nas três contas Modal, ponderado em 18/4/8 (principal/reserva/terceira). `404 workspace disabled`, limite e falhas transitórias abrem cooldown por endpoint; as contas disponíveis assumem e a principal é sondada novamente automaticamente.
 - Portal Nacional: Google Modo IA com dois Spaces privados Hugging Face como primeira análise visual; os navegadores rodam nas três contas Modal em failover e o ThinkPad usa apenas uma vaga de último recurso. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - Um Space HF ocupado e ignorado imediatamente pela requisicao excedente, que tenta o outro Space ou o Modal. Isso evita acumular 30 s de espera por Space sem aumentar carga do ThinkPad.
+- O circuito visual agora e compartilhado entre subprocessos e runs. Durante uma pane, somente uma nota sonda a cadeia; cooldowns sobrevivem a retomadas e, depois do primeiro token, a concorrencia reabre em 1→2→4. Cada sucesso registra a rota sanitizada HF/Modal/ThinkPad e a latencia no indice da run.
 - O solver nao habilita mais o relogio virtual sintetico do CDP. A proxima etapa do hCaptcha e reconhecida pela mudanca de assinatura visual/DOM e segue no mesmo iframe, sem voltar prematuramente ao checkbox.
 - Um Modal sem crédito/`workspace disabled` fica em quarentena compartilhada por 30 minutos. A próxima atividade após o prazo sonda novamente o principal; sucesso o recoloca automaticamente na frente, sem regra de calendário ou intervenção manual.
 - A auditoria do master mostra rota, latência, concorrência, bloqueio `unusual`, cliques, trocas de desafio, imagens-resumo e MP4. O ThinkPad guarda esse espelho por sete dias; frames do Modal permanecem nos Volumes Modal, enquanto uma resolução feita pelo fallback residencial conserva sua própria evidência local pelo mesmo prazo.
@@ -100,9 +101,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.103 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.104 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.103
+docker push ryang20/prumo-api:1.0.104
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

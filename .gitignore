@@ -30,3 +30,6 @@ latest.json
 /ops/.secrets/
 /ops/browser-profiles/
 server/portal_solver_status.json
+server/portal_solver_global.json
+server/portal_solver_global.json.lock
+server/portal_solver_status.d/
