@@ -1,6 +1,7 @@
 import importlib.util
 import base64
 import io
+import itertools
 import os
 import time
 from pathlib import Path
@@ -111,7 +112,7 @@ def test_empty_visual_frame_is_retryable_without_provider_penalty() -> None:
         SOLVER._parse_non9_objects({"objetos": {}})
 
 
-def test_static_canvas_pauses_virtual_time_until_click(monkeypatch, tmp_path: Path) -> None:
+def test_static_canvas_does_not_enable_synthetic_virtual_time(monkeypatch, tmp_path: Path) -> None:
     buffer = io.BytesIO()
     SOLVER.legacy.Image.new("RGB", (1000, 940), "purple").save(buffer, format="JPEG")
     data_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -160,9 +161,43 @@ def test_static_canvas_pauses_virtual_time_until_click(monkeypatch, tmp_path: Pa
     frames = SOLVER._capture_visual_canvas_sequence(9222, tmp_path, frame_count=1)
     SOLVER._restore_visual_animation(9222)
 
-    policies = [params["policy"] for method, params in calls if method == "Emulation.setVirtualTimePolicy"]
     assert frames
-    assert policies == ["pause", "advance"]
+    assert not [method for method, _params in calls if method == "Emulation.setVirtualTimePolicy"]
+
+
+def test_post_submit_detects_changed_visual_stage_without_checkbox_retry(monkeypatch) -> None:
+    states = itertools.repeat(
+        {
+            "challenge_ready": True,
+            "loading": False,
+            "fingerprint": "new-stage",
+        }
+    )
+    events: list[tuple[str, dict]] = []
+    SOLVER.POST_SUBMIT_STATE_BY_PORT[9222] = {
+        "before": {"fingerprint": "old-stage"},
+        "submitted_at": 1.0,
+    }
+    monkeypatch.setattr(SOLVER.legacy, "solver_browser_alive", lambda *_args: True)
+    monkeypatch.setattr(SOLVER.legacy, "extract_token_from_page", lambda _port: None)
+    monkeypatch.setattr(SOLVER.legacy, "captcha_checkmark_visible", lambda _port: False)
+    monkeypatch.setattr(SOLVER.legacy, "captcha_retry_error_visible", lambda _port: False)
+    monkeypatch.setattr(SOLVER, "_challenge_wait_state", lambda _port: next(states))
+    monkeypatch.setattr(SOLVER.legacy, "TOKEN_POLL_SECONDS", 0.4)
+    monkeypatch.setattr(
+        SOLVER.legacy,
+        "audit_event",
+        lambda name, **fields: events.append((name, fields)),
+    )
+    started = time.time()
+
+    result = SOLVER._wait_token_or_next_stage_google_ai(9222, timeout=2.0)
+
+    assert result is None
+    assert time.time() - started < 1.8
+    assert 9222 not in SOLVER.POST_SUBMIT_STATE_BY_PORT
+    assert events[-1][0] == "post_submit_transition"
+    assert events[-1][1]["result"] == "next_stage"
 
 
 def test_malformed_visual_objects_remain_provider_errors() -> None:

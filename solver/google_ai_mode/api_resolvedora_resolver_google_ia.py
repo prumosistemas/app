@@ -49,7 +49,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-07-google-ai-mode-v50-server-side-video"
+SOLVER_API_VERSION = "2026-08-24-google-ai-mode-v51-post-submit-transition"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -85,6 +85,8 @@ PROVIDER_STATS: dict[str, Any] = {
 }
 CHALLENGE_SCENE_LOCK = threading.Lock()
 CHALLENGE_SCENE_ATTEMPTS: dict[tuple[str, str], dict[str, Any]] = {}
+POST_SUBMIT_STATE_LOCK = threading.Lock()
+POST_SUBMIT_STATE_BY_PORT: dict[int, dict[str, Any]] = {}
 
 
 class VisualFrameNotReadyError(ValueError):
@@ -963,18 +965,12 @@ new Promise(async (resolve) => {{
                 await_promise=True,
             )
             if freeze_static and isinstance(data, dict) and data.get("frames"):
-                # O desafio atual troca os animais por timers internos mesmo
-                # depois de substituir requestAnimationFrame. Pause o relogio
-                # virtual do alvo enquanto a IA externa responde; comandos CDP
-                # e o clique continuam disponiveis e o relogio volta logo apos.
-                try:
-                    client.call(
-                        "Emulation.setVirtualTimePolicy",
-                        {"policy": "pause"},
-                    )
-                    data["virtual_time_frozen"] = True
-                except Exception:
-                    data["virtual_time_frozen"] = False
+                # Nao use Emulation.setVirtualTimePolicy aqui. O CDP nao possui
+                # uma operacao para voltar ao relogio real depois de habilitar
+                # o tempo virtual; `advance` continua sintetico e pode adiantar
+                # timers internos do hCaptcha. O requestAnimationFrame local e
+                # a validacao do quadro imediatamente antes do clique bastam.
+                data["virtual_time_frozen"] = False
         finally:
             client.close()
     except Exception as exc:
@@ -1067,13 +1063,6 @@ def _restore_visual_animation(port: int) -> None:
 })()
 """
             )
-            try:
-                client.call(
-                    "Emulation.setVirtualTimePolicy",
-                    {"policy": "advance"},
-                )
-            except Exception:
-                pass
         finally:
             client.close()
     except Exception:
@@ -2903,9 +2892,6 @@ def _challenge_wait_state(port: int) -> dict[str, Any] | None:
   const button =
     document.querySelector('.button-submit.button') ||
     document.querySelector('[aria-label="Verificar respostas"]');
-  const canvas = [...document.querySelectorAll('canvas')].find((el) =>
-    el.width >= 900 && el.height >= 900);
-  const tasks = [...document.querySelectorAll('.task[role="button"], .task')];
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -2913,6 +2899,10 @@ def _challenge_wait_state(port: int) -> dict[str, Any] | None:
     return style.display !== 'none' && style.visibility !== 'hidden' &&
       Number(style.opacity || '1') > 0.05 && rect.width > 1 && rect.height > 1;
   };
+  const canvas = [...document.querySelectorAll('canvas')].find((el) =>
+    el.width >= 900 && el.height >= 900 && visible(el));
+  const tasks = [...document.querySelectorAll('.task[role="button"], .task')];
+  const visibleTasks = tasks.filter(visible);
   const loading = visible(document.querySelector('.button-submit-spinner')) ||
     visible(document.querySelector('.loading-indicator')) ||
     visible(document.querySelector('.spinner:not(.spinner-icon)'));
@@ -2921,7 +2911,44 @@ def _challenge_wait_state(port: int) -> dict[str, Any] | None:
     button.getAttribute('aria-disabled') === 'true' ||
     button.classList.contains('button-disabled')
   ) : null;
-  return {challenge_ready: !!canvas || tasks.length > 0, submit_disabled: disabled, loading};
+  let visualSignature = null;
+  if (canvas) {
+    try {
+      const probe = document.createElement('canvas');
+      probe.width = 16;
+      probe.height = 12;
+      const context = probe.getContext('2d', {willReadFrequently: true});
+      context.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 16, 12);
+      const pixels = context.getImageData(0, 0, 16, 12).data;
+      let hash = 2166136261;
+      for (let i = 0; i < pixels.length; i += 4) {
+        hash ^= pixels[i]; hash = Math.imul(hash, 16777619);
+        hash ^= pixels[i + 1]; hash = Math.imul(hash, 16777619);
+        hash ^= pixels[i + 2]; hash = Math.imul(hash, 16777619);
+      }
+      visualSignature = `${canvas.width}x${canvas.height}:${hash >>> 0}`;
+    } catch (_) {}
+  }
+  const taskSignature = visibleTasks.map((task) => {
+    const image = task.querySelector('img');
+    return image?.currentSrc || image?.src || getComputedStyle(task).backgroundImage || '';
+  }).join('|');
+  const prompt = (
+    document.querySelector('.prompt-text')?.textContent ||
+    document.querySelector('.challenge-example .prompt')?.textContent ||
+    document.querySelector('[class*="prompt"]')?.textContent || ''
+  ).trim();
+  const fingerprint = [prompt, visualSignature || '', taskSignature].join('::');
+  return {
+    challenge_ready: !!canvas || visibleTasks.length > 0,
+    submit_disabled: disabled,
+    submit_present: !!button,
+    loading,
+    prompt,
+    visual_signature: visualSignature,
+    task_count: visibleTasks.length,
+    fingerprint
+  };
 })()
 """
             )
@@ -2958,6 +2985,12 @@ def _click_submit_when_ready_google_ai(port: int) -> bool:
             ready_polls += 1
             if ready_polls >= 2:
                 success = _legacy_click_submit(port)
+                if success:
+                    with POST_SUBMIT_STATE_LOCK:
+                        POST_SUBMIT_STATE_BY_PORT[port] = {
+                            "submitted_at": time.monotonic(),
+                            "before": dict(state),
+                        }
                 legacy.audit_event("submit_clicked", success=bool(success))
                 return success
         else:
@@ -2981,6 +3014,12 @@ def _wait_token_or_next_stage_google_ai(
     retry_since = None
     retry_logged = False
     next_stage_polls = 0
+    challenge_disappeared = False
+    with POST_SUBMIT_STATE_LOCK:
+        submitted = dict(POST_SUBMIT_STATE_BY_PORT.get(port) or {})
+    before = submitted.get("before") if isinstance(submitted.get("before"), dict) else {}
+    before_fingerprint = str(before.get("fingerprint") or "")
+    last_stage: dict[str, Any] | None = None
     while time.time() < end:
         if not legacy.solver_browser_alive(port, browser_proc):
             legacy.set_solver_error(
@@ -2991,6 +3030,8 @@ def _wait_token_or_next_stage_google_ai(
             return None
         token = legacy.extract_token_from_page(port)
         if token:
+            with POST_SUBMIT_STATE_LOCK:
+                POST_SUBMIT_STATE_BY_PORT.pop(port, None)
             print(f"[Auto] Token obtido com sucesso! ({len(token)} chars)")
             return token
         if legacy.captcha_checkmark_visible(port):
@@ -3008,26 +3049,57 @@ def _wait_token_or_next_stage_google_ai(
                 print("[Auto] Rejeicao visivel; confirmando pelo DOM.")
                 retry_logged = True
             if time.time() - retry_since >= legacy.TOKEN_RETRY_ABORT_SECONDS:
+                with POST_SUBMIT_STATE_LOCK:
+                    POST_SUBMIT_STATE_BY_PORT.pop(port, None)
                 print("[Auto] Rejeicao confirmada; avancando sem espera ociosa.")
                 return None
         else:
             retry_since = None
             retry_logged = False
             stage = _challenge_wait_state(port)
+            last_stage = stage
+            if not stage or not stage.get("challenge_ready"):
+                challenge_disappeared = True
+                next_stage_polls = 0
+                time.sleep(legacy.TOKEN_POLL_SECONDS)
+                continue
+            current_fingerprint = str(stage.get("fingerprint") or "")
+            fingerprint_changed = bool(
+                before_fingerprint
+                and current_fingerprint
+                and current_fingerprint != before_fingerprint
+            )
             if (
                 time.time() - started >= 0.75
-                and stage
                 and stage.get("challenge_ready")
-                and stage.get("submit_disabled") is True
                 and not stage.get("loading")
+                and (fingerprint_changed or challenge_disappeared)
             ):
                 next_stage_polls += 1
                 if next_stage_polls >= 2:
+                    with POST_SUBMIT_STATE_LOCK:
+                        POST_SUBMIT_STATE_BY_PORT.pop(port, None)
+                    legacy.audit_event(
+                        "post_submit_transition",
+                        result="next_stage",
+                        fingerprint_changed=fingerprint_changed,
+                        challenge_disappeared=challenge_disappeared,
+                        elapsed_seconds=round(time.time() - started, 4),
+                    )
                     print("[Auto] Proxima etapa visual pronta; voltando imediatamente para analisar.")
                     return None
             else:
                 next_stage_polls = 0
         time.sleep(legacy.TOKEN_POLL_SECONDS)
+    with POST_SUBMIT_STATE_LOCK:
+        POST_SUBMIT_STATE_BY_PORT.pop(port, None)
+    legacy.audit_event(
+        "post_submit_transition",
+        result="timeout",
+        elapsed_seconds=round(time.time() - started, 4),
+        before_fingerprint=before_fingerprint or None,
+        last_state=last_stage,
+    )
     return None
 
 

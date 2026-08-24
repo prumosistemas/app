@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.102
-Data: 2026-08-21
+Versao: 1.0.103
+Data: 2026-08-24
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.102",
+  "version": "1.0.103",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -581,8 +581,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.102 .
-docker push ryang20/prumo-api:1.0.102
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.103 .
+docker push ryang20/prumo-api:1.0.103
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -593,10 +593,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.102 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.103 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.102
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.103
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

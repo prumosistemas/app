@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.102**
+Versao do app: **1.0.103**
 Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -122,7 +122,7 @@ ainda nao iniciadas passam antes de retries deferidos, impedindo que os
 primeiros certificados monopolizem a agenda durante uma pane longa.
 
 Na 1.0.101, cenas de animais que parecem estaticas mas mudam enquanto a IA
-responde pausam o relogio virtual do iframe ate o clique. O ThinkPad respeita o
+responde passaram a congelar o iframe ate o clique. O ThinkPad respeita o
 `retry_after` do proprio circuito e deixa de ser sondado em cada nota durante
 bloqueio residencial. Rejeicoes normais de circuito tambem deixaram de aparecer
 na auditoria como `request_ended_early`.
@@ -132,6 +132,13 @@ ocupado. Ela tenta o outro Space e depois o Modal, preservando o HF como linha d
 frente sem adicionar ate 30 segundos ociosos por Space. A conta HF secundaria
 continua preparada no cofre, mas a criacao de compute foi recusada pelo provedor
 com HTTP 402 em 24/08/2026; ela nao deve ser anunciada como capacidade ativa.
+
+Na 1.0.103, o congelamento deixa de usar `Emulation.setVirtualTimePolicy`:
+depois de habilitado, o CDP continua com tempo sintetico e `advance` pode
+adiantar timers do widget. A captura conserva somente a pausa local de
+`requestAnimationFrame`, valida o quadro corrente antes do clique e identifica
+a etapa seguinte por assinatura do canvas/DOM. Assim a automacao continua no
+iframe aberto em vez de reclicar o checkbox depois de uma resposta correta.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

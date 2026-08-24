@@ -1,5 +1,18 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.103 (24/08/2026)
+
+- Removido o relogio virtual sintetico do CDP do caminho visual. O modo
+  `advance` nao restaurava tempo real e podia adiantar timers internos depois
+  de um clique correto.
+- Antes de confirmar, o solver registra uma assinatura compacta da pergunta,
+  canvas e tarefas. Depois do clique, token, rejeicao e nova etapa sao
+  diferenciados; uma nova assinatura segue direto para analise sem novo clique
+  no checkbox.
+- O evento `post_submit_transition` registra `next_stage` ou `timeout`, com o
+  ultimo estado compacto, para separar erro de entendimento visual de falha na
+  transicao do widget.
+
 ## Ajuste 1.0.102 (24/08/2026)
 
 - Um Space HF ocupado nao bloqueia mais uma requisicao excedente na trava
