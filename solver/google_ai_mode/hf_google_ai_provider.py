@@ -83,7 +83,13 @@ class HuggingFaceGoogleAIProvider:
         if not image.is_file() or image.stat().st_size <= 0:
             raise HuggingFaceProviderError("huggingface_image_missing")
 
-        with self._lock:
+        # Cada Space gratuito atende uma consulta por vez. Esperar na trava
+        # fazia uma requisicao excedente consumir ate mais 30 s sem sequer
+        # iniciar no HF; nesse caso e melhor tentar o outro Space ou seguir
+        # imediatamente para o egress Modal.
+        if not self._lock.acquire(blocking=False):
+            raise HuggingFaceProviderError("huggingface_busy")
+        try:
             remaining = self._cooldown_until - time.monotonic()
             if remaining > 0:
                 raise HuggingFaceProviderError(
@@ -133,6 +139,8 @@ class HuggingFaceGoogleAIProvider:
                 self._last_error = _safe_error(exc, self.token)
                 self._cooldown_until = time.monotonic() + self.cooldown_seconds
                 raise HuggingFaceProviderError(self._last_error) from exc
+        finally:
+            self._lock.release()
 
     def health(self) -> dict[str, Any]:
         remaining = max(0.0, self._cooldown_until - time.monotonic())

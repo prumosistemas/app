@@ -114,3 +114,25 @@ def test_huggingface_pool_selects_private_token_by_owner() -> None:
     ]
     assert "primary-secret" not in str(pool.health())
     assert "secondary-secret" not in str(pool.health())
+
+
+def test_huggingface_provider_skips_busy_space_without_opening_circuit(tmp_path: Path) -> None:
+    image = tmp_path / "captcha.png"
+    image.write_bytes(b"image")
+    provider = provider_module.HuggingFaceGoogleAIProvider(
+        space_id="owner/space", token="secret-token", cooldown_seconds=60
+    )
+
+    provider._lock.acquire()
+    try:
+        started = provider_module.time.monotonic()
+        with pytest.raises(provider_module.HuggingFaceProviderError, match="huggingface_busy"):
+            provider.query(image, "analise")
+        elapsed = provider_module.time.monotonic() - started
+    finally:
+        provider._lock.release()
+
+    assert elapsed < 0.2
+    health = provider.health()
+    assert health["failures"] == 0
+    assert health["cooldown_remaining_seconds"] == 0

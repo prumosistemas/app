@@ -1,5 +1,14 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.102 (24/08/2026)
+
+- Um Space HF ocupado nao bloqueia mais uma requisicao excedente na trava
+  interna. O pool tenta o proximo Space ou o Modal imediatamente, reduzindo a
+  latencia de fila sem deslocar trabalho adicional para o ThinkPad.
+- A segunda conta HF foi verificada, mas continua sem Spaces: a criacao de
+  compute foi recusada pelo Hugging Face com HTTP 402. Os dois Spaces ativos da
+  conta primaria permanecem na frente dos Modais.
+
 ## Ajuste 1.0.101 (24/08/2026)
 
 - O desafio observado foi de ponto livre com a pergunta para localizar o animal

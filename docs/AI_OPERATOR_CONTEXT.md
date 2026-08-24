@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.101**
+Versao do app: **1.0.102**
 Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -126,6 +126,12 @@ responde pausam o relogio virtual do iframe ate o clique. O ThinkPad respeita o
 `retry_after` do proprio circuito e deixa de ser sondado em cada nota durante
 bloqueio residencial. Rejeicoes normais de circuito tambem deixaram de aparecer
 na auditoria como `request_ended_early`.
+
+Na 1.0.102, uma consulta excedente nao fica esperando a trava de um Space HF ja
+ocupado. Ela tenta o outro Space e depois o Modal, preservando o HF como linha de
+frente sem adicionar ate 30 segundos ociosos por Space. A conta HF secundaria
+continua preparada no cofre, mas a criacao de compute foi recusada pelo provedor
+com HTTP 402 em 24/08/2026; ela nao deve ser anunciada como capacidade ativa.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
