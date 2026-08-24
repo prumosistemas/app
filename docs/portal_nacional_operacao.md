@@ -8,6 +8,16 @@
 - A segunda conta HF foi verificada, mas continua sem Spaces: a criacao de
   compute foi recusada pelo Hugging Face com HTTP 402. Os dois Spaces ativos da
   conta primaria permanecem na frente dos Modais.
+- Diagnostico da janela anterior ao ajuste: 144 etapas visuais, sendo 142 com
+  `Search for the animal icon that does not belong to the group` e duas com
+  `Click the odd animal icon`; nenhuma era grade 3x3 ou desafio temporal. Houve
+  71 respostas utilizaveis da IA, 61 bloqueios de sessao Google, dez cenas que
+  mudaram antes do clique, uma resposta ausente e um erro de formato. As dez
+  cenas mutaveis foram rejeitadas pela validacao, sem clique incorreto.
+- Depois do deploy, artefatos reais dos Modais fallback e terceiro registraram
+  `virtual_time_frozen=true`. O fallback tambem confirmou sucesso via um dos
+  Spaces HF; egressos que entram em `/sorry/index` continuam sendo afastados por
+  cooldown, sem perder checkpoint da run.
 
 ## Ajuste 1.0.101 (24/08/2026)
 
