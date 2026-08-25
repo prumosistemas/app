@@ -17,11 +17,24 @@ from typing import Any, Iterator
 
 
 _THREAD_LOCK = threading.RLock()
-# Uma unica sonda global continua protegendo custo e concorrencia, mas uma
-# indisponibilidade do Google nao deve congelar todas as rotas por cinco
-# minutos. Cada endpoint/Space ja possui seu proprio cooldown; aqui precisamos
-# apenas espaciar a proxima sonda de recuperacao.
-_OUTAGE_DELAYS = (30, 45, 60, 60)
+# Uma unica sonda global continua protegendo custo e concorrencia. Falhas de
+# transporte sao verificadas cedo, enquanto bloqueios do provedor visual
+# precisam respeitar os cooldowns de 90--120 s dos Spaces/Modal. Repetir o
+# probe visual a cada 60 s mantinha os provedores permanentemente aquecidos e
+# bloqueados, alem de consumir credito sem aumentar a disponibilidade.
+_TRANSPORT_OUTAGE_DELAYS = (30, 45, 60, 60)
+_VISUAL_OUTAGE_DELAYS = (30, 60, 90, 120)
+
+
+def _outage_delays(reason_class: str) -> tuple[int, ...]:
+    reasons = {
+        value.strip().lower()
+        for value in str(reason_class or "").split(",")
+        if value.strip()
+    }
+    if reasons.intersection({"google_block", "provider_circuit", "http_429"}):
+        return _VISUAL_OUTAGE_DELAYS
+    return _TRANSPORT_OUTAGE_DELAYS
 
 
 def _now() -> datetime:
@@ -175,9 +188,10 @@ def mark_outage(
     with _file_lock(lock_path):
         state = _load_unlocked(path)
         streak = max(0, int(state.get("failure_streak") or 0)) + 1
+        outage_delays = _outage_delays(reason_class)
         delay = max(
             int(minimum_delay or 0),
-            _OUTAGE_DELAYS[min(streak - 1, len(_OUTAGE_DELAYS) - 1)],
+            outage_delays[min(streak - 1, len(outage_delays) - 1)],
         )
         state.update(
             {

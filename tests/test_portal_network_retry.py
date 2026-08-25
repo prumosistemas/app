@@ -745,7 +745,28 @@ def test_global_probe_lease_allows_only_one_owner(tmp_path: Path) -> None:
     assert solver_state.acquire_probe(path, "run-b", lease_seconds=120)
 
 
-def test_global_outage_backoff_is_capped_at_one_minute(tmp_path: Path) -> None:
+def test_global_visual_outage_backoff_aligns_with_provider_cooldowns(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "global.json"
+    current = datetime(2026, 8, 25, tzinfo=timezone.utc)
+    expected = [30, 60, 90, 120, 120, 120, 120, 120]
+
+    for attempt in range(8):
+        state = solver_state.mark_outage(
+            path,
+            "run-a",
+            "google_block",
+            now=current + timedelta(minutes=attempt),
+        )
+        blocked_until = datetime.fromisoformat(state["blocked_until"])
+        delay = blocked_until - (current + timedelta(minutes=attempt))
+        assert delay == timedelta(seconds=expected[attempt])
+
+
+def test_global_transport_outage_remains_capped_at_one_minute(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "global.json"
     current = datetime(2026, 8, 25, tzinfo=timezone.utc)
 
@@ -753,7 +774,7 @@ def test_global_outage_backoff_is_capped_at_one_minute(tmp_path: Path) -> None:
         state = solver_state.mark_outage(
             path,
             "run-a",
-            "google_block",
+            "solver_transport",
             now=current + timedelta(minutes=attempt),
         )
         blocked_until = datetime.fromisoformat(state["blocked_until"])

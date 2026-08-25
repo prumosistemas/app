@@ -1,5 +1,14 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.107 (25/08/2026)
+
+- O probe compartilhado continua rapido para falha de transporte, com teto de
+  60 s. Quando a causa e bloqueio Google, circuito do provedor ou HTTP 429, o
+  intervalo cresce em 30/60/90/120 s.
+- O teto visual de 120 s acompanha o cooldown observado nos Spaces e evita
+  repetir chamadas antes de eles poderem recuperar. Checkpoint, sonda unica e
+  retomada automatica permanecem inalterados.
+
 ## Ajuste 1.0.106 (24/08/2026)
 
 - Chamadas ao solver usam deadline HTTP total. Heartbeats/bytes intermediarios

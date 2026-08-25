@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.106**
-Atualizado em: **2026-08-24**
+Versao do app: **1.0.107**
+Atualizado em: **2026-08-25**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -163,6 +163,12 @@ anterior do `requests` media inatividade de leitura e podia ser renovado por
 bytes intermediarios do gateway Modal, mantendo threads depois do prazo da
 cadeia. O deadline agora cobre conexão, espera e corpo completos; timeout vira
 falha de transporte classificavel, libera os dois slots e preserva checkpoint.
+
+Na 1.0.107, o circuito global diferencia transporte de bloqueio visual.
+Timeout/conexao continuam com teto de 60 s; `google_block`, circuito do
+provedor e HTTP 429 crescem em 30/60/90/120 s. O ultimo degrau acompanha o
+cooldown real dos Spaces e evita probes antecipados que so repetem custo e
+mantem o egress bloqueado. Continua existindo uma unica sonda global.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
