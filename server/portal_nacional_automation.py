@@ -76,6 +76,12 @@ SOLVER_LOCAL_BLOCK_COOLDOWN_SECONDS = bounded_env_int(
     60,
     60 * 60,
 )
+SOLVER_HEDGE_DELAY_SECONDS = bounded_env_int(
+    "PORTAL_NACIONAL_SOLVER_HEDGE_DELAY_SECONDS",
+    30,
+    5,
+    120,
+)
 # O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
 # residencial do ThinkPad somente quando a tentativa primaria falha.
 DEFAULT_SOLVER_FALLBACK_URL = "http://127.0.0.1:8876/solve"
@@ -1920,17 +1926,17 @@ def solve_captcha_with_url(
     page_url: str | None = None,
     trace: dict | None = None,
 ) -> str | None:
-    errors = []
+    errors: list[str] = []
     chain_deadline = time.monotonic() + SOLVER_CHAIN_TIMEOUT_SECONDS
     candidates = balance_modal_solver_candidates(
         wait_for_solver_candidates(solver_url),
         request_id,
     )
-    for candidate in candidates:
+
+    def attempt_candidate(candidate: str, attempt_number: int) -> dict:
         remaining_chain = chain_deadline - time.monotonic()
         if remaining_chain <= 0:
-            errors.append("solver_chain_timeout")
-            break
+            return {"ok": False, "error": "solver_chain_timeout"}
         request_lock = modal_solver_request_lock(candidate)
         with request_lock if request_lock is not None else nullcontext():
             # Outra thread pode ter descoberto o bloqueio enquanto esta
@@ -1939,50 +1945,156 @@ def solve_captcha_with_url(
             remaining = solver_endpoint_cooldown_remaining(candidate)
             if remaining > 0:
                 safe_candidate = solver_endpoint_label(candidate)
-                errors.append(f"{safe_candidate}: solver_endpoint_cooling_down")
                 print(
                     f"[Solver] Pulando {safe_candidate}; cooldown publicado por "
                     f"outra tentativa ({remaining:.0f}s restantes)."
                 )
-                continue
+                return {
+                    "ok": False,
+                    "error": f"{safe_candidate}: solver_endpoint_cooling_down",
+                }
             try:
                 attempt_started = time.monotonic()
                 remaining_chain = max(1.0, chain_deadline - time.monotonic())
+                attempt_request_id = (
+                    f"{request_id}-route-{attempt_number}"
+                    if attempt_number
+                    else request_id
+                )
                 token = solve_captcha_once(
                     candidate,
                     sitekey,
-                    request_id,
+                    attempt_request_id,
                     page_url,
                     timeout_seconds=remaining_chain,
                 )
                 clear_solver_endpoint_cooldown(candidate)
-                record_solver_endpoint_event(candidate, "success", request_id)
-                inner_route = take_solver_route(request_id)
-                if trace is not None:
-                    endpoint_provider = solver_provider_name(candidate, solver_url)
-                    trace.update(
-                        {
-                            "provider": (
-                                f"{endpoint_provider}:{inner_route}"
-                                if inner_route
-                                else endpoint_provider
-                            ),
-                            "duration_seconds": round(
-                                max(0.0, time.monotonic() - attempt_started), 3
-                            ),
-                        }
-                    )
-                return token
+                record_solver_endpoint_event(candidate, "success", attempt_request_id)
+                inner_route = take_solver_route(attempt_request_id)
+                endpoint_provider = solver_provider_name(candidate, solver_url)
+                return {
+                    "ok": True,
+                    "token": token,
+                    "provider": (
+                        f"{endpoint_provider}:{inner_route}"
+                        if inner_route
+                        else endpoint_provider
+                    ),
+                    "duration_seconds": round(
+                        max(0.0, time.monotonic() - attempt_started), 3
+                    ),
+                    "hedged": attempt_number > 1,
+                }
             except Exception as exc:
                 record_solver_endpoint_event(candidate, "failure", request_id, exc)
                 cooldown = mark_solver_endpoint_unavailable(candidate, exc)
                 safe_candidate = solver_endpoint_label(candidate)
                 safe_error = sanitized_solver_error(exc)
-                errors.append(f"{safe_candidate}: {safe_error}")
                 print(
                     f"[Solver] Falha em {safe_candidate}; tentando proximo endpoint: "
                     f"{safe_error}; cooldown={cooldown}s"
                 )
+                return {
+                    "ok": False,
+                    "error": f"{safe_candidate}: {safe_error}",
+                }
+
+    def accept_result(result: dict) -> str | None:
+        if not result.get("ok"):
+            errors.append(str(result.get("error") or "solver_failed"))
+            return None
+        if trace is not None:
+            trace.update(
+                {
+                    "provider": result.get("provider"),
+                    "duration_seconds": result.get("duration_seconds"),
+                    "hedged": bool(result.get("hedged")),
+                }
+            )
+        return result.get("token")
+
+    modal_candidates = [candidate for candidate in candidates if is_modal_solver_url(candidate)]
+    remaining_candidates = [candidate for candidate in candidates if candidate not in modal_candidates]
+
+    # Hedged request: a segunda conta Modal so entra quando a primeira excede a
+    # janela normal. Em saude, a mediana historica (~12 s) continua pagando uma
+    # unica execucao. Em cauda longa/bloqueio, a reserva comeca apos 30 s sem
+    # esperar a primeira consumir quase todo o prazo da cadeia. Nunca dispute o
+    # ThinkPad: ele continua estritamente depois das rotas remotas.
+    if len(modal_candidates) >= 2:
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="portal-solver-hedge",
+        )
+        active: dict[concurrent.futures.Future, int] = {}
+        next_index = 0
+
+        def launch() -> None:
+            nonlocal next_index
+            index = next_index
+            next_index += 1
+            future = executor.submit(attempt_candidate, modal_candidates[index], index + 1)
+            active[future] = index
+
+        launch()
+        hedge_at = time.monotonic() + SOLVER_HEDGE_DELAY_SECONDS
+        try:
+            while active:
+                remaining_chain = chain_deadline - time.monotonic()
+                if remaining_chain <= 0:
+                    errors.append("solver_chain_timeout")
+                    break
+                can_hedge = next_index < len(modal_candidates) and len(active) < 2
+                wait_seconds = remaining_chain
+                if can_hedge:
+                    wait_seconds = min(
+                        wait_seconds,
+                        max(0.0, hedge_at - time.monotonic()),
+                    )
+                done, _ = concurrent.futures.wait(
+                    active,
+                    timeout=wait_seconds,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                if not done:
+                    if can_hedge:
+                        launch()
+                    continue
+                for future in done:
+                    active.pop(future, None)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        result = {
+                            "ok": False,
+                            "error": sanitized_solver_error(exc),
+                        }
+                    token = accept_result(result)
+                    if token:
+                        for pending in active:
+                            pending.cancel()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        return token
+                while next_index < len(modal_candidates) and len(active) < 2:
+                    launch()
+                hedge_at = time.monotonic()
+        finally:
+            if active:
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True)
+    else:
+        remaining_candidates = candidates
+
+    for attempt_number, candidate in enumerate(remaining_candidates, start=101):
+        result = attempt_candidate(candidate, attempt_number)
+        token = accept_result(result)
+        if token:
+            return token
+        if time.monotonic() >= chain_deadline:
+            errors.append("solver_chain_timeout")
+            break
+
     raise RuntimeError("solver:all_endpoints_failed: " + " | ".join(errors))
 
 
@@ -2133,6 +2245,7 @@ def download_item_tipo_requests(session: requests.Session, item: dict, solver_ur
             "method": f"requests_captcha_{tipo}",
             "solver_provider": solver_trace.get("provider"),
             "solver_duration_seconds": solver_trace.get("duration_seconds"),
+            "solver_hedged": bool(solver_trace.get("hedged")),
         }
 
     target_dir = download_dir_for_tipo(download_dir, tipo)
@@ -2230,6 +2343,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
     methods_by_tipo = dict(item.get("methods_by_tipo") or {})
     solver_providers_by_tipo = dict(item.get("solver_providers_by_tipo") or {})
     solver_durations_by_tipo = dict(item.get("solver_durations_by_tipo") or {})
+    solver_hedged_by_tipo = dict(item.get("solver_hedged_by_tipo") or {})
     errors = []
 
     for tipo in tipos:
@@ -2258,6 +2372,8 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
                 solver_providers_by_tipo[tipo] = result["solver_provider"]
             if result.get("solver_duration_seconds") is not None:
                 solver_durations_by_tipo[tipo] = result["solver_duration_seconds"]
+            if result.get("solver_provider"):
+                solver_hedged_by_tipo[tipo] = bool(result.get("solver_hedged"))
         else:
             errors.append(result)
             break
@@ -2272,6 +2388,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
             "methods_by_tipo": methods_by_tipo,
             "solver_providers_by_tipo": solver_providers_by_tipo,
             "solver_durations_by_tipo": solver_durations_by_tipo,
+            "solver_hedged_by_tipo": solver_hedged_by_tipo,
             "competencia": competence,
         }
 
@@ -2283,6 +2400,7 @@ def download_item_requests(session: requests.Session, item: dict, solver_url: st
         "methods_by_tipo": methods_by_tipo,
         "solver_providers_by_tipo": solver_providers_by_tipo,
         "solver_durations_by_tipo": solver_durations_by_tipo,
+        "solver_hedged_by_tipo": solver_hedged_by_tipo,
         "method": "+".join(methods_by_tipo.get(tipo, tipo) for tipo in tipos),
         "tipo_download": tipo_download,
         "competencia": competence,
@@ -2614,6 +2732,9 @@ def run_requests_downloads(
                     existing_durations = dict(index["items"][key].get("solver_durations_by_tipo") or {})
                     existing_durations.update(result.get("solver_durations_by_tipo", {}) or {})
                     index["items"][key]["solver_durations_by_tipo"] = existing_durations
+                    existing_hedges = dict(index["items"][key].get("solver_hedged_by_tipo") or {})
+                    existing_hedges.update(result.get("solver_hedged_by_tipo", {}) or {})
+                    index["items"][key]["solver_hedged_by_tipo"] = existing_hedges
                     index["items"][key]["tipo_download"] = tipo_download
                     index["items"][key]["downloaded_at"] = now_iso()
                     index["items"][key]["download_method"] = result.get("method")
@@ -2628,6 +2749,7 @@ def run_requests_downloads(
                         id=key,
                         method=result.get("method"),
                         solver_providers=sorted(set(existing_providers.values())),
+                        solver_hedged=any(existing_hedges.values()),
                         active=len(futures),
                         queue=len(queue),
                     )
@@ -2658,6 +2780,8 @@ def run_requests_downloads(
                     index["items"][key]["solver_providers_by_tipo"] = result.get("solver_providers_by_tipo", {})
                 if result.get("solver_durations_by_tipo"):
                     index["items"][key]["solver_durations_by_tipo"] = result.get("solver_durations_by_tipo", {})
+                if result.get("solver_hedged_by_tipo"):
+                    index["items"][key]["solver_hedged_by_tipo"] = result.get("solver_hedged_by_tipo", {})
                 if result.get("competencia"):
                     index["items"][key]["competencia"] = result["competencia"]
 

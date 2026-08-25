@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.104**
+Versao do app: **1.0.105**
 Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -87,7 +87,7 @@ Certificados, senhas e sessões continuam fora dos comandos e da documentação.
 Na 1.0.93, o solver não consulta o Google durante cold start e cada análise
 direta faz uma única tentativa interna. Um bloqueio explícito do egress Modal
 é atribuído somente à tentativa/container observado: o endpoint balanceado
-volta ao pool em 10 s, 5xx genérico em 15 s e o probe global cresce até 120 s.
+volta ao pool em 10 s, 5xx genérico em 15 s e o probe global cresce até 60 s.
 Um sucesso confirmado zera a penalidade. Isso não usa nem recomenda conta
 Google pessoal: autenticar uma conta para contornar `unusual traffic` pode
 associar o bloqueio à conta.
@@ -150,6 +150,13 @@ ultimo evento significativo. Uma unica run recebe o lease de sonda e a
 concorrencia volta gradualmente de 1 para 2 e 4 apos sucesso. O indice registra
 somente rota logica e duracao sanitizadas (`huggingface:<space>`, Modal direto
 ou ThinkPad), sem token, URL do captcha ou credencial.
+
+Na 1.0.105, as contas Modal deixam de ser tentadas apenas em serie. A primeira
+continua sozinha durante 30 s; somente uma cauda lenta dispara a segunda, com
+no maximo duas tentativas para o mesmo captcha. A primeira resposta valida e
+usada e o ThinkPad permanece estritamente depois das rotas remotas. O backoff
+do lease global passa a 30/45/60 s e o indice marca quando o vencedor veio do
+hedge, permitindo medir ganho real sem aumentar o custo do caminho saudavel.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

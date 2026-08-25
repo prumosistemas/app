@@ -17,7 +17,11 @@ from typing import Any, Iterator
 
 
 _THREAD_LOCK = threading.RLock()
-_OUTAGE_DELAYS = (30, 60, 120, 300)
+# Uma unica sonda global continua protegendo custo e concorrencia, mas uma
+# indisponibilidade do Google nao deve congelar todas as rotas por cinco
+# minutos. Cada endpoint/Space ja possui seu proprio cooldown; aqui precisamos
+# apenas espaciar a proxima sonda de recuperacao.
+_OUTAGE_DELAYS = (30, 45, 60, 60)
 
 
 def _now() -> datetime:

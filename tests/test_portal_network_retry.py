@@ -1,5 +1,8 @@
 import sys
 import json
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -331,6 +334,76 @@ def test_solver_uses_fallback_after_primary_failure(monkeypatch) -> None:
 
     assert token == "token-fallback"
     assert calls == ["https://primary.example/solve", "https://fallback.example/solve"]
+
+
+def test_fast_modal_success_does_not_start_hedge(monkeypatch) -> None:
+    primary = "https://primary--solver.modal.run/solve"
+    fallback = "https://fallback--solver.modal.run/solve"
+    local = "http://127.0.0.1:8876/solve"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        automation,
+        "wait_for_solver_candidates",
+        lambda _primary: [primary, fallback, local],
+    )
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
+
+    def fake_solve(url, *_args, **_kwargs):
+        calls.append(url)
+        return "token-primary"
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    assert automation.solve_captcha_with_url(primary, "sitekey", "nota") == "token-primary"
+    assert calls == [primary]
+
+
+def test_slow_modal_starts_one_hedge_and_uses_fast_winner(monkeypatch) -> None:
+    primary = "https://primary--solver.modal.run/solve"
+    fallback = "https://fallback--solver.modal.run/solve"
+    local = "http://127.0.0.1:8876/solve"
+    calls: list[str] = []
+    release_primary = threading.Event()
+    monkeypatch.setattr(automation, "SOLVER_HEDGE_DELAY_SECONDS", 0.02)
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URL", fallback)
+    monkeypatch.setattr(automation, "SOLVER_FALLBACK_URLS", [fallback, local])
+    monkeypatch.setattr(
+        automation,
+        "wait_for_solver_candidates",
+        lambda _primary: [primary, fallback, local],
+    )
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
+
+    def fake_solve(url, *_args, **_kwargs):
+        calls.append(url)
+        if url == primary:
+            assert release_primary.wait(1)
+            time.sleep(0.08)
+            return "token-primary-late"
+        if url == fallback:
+            release_primary.set()
+            return "token-fallback-fast"
+        raise AssertionError("ThinkPad nao deve disputar com as contas Modal")
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+    trace: dict = {}
+    started = time.monotonic()
+
+    assert automation.solve_captcha_with_url(
+        primary,
+        "sitekey",
+        "nota",
+        trace=trace,
+    ) == "token-fallback-fast"
+    elapsed = time.monotonic() - started
+
+    assert calls[:2] == [primary, fallback]
+    assert elapsed < 0.08
+    assert trace["provider"] == "modal_fallback_1"
+    assert trace["hedged"] is True
+    time.sleep(0.1)  # deixa a tentativa perdedora liberar sua vaga
 
 
 def test_solver_chain_has_one_total_timeout_budget(monkeypatch) -> None:
@@ -673,6 +746,22 @@ def test_global_probe_lease_allows_only_one_owner(tmp_path: Path) -> None:
     solver_state.mark_success(path, "run-a", provider="modal_primary")
     assert solver_state.blocked_seconds(path) == 0
     assert solver_state.acquire_probe(path, "run-b", lease_seconds=120)
+
+
+def test_global_outage_backoff_is_capped_at_one_minute(tmp_path: Path) -> None:
+    path = tmp_path / "global.json"
+    current = datetime(2026, 8, 25, tzinfo=timezone.utc)
+
+    for attempt in range(8):
+        state = solver_state.mark_outage(
+            path,
+            "run-a",
+            "google_block",
+            now=current + timedelta(minutes=attempt),
+        )
+        blocked_until = datetime.fromisoformat(state["blocked_until"])
+        delay = blocked_until - (current + timedelta(minutes=attempt))
+        assert timedelta(seconds=30) <= delay <= timedelta(seconds=60)
 
 
 def test_disabled_primary_automatically_rejoins_after_shared_cooldown(

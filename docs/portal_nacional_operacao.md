@@ -1,5 +1,16 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.105 (24/08/2026)
+
+- A segunda conta Modal inicia somente quando a primeira excede 30 s. Resposta
+  rapida continua consumindo um unico solve; cauda longa disputa no maximo duas
+  rotas remotas e usa a primeira resposta valida.
+- O ThinkPad nao participa do hedge e permanece ultimo fallback. O backoff
+  global foi limitado a 60 s e continua com uma unica sonda entre todas as
+  runs.
+- O indice registra `solver_hedged_by_tipo`, provedor vencedor e duracao por
+  XML/PDF para comparar taxa de acerto, latencia e custo.
+
 ## Ajuste 1.0.104 (24/08/2026)
 
 - O circuito do solver e compartilhado por todas as runs e persiste em dados.
