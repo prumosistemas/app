@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.105**
+Versao do app: **1.0.106**
 Atualizado em: **2026-08-24**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -157,6 +157,12 @@ no maximo duas tentativas para o mesmo captcha. A primeira resposta valida e
 usada e o ThinkPad permanece estritamente depois das rotas remotas. O backoff
 do lease global passa a 30/45/60 s e o indice marca quando o vencedor veio do
 hedge, permitindo medir ganho real sem aumentar o custo do caminho saudavel.
+
+Na 1.0.106, o POST/GET do solver usa `aiohttp.ClientTimeout.total`. O timeout
+anterior do `requests` media inatividade de leitura e podia ser renovado por
+bytes intermediarios do gateway Modal, mantendo threads depois do prazo da
+cadeia. O deadline agora cobre conexão, espera e corpo completos; timeout vira
+falha de transporte classificavel, libera os dois slots e preserva checkpoint.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

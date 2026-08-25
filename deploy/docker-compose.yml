@@ -1,6 +1,6 @@
 services:
   prumo-api:
-    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.105}
+    image: ${PRUMO_API_IMAGE:-ryang20/prumo-api:1.0.106}
     container_name: prumo-api
     # O resolvedor abre Chrome sob demanda. O init minimo recolhe subprocessos
     # que terminem depois do pai e impede o esgotamento do limite de PIDs.

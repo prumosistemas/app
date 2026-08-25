@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import concurrent.futures
 import hashlib
 import html as html_lib
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import requests
+import aiohttp
 import websocket
 from contextlib import contextmanager, nullcontext
 from requests.adapters import HTTPAdapter
@@ -1822,6 +1824,61 @@ def solver_response_json(response: requests.Response) -> dict:
     return data
 
 
+async def _solver_http_response_async(
+    method: str,
+    url: str,
+    *,
+    payload: dict | None,
+    timeout_seconds: float,
+) -> requests.Response:
+    """HTTP do solver com deadline total, inclusive corpo/heartbeats.
+
+    ``requests`` aplica o valor numerico como timeout de connect/read e o
+    contador de leitura pode ser renovado por bytes intermediarios do gateway.
+    O Modal pode, portanto, manter uma chamada presa alem do orçamento da run.
+    ``aiohttp.ClientTimeout.total`` mede a operacao inteira.
+    """
+
+    total = max(0.05, float(timeout_seconds))
+    timeout = aiohttp.ClientTimeout(total=total, connect=min(20.0, total))
+    try:
+        async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
+            async with session.request(method, url, json=payload) as response:
+                body = await response.read()
+                result = requests.Response()
+                result.status_code = int(response.status)
+                result.url = str(response.url)
+                result.headers.update(dict(response.headers))
+                result._content = body
+                result.encoding = response.charset or "utf-8"
+                return result
+    except asyncio.TimeoutError as exc:
+        raise requests.ReadTimeout(
+            f"solver_hard_timeout:{int(total)}s"
+        ) from exc
+    except aiohttp.ClientError as exc:
+        raise requests.ConnectionError(
+            f"solver_transport:{type(exc).__name__}"
+        ) from exc
+
+
+def solver_http_response(
+    method: str,
+    url: str,
+    *,
+    payload: dict | None = None,
+    timeout_seconds: float,
+) -> requests.Response:
+    return asyncio.run(
+        _solver_http_response_async(
+            method,
+            url,
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+
 def remember_solver_route(request_id: str, data: dict) -> None:
     route = str(data.get("provider_route") or "").strip()
     if not route:
@@ -1859,10 +1916,11 @@ def solve_captcha_once(
     payload = {"sitekey": sitekey, "request_id": request_id}
     if page_url:
         payload["url"] = page_url
-    response = requests.post(
+    response = solver_http_response(
+        "POST",
         solver_url,
-        json=payload,
-        timeout=request_timeout,
+        payload=payload,
+        timeout_seconds=request_timeout,
     )
     if response.status_code >= 400:
         try:
@@ -1895,7 +1953,11 @@ def solve_captcha_once(
         while time.monotonic() < deadline:
             try:
                 remaining = max(1.0, deadline - time.monotonic())
-                poll = requests.get(job_url, timeout=min(20.0, remaining))
+                poll = solver_http_response(
+                    "GET",
+                    job_url,
+                    timeout_seconds=min(20.0, remaining),
+                )
             except requests.RequestException as exc:
                 poll_failures += 1
                 delay = min(2 * poll_failures, 12)

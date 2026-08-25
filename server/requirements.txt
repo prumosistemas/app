@@ -6,6 +6,7 @@ openpyxl
 python-dotenv
 playwright
 requests
+aiohttp>=3.10,<4
 beautifulsoup4
 websockets
 websocket-client

@@ -3,6 +3,7 @@ import json
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import requests
@@ -301,19 +302,15 @@ def test_async_solver_poll_survives_transient_timeout(monkeypatch) -> None:
         ]
     )
 
-    monkeypatch.setattr(
-        automation.requests,
-        "post",
-        lambda *args, **kwargs: FakeResponse(202, {"accepted": True, "job_id": "job-1"}),
-    )
-
-    def fake_get(*args, **kwargs):
+    def fake_http(method, *_args, **_kwargs):
+        if method == "POST":
+            return FakeResponse(202, {"accepted": True, "job_id": "job-1"})
         value = next(responses)
         if isinstance(value, Exception):
             raise value
         return value
 
-    monkeypatch.setattr(automation.requests, "get", fake_get)
+    monkeypatch.setattr(automation, "solver_http_response", fake_http)
     monkeypatch.setattr(automation.time, "sleep", lambda seconds: None)
 
     assert automation.solve_captcha_with_url("https://solver.example/solve", "key", "run") == "token-ok"
@@ -604,11 +601,11 @@ def test_solver_telemetry_contains_no_url_query_or_exception_text(monkeypatch, t
 def test_solver_receives_real_nfse_page_context(monkeypatch) -> None:
     captured = {}
 
-    def fake_post(*args, **kwargs):
-        captured.update(kwargs["json"])
+    def fake_post(_method, _url, *, payload=None, **_kwargs):
+        captured.update(payload or {})
         return FakeResponse(200, {"success": True, "token": "token-ok"})
 
-    monkeypatch.setattr(automation.requests, "post", fake_post)
+    monkeypatch.setattr(automation, "solver_http_response", fake_post)
     page_url = "https://www.nfse.gov.br/EmissorNacional/DPS/ModalCaptcha/Abrir/"
 
     assert automation.solve_captcha_once(
@@ -628,7 +625,7 @@ def test_solver_success_route_is_sanitized_and_consumed(monkeypatch) -> None:
             },
         )
 
-    monkeypatch.setattr(automation.requests, "post", fake_post)
+    monkeypatch.setattr(automation, "solver_http_response", fake_post)
 
     assert automation.solve_captcha_once(
         "https://solver.example/solve", "key", "nota-rota"
@@ -838,7 +835,11 @@ def test_solver_preserves_json_reason_from_503(monkeypatch) -> None:
             "error": "unusual traffic",
         }
     ).encode()
-    monkeypatch.setattr(automation.requests, "post", lambda *args, **kwargs: response)
+    monkeypatch.setattr(
+        automation,
+        "solver_http_response",
+        lambda *args, **kwargs: response,
+    )
 
     with pytest.raises(RuntimeError, match="google_ai_request_failed.*unusual traffic"):
         automation.solve_captcha_once("https://solver.example/solve", "key", "nota")
@@ -855,7 +856,11 @@ def test_generic_json_503_keeps_short_modal_pool_cooldown(monkeypatch) -> None:
             "error": "temporary backend outage",
         }
     ).encode()
-    monkeypatch.setattr(automation.requests, "post", lambda *args, **kwargs: response)
+    monkeypatch.setattr(
+        automation,
+        "solver_http_response",
+        lambda *args, **kwargs: response,
+    )
 
     with pytest.raises(RuntimeError) as captured:
         automation.solve_captcha_once(response.url, "key", "nota")
@@ -868,3 +873,43 @@ def test_endpoint_outages_still_open_cooldown() -> None:
     response.status_code = 503
     error = requests.HTTPError("temporariamente indisponivel", response=response)
     assert automation.solver_endpoint_cooldown_seconds(error) == 90
+
+
+def test_solver_http_total_timeout_is_not_extended_by_dripping_body() -> None:
+    class DripHandler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "10000")
+            self.end_headers()
+            for _ in range(100):
+                try:
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    break
+                time.sleep(0.01)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DripHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    started = time.monotonic()
+    elapsed = None
+    try:
+        with pytest.raises(requests.ReadTimeout, match="solver_hard_timeout"):
+            automation.solver_http_response(
+                "POST",
+                f"http://127.0.0.1:{server.server_port}/solve",
+                payload={"sitekey": "test"},
+                timeout_seconds=0.08,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=1)
+
+    assert elapsed is not None and elapsed < 0.5

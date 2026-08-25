@@ -1,5 +1,12 @@
 # Portal Nacional - operação
 
+## Ajuste 1.0.106 (24/08/2026)
+
+- Chamadas ao solver usam deadline HTTP total. Heartbeats/bytes intermediarios
+  do gateway nao renovam mais indefinidamente o timeout de leitura.
+- Ao atingir o prazo, as tentativas remotas liberam a run, entram no cooldown
+  compartilhado e o checkpoint continua intacto.
+
 ## Ajuste 1.0.105 (24/08/2026)
 
 - A segunda conta Modal inicia somente quando a primeira excede 30 s. Resposta
