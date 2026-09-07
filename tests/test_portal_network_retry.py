@@ -403,6 +403,30 @@ def test_slow_modal_starts_one_hedge_and_uses_fast_winner(monkeypatch) -> None:
     time.sleep(0.1)  # deixa a tentativa perdedora liberar sua vaga
 
 
+def test_modal_attempt_budget_reserves_chain_time_for_thinkpad(monkeypatch) -> None:
+    primary = "https://primary--solver.modal.run/solve"
+    local = "http://127.0.0.1:8876/solve"
+    timeouts = []
+    monkeypatch.setattr(automation, "SOLVER_REMOTE_ATTEMPT_TIMEOUT_SECONDS", 150)
+    monkeypatch.setattr(automation, "wait_for_solver_candidates", lambda _primary: [primary, local])
+    monkeypatch.setattr(automation, "record_solver_endpoint_event", lambda *args: None)
+    monkeypatch.setattr(automation, "mark_solver_endpoint_unavailable", lambda *args: 0)
+    monkeypatch.setattr(automation, "clear_solver_endpoint_cooldown", lambda *args: None)
+
+    def fake_solve(url, *_args, timeout_seconds=None, **_kwargs):
+        timeouts.append((url, round(float(timeout_seconds))))
+        if url == primary:
+            raise RuntimeError("solver:provider_circuit_open")
+        return "token-local"
+
+    monkeypatch.setattr(automation, "solve_captcha_once", fake_solve)
+
+    assert automation.solve_captcha_with_url(primary, "sitekey", "nota") == "token-local"
+    assert timeouts[0] == (primary, 150)
+    assert timeouts[1][0] == local
+    assert timeouts[1][1] > 150
+
+
 def test_solver_chain_has_one_total_timeout_budget(monkeypatch) -> None:
     clock = {"now": 100.0}
     timeouts = []

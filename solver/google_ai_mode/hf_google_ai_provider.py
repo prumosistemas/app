@@ -168,6 +168,7 @@ class HuggingFaceGoogleAIPool:
         tokens_by_owner: dict[str, str] | None = None,
         timeout_seconds: float = 60.0,
         cooldown_seconds: float = 180.0,
+        max_attempts: int = 2,
         api_name: str = "/test_google_ai",
     ) -> None:
         unique = list(dict.fromkeys(str(item or "").strip() for item in space_ids if str(item or "").strip()))
@@ -186,6 +187,7 @@ class HuggingFaceGoogleAIPool:
             )
             for space_id in unique
         ]
+        self.max_attempts = max(1, min(len(self.providers) or 1, int(max_attempts)))
 
     @property
     def configured(self) -> bool:
@@ -200,13 +202,23 @@ class HuggingFaceGoogleAIPool:
         offset = int.from_bytes(digest[:4], "big") % len(configured)
         ordered = configured[offset:] + configured[:offset]
         errors: list[str] = []
+        attempted = 0
         for provider in ordered:
             try:
                 result = provider.query(image, prompt)
                 result.route = f"huggingface:{provider.space_id}"
                 return result
             except HuggingFaceProviderError as exc:
-                errors.append(f"{provider.space_id}:{_safe_error(exc, provider.token)}")
+                safe = _safe_error(exc, provider.token)
+                errors.append(f"{provider.space_id}:{safe}")
+                # Busy/cooldown nao iniciou inferencia e pode procurar outro
+                # Space sem consumir o limite. Falhas reais sao limitadas para
+                # que seis egressos indisponiveis nao atrasem o Modal local.
+                lowered = str(exc).lower()
+                if "huggingface_busy" not in lowered and "huggingface_circuit_open" not in lowered:
+                    attempted += 1
+                    if attempted >= self.max_attempts:
+                        break
         raise HuggingFaceProviderError("huggingface_pool_failed:" + " | ".join(errors))
 
     def health(self) -> dict[str, Any]:
@@ -214,5 +226,6 @@ class HuggingFaceGoogleAIPool:
             "configured": self.configured,
             "spaces": [provider.health() for provider in self.providers],
             "count": len(self.providers),
+            "max_attempts": self.max_attempts,
             "token_exposed": False,
         }

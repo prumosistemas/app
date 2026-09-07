@@ -572,6 +572,7 @@ def modal_command(
             # desviam cedo a fila excedente para o egress Modal ja aquecido.
             "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "30",
             "PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS": "180",
+            "PRUMO_HF_GOOGLE_AI_MAX_ATTEMPTS": "2",
         }
         temporary_path: Path | None = None
         try:

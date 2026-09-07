@@ -116,6 +116,30 @@ def test_huggingface_pool_selects_private_token_by_owner() -> None:
     assert "secondary-secret" not in str(pool.health())
 
 
+def test_huggingface_pool_limits_real_failures_but_skips_busy_spaces(monkeypatch, tmp_path: Path) -> None:
+    image = tmp_path / "captcha.png"
+    image.write_bytes(b"stable-image")
+    pool = provider_module.HuggingFaceGoogleAIPool(
+        space_ids=["owner/one", "owner/two", "owner/three", "owner/four"],
+        token="secret-token",
+        max_attempts=2,
+    )
+    calls = []
+
+    def fail(provider, _image, _prompt):
+        calls.append(provider.space_id)
+        raise provider_module.HuggingFaceProviderError("remote_failure")
+
+    for provider in pool.providers:
+        monkeypatch.setattr(provider, "query", lambda image, prompt, p=provider: fail(p, image, prompt))
+
+    with pytest.raises(provider_module.HuggingFaceProviderError):
+        pool.query(image, "analise")
+
+    assert len(calls) == 2
+    assert pool.health()["max_attempts"] == 2
+
+
 def test_huggingface_provider_skips_busy_space_without_opening_circuit(tmp_path: Path) -> None:
     image = tmp_path / "captcha.png"
     image.write_bytes(b"image")

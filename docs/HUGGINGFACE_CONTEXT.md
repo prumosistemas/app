@@ -1,7 +1,7 @@
 # Contexto Hugging Face da Prumo
 
 Atualizado em: **2026-09-07**
-Versao da Prumo: **1.0.108**
+Versao da Prumo: **1.0.109**
 
 ## Segredos
 
@@ -94,6 +94,9 @@ proprietario do Space.
 - Cada Space gratuito processa uma analise por vez.
 - Os seis Spaces recebem primeiro as imagens efemeras dos captchas, com token
   selecionado pelo proprietario.
+- Cada desafio faz no maximo duas tentativas HF reais. Spaces ocupados ou em
+  cooldown sao pulados sem consumir esse limite; o hash da imagem distribui o
+  ponto inicial entre os seis.
 - A espera HF e limitada; fila excedente segue ao Modo IA direto do Modal,
   evitando prender trabalhadores em Space ocupado ou em cold start.
 - O ThinkPad permanece no ultimo fallback.

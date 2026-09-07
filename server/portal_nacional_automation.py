@@ -84,6 +84,12 @@ SOLVER_HEDGE_DELAY_SECONDS = bounded_env_int(
     5,
     120,
 )
+SOLVER_REMOTE_ATTEMPT_TIMEOUT_SECONDS = bounded_env_int(
+    "PORTAL_NACIONAL_REMOTE_SOLVER_TIMEOUT_SECONDS",
+    150,
+    60,
+    300,
+)
 # O Modal continua sendo o endpoint primario. O resolvedor local usa o IP
 # residencial do ThinkPad somente quando a tentativa primaria falha.
 DEFAULT_SOLVER_FALLBACK_URL = "http://127.0.0.1:8876/solve"
@@ -1994,6 +2000,7 @@ def solve_captcha_with_url(
         wait_for_solver_candidates(solver_url),
         request_id,
     )
+    has_local_fallback = any(is_local_solver_url(candidate) for candidate in candidates)
 
     def attempt_candidate(candidate: str, attempt_number: int) -> dict:
         remaining_chain = chain_deadline - time.monotonic()
@@ -2018,6 +2025,12 @@ def solve_captcha_with_url(
             try:
                 attempt_started = time.monotonic()
                 remaining_chain = max(1.0, chain_deadline - time.monotonic())
+                request_budget = remaining_chain
+                if is_modal_solver_url(candidate) and has_local_fallback:
+                    request_budget = min(
+                        request_budget,
+                        float(SOLVER_REMOTE_ATTEMPT_TIMEOUT_SECONDS),
+                    )
                 attempt_request_id = (
                     f"{request_id}-route-{attempt_number}"
                     if attempt_number
@@ -2028,7 +2041,7 @@ def solve_captcha_with_url(
                     sitekey,
                     attempt_request_id,
                     page_url,
-                    timeout_seconds=remaining_chain,
+                    timeout_seconds=request_budget,
                 )
                 clear_solver_endpoint_cooldown(candidate)
                 record_solver_endpoint_event(candidate, "success", attempt_request_id)

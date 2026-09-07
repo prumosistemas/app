@@ -71,6 +71,7 @@ HF_PROVIDER = HuggingFaceGoogleAIPool(
     },
     timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "60")),
     cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
+    max_attempts=int(os.environ.get("PRUMO_HF_GOOGLE_AI_MAX_ATTEMPTS", "2")),
 )
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
