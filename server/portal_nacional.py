@@ -324,6 +324,21 @@ def _rebalance_automatic_schedules(now: datetime | None = None) -> None:
 
 
 def _automatic_capture_range(job: Dict[str, Any], today: date | None = None) -> tuple[str, str]:
+    focus_start = str(job.get("focus_start_date") or "").strip()
+    focus_end = str(job.get("focus_end_date") or "").strip()
+    if focus_start and focus_end:
+        try:
+            start = datetime.strptime(focus_start, "%Y-%m-%d").date()
+            end = datetime.strptime(focus_end, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+        else:
+            current = today or datetime.now(PORTAL_TIMEZONE).date()
+            end = min(end, current)
+            if start > end:
+                start = end
+            return start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y")
+
     end = today or datetime.now(PORTAL_TIMEZONE).date()
     last_success = str(job.get("last_success_date") or "").strip()
     try:
@@ -337,6 +352,19 @@ def _automatic_capture_range(job: Dict[str, Any], today: date | None = None) -> 
     if start > end:
         start = end
     return start.strftime("%d/%m/%Y"), end.strftime("%d/%m/%Y")
+
+
+def _automatic_focus_complete(job: Dict[str, Any]) -> bool:
+    focus_end = str(job.get("focus_end_date") or "").strip()
+    last_success = str(job.get("last_success_date") or "").strip()
+    if not focus_end or not last_success:
+        return False
+    try:
+        return datetime.strptime(last_success, "%Y-%m-%d").date() >= datetime.strptime(
+            focus_end, "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return False
 
 
 def _automatic_run_state(ctx: WorkerContext, job: Dict[str, Any]) -> tuple[str, bool]:
@@ -399,6 +427,13 @@ def _reconcile_automatic_state(ctx: WorkerContext, state: Dict[str, Any]) -> boo
             job["last_completed_at"] = _now_iso()
             job["last_error"] = None
             changed = True
+        if status == "finalizado" and _automatic_focus_complete(job):
+            if job.get("next_run_at") is not None:
+                job["next_run_at"] = None
+                changed = True
+            if not job.get("focus_completed_at"):
+                job["focus_completed_at"] = _now_iso()
+                changed = True
         elif job.get("last_error") == "A captura terminou com pendências. O próximo ciclo retomará o período não confirmado.":
             job["last_error"] = None
             changed = True
@@ -1387,6 +1422,8 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
     due = []
     for ctx, state, job in _automatic_records():
         if not bool(job.get("enabled", True)):
+            continue
+        if _automatic_focus_complete(job):
             continue
         next_run = _parse_portal_datetime(job.get("next_run_at"))
         if next_run and next_run <= current:

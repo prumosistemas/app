@@ -272,6 +272,7 @@ MODAL_WORKSPACES = {
 HF_ACCOUNTS = {
     "primary": ("HUGGINGFACE_PRIMARY_TOKEN", "HUGGINGFACE_TOKEN"),
     "secondary": ("HUGGINGFACE_SECONDARY_TOKEN",),
+    "tertiary": ("HUGGINGFACE_TERTIARY_TOKEN",),
 }
 HF_SPACE_SOURCE = ROOT / "deploy" / "huggingface" / "navegador-headless"
 HF_SPACE_CANONICAL_GOOGLE_AI = ROOT / "solver" / "google_ai_mode" / "google_ia_requests.py"
@@ -373,9 +374,12 @@ def hf_command(
                         repo_id=repo_id,
                         repo_type="space",
                         space_sdk="gradio",
-                        # O navegador e o Modo IA usam CPU. CPU Basic evita a
-                        # exigencia de PRO/30 dias do ZeroGPU em contas novas.
-                        space_hardware="cpu-basic",
+                        # Contas pessoais gratuitas em boa situacao podem
+                        # hospedar ate dois Spaces ZeroGPU depois de 30 dias.
+                        # CPU Basic exige plano pago. O workload continua em
+                        # CPU; o decorador @spaces.GPU de compatibilidade faz
+                        # apenas um probe curto para o runtime aceitar o Space.
+                        space_hardware="zero-a10g",
                         private=True,
                         token=token,
                     )
@@ -546,13 +550,21 @@ def modal_command(
             "value_printed": False,
         })
     elif action == "sync-hf-secret":
-        token = hf_token(store, "primary")
+        primary_token = hf_token(store, "primary")
+        secondary_token = hf_token(store, "secondary")
+        tertiary_token = hf_token(store, "tertiary")
         mode = hf_mode or "prefer"
         payload = {
-            "HF_TOKEN": token,
+            "HF_TOKEN": primary_token,
+            "HF_SECONDARY_TOKEN": secondary_token,
+            "HF_TERTIARY_TOKEN": tertiary_token,
             "PRUMO_HF_GOOGLE_AI_SPACES": (
                 "ryanzinprot/navegador-headless,"
-                "ryanzinprot/navegador-headless-2"
+                "ryanzinprot/navegador-headless-2,"
+                "jorjoinho/navegador-headless-prumo,"
+                "jorjoinho/navegador-headless-prumo-2,"
+                "prumo/navegador-headless-prumo,"
+                "prumo/navegador-headless-prumo-2"
             ),
             "PRUMO_HF_GOOGLE_AI_MODE": mode,
             # Dois Spaces gratuitos atendem uma requisicao cada. Trinta
@@ -575,7 +587,7 @@ def modal_command(
                     "secret", "create", "prumo-huggingface",
                     "--from-json", str(temporary_path), "--force",
                 ],
-                sensitive_values=[token],
+                sensitive_values=[primary_token, secondary_token, tertiary_token],
             )
             emit({
                 "account": account,

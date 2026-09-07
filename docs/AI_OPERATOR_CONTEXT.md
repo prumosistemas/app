@@ -1,7 +1,7 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.107**
-Atualizado em: **2026-08-25**
+Versao do app: **1.0.108**
+Atualizado em: **2026-09-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
 imprimir credenciais. Os comandos abaixo usam aliases e um cofre local
@@ -29,9 +29,9 @@ O cofre fica em
 podem ser abertos pelo mesmo usuario do Windows. `secrets status` mostra nomes,
 nunca valores.
 
-Os tokens HF usam `HUGGINGFACE_PRIMARY_TOKEN` e
-`HUGGINGFACE_SECONDARY_TOKEN`. A conta secundaria ainda nao possui compute;
-consulte `docs/HUGGINGFACE_CONTEXT.md`. Tokens nunca ficam fisicamente no Git.
+Os tokens HF usam `HUGGINGFACE_PRIMARY_TOKEN`,
+`HUGGINGFACE_SECONDARY_TOKEN` e `HUGGINGFACE_TERTIARY_TOKEN`. Tokens nunca
+ficam fisicamente no Git; consulte `docs/HUGGINGFACE_CONTEXT.md`.
 
 ## Ordem de leitura
 
@@ -62,7 +62,7 @@ permanece até o administrador reativar explicitamente o colaborador.
 | Modal principal | Browserless ISS e solver Google Modo IA principal | `deploy/modal_browserless.py`, `deploy/modal_portal_nacional_google_solver.py` |
 | Modal fallback | Browserless ISS de contingência e segundo solver Google Modo IA | mesmos arquivos de deploy |
 | Modal terceira | Browserless ISS e terceiro solver Google Modo IA (`prumo-sistema`) | mesmos arquivos de deploy |
-| Hugging Face | Dois Spaces privados ativos e uma segunda conta preparada no cofre; somente análise visual efêmera | `deploy/huggingface/navegador-headless/`, `solver/google_ai_mode/`, `docs/HUGGINGFACE_CONTEXT.md` |
+| Hugging Face | Seis Spaces privados ativos em três contas; somente análise visual efêmera | `deploy/huggingface/navegador-headless/`, `solver/google_ai_mode/`, `docs/HUGGINGFACE_CONTEXT.md` |
 | App publico | login, master, ISS Fortaleza e Portal Nacional | HTMLs raiz |
 
 Cloudflare e a porta publica de autenticacao. A API Python fica atras do Worker

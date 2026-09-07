@@ -65,7 +65,10 @@ HF_SPACE_IDS = [
 HF_PROVIDER = HuggingFaceGoogleAIPool(
     space_ids=HF_SPACE_IDS,
     token=os.environ.get("HF_TOKEN", ""),
-    tokens_by_owner={"jorjoinho": os.environ.get("HF_SECONDARY_TOKEN", "")},
+    tokens_by_owner={
+        "jorjoinho": os.environ.get("HF_SECONDARY_TOKEN", ""),
+        "prumo": os.environ.get("HF_TERTIARY_TOKEN", ""),
+    },
     timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "60")),
     cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
 )

@@ -1,7 +1,7 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.107
-Data: 2026-08-25
+Versao: 1.0.108
+Data: 2026-09-07
 Modo atual: producao unica, sem homologacao ativa
 
 ## Resumo rapido
@@ -12,7 +12,7 @@ A Prumo roda em cinco partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos nas contas Modal, app `prumo-browserless`, com pesos por conta, cooldown por endpoint e retorno automático.
-5. API hCaptcha no Modal com Google Modo IA híbrido: dois Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback. A segunda conta HF esta protegida no cofre, mas ainda sem compute por inelegibilidade ZeroGPU da conta nova.
+5. API hCaptcha no Modal com Google Modo IA híbrido: seis Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback.
 
 A checagem de encerramento da escrituração é uma exceção intencional ao caminho Browserless do ISS: `server/iss_closure_scan.py` faz requests diretos do ThinkPad. O limite global padrão é seis sessões HTTP, com até quatro por conta e duas contas orquestradas em paralelo. Assim, usuários diferentes podem verificar ao mesmo tempo sem criar concorrência ilimitada nem ocupar Modal.
 
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.107",
+  "version": "1.0.108",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,

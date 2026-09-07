@@ -111,6 +111,23 @@ def test_automatic_capture_starts_with_four_month_window_then_overlaps() -> None
     ) == ("30/07/2026", "10/08/2026")
 
 
+def test_automatic_focus_range_closes_a_fixed_month_without_advancing() -> None:
+    job = {
+        "focus_start_date": "2026-08-01",
+        "focus_end_date": "2026-08-31",
+    }
+    assert portal_nacional._automatic_capture_range(job, date(2026, 9, 7)) == (
+        "01/08/2026",
+        "31/08/2026",
+    )
+    assert portal_nacional._automatic_focus_complete(
+        {**job, "last_success_date": "2026-08-31"}
+    )
+    assert not portal_nacional._automatic_focus_complete(
+        {**job, "last_success_date": "2026-08-30"}
+    )
+
+
 def test_retention_deletes_only_old_automatic_runs(monkeypatch, tmp_path: Path) -> None:
     _configure_storage(monkeypatch, tmp_path)
     ctx = _ctx("empresa", "usuario")

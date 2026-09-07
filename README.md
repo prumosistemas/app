@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.107 - recuperacao visual alinhada aos cooldowns reais**
+Versao: **1.0.108 - fechamento dirigido de competencias automaticas**
 
 ## Estado atual
 
@@ -101,9 +101,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.107 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.108 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.107
+docker push ryang20/prumo-api:1.0.108
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
