@@ -277,14 +277,19 @@ def _rebalance_automatic_schedules(now: datetime | None = None) -> None:
     with _AUTOMATIC_LOCK:
         grouped: Dict[str, tuple[WorkerContext, Dict[str, Any]]] = {}
         enabled: List[tuple[WorkerContext, Dict[str, Any], Dict[str, Any]]] = []
+        changed_scopes: set[str] = set()
         for ctx, state, job in _automatic_records():
             grouped[_runtime_key(ctx)] = (ctx, state)
             if bool(job.get("enabled", True)):
-                enabled.append((ctx, state, job))
+                if _automatic_focus_complete(job):
+                    if job.get("next_run_at") is not None:
+                        job["next_run_at"] = None
+                        changed_scopes.add(_runtime_key(ctx))
+                else:
+                    enabled.append((ctx, state, job))
 
         enabled.sort(key=lambda item: (_runtime_key(item[0]), str(item[2].get("id") or "")))
         count = len(enabled)
-        changed_scopes: set[str] = set()
         for index, (ctx, _state, job) in enumerate(enabled):
             minute = int(index * 1440 / count) if count else 0
             previous_minute = job.get("schedule_minute")

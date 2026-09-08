@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.109**
+Versao do app: **1.0.110**
 Atualizado em: **2026-09-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -170,12 +170,13 @@ provedor e HTTP 429 crescem em 30/60/90/120 s. O ultimo degrau acompanha o
 cooldown real dos Spaces e evita probes antecipados que so repetem custo e
 mantem o egress bloqueado. Continua existindo uma unica sonda global.
 
-Na 1.0.109, os seis Spaces formam capacidade distribuida, mas uma imagem tenta
+Na 1.0.110, os seis Spaces formam capacidade distribuida, mas uma imagem tenta
 no maximo dois deles antes do Modal. Cada tentativa Modal recebe prazo proprio
 de ate 150 s quando existe fallback local; assim a cadeia de 480 s sempre
 preserva uma janela real para o ThinkPad, sem colocá-lo na linha de frente.
-Capturas com `focus_start_date` e `focus_end_date` fecham uma competencia fixa
-e param de avancar para o mes seguinte depois da confirmacao integral.
+Capturas com `focus_start_date` e `focus_end_date` fecham uma competencia fixa,
+param de avancar para o mes seguinte depois da confirmacao integral e deixam de
+exibir um proximo horario residual no rebalanceamento.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de

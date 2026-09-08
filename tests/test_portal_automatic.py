@@ -128,6 +128,28 @@ def test_automatic_focus_range_closes_a_fixed_month_without_advancing() -> None:
     )
 
 
+def test_rebalance_keeps_completed_focus_without_next_schedule(monkeypatch, tmp_path: Path) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    portal_nacional._save_automatic_state(ctx, {
+        "jobs": [{
+            "id": "cert-1",
+            "enabled": True,
+            "focus_end_date": "2026-08-31",
+            "last_success_date": "2026-08-31",
+            "next_run_at": "2026-09-08T10:00:00-03:00",
+        }]
+    })
+
+    portal_nacional._rebalance_automatic_schedules(
+        datetime(2026, 9, 7, 20, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    )
+
+    saved = portal_nacional._load_automatic_state(ctx)["jobs"][0]
+    assert saved["next_run_at"] is None
+    assert "_focus_schedule_changed" not in saved
+
+
 def test_retention_deletes_only_old_automatic_runs(monkeypatch, tmp_path: Path) -> None:
     _configure_storage(monkeypatch, tmp_path)
     ctx = _ctx("empresa", "usuario")
