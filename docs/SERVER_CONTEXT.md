@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.112
+Versao: 1.0.113
 Data: 2026-09-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -12,7 +12,7 @@ A Prumo roda em cinco partes:
 2. Cloudflare Worker `morning-credit-8a59`, com D1 `db`, cuidando das telas críticas, login, sessoes, empresas, usuarios, pagamentos, logs e proxy para a API Python.
 3. API Python no servidor Linux, container `prumo-api`, exposta internamente em `127.0.0.1:8000` e publicamente por `https://api.prumosistemas.com.br`.
 4. Navegadores remotos nas contas Modal, app `prumo-browserless`, com pesos por conta, cooldown por endpoint e retorno automático.
-5. API hCaptcha no Modal com Google Modo IA híbrido: seis Spaces privados Hugging Face primeiro, egress Modal depois e ThinkPad apenas no último fallback.
+5. API hCaptcha no Modal: Qwen3-VL para temporais completos; Google Modo IA híbrido com seis Spaces privados, egress Modal e ThinkPad no último fallback.
 
 A checagem de encerramento da escrituração é uma exceção intencional ao caminho Browserless do ISS: `server/iss_closure_scan.py` faz requests diretos do ThinkPad. O limite global padrão é seis sessões HTTP, com até quatro por conta e duas contas orquestradas em paralelo. Assim, usuários diferentes podem verificar ao mesmo tempo sem criar concorrência ilimitada nem ocupar Modal.
 
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.112",
+  "version": "1.0.113",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -192,7 +192,7 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Casca dos Spaces HF versionada: `deploy/huggingface/navegador-headless/`; `ops.prumo_ops` injeta o `google_ia_requests.py` canônico no bundle temporário de deploy.
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele nem de uma cópia em Downloads.
 - Volume privado: `prumo-portal-google-ai-state`.
-- Rota de navegador: direta, sem proxy. Na análise visual, as três contas Modal tentam primeiro os seis Spaces privados das contas HF `ryanzinprot`, `jorjoinho` e `prumo`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
+- Rota de navegador: direta, sem proxy. Em temporal completo, as contas HF primária e secundária tentam Qwen3-VL 235B antes da cadeia Google. Na análise geral, as três contas Modal tentam os seis Spaces privados de `ryanzinprot`, `jorjoinho` e `prumo`, com circuitos independentes, antes do próprio egress Modal. O HF recebe somente imagem efêmera do captcha e prompt.
 - O timeout HF é limitado: cada desafio usa no máximo duas tentativas HF reais; Space ocupado/cooldown não consome tentativa e a fila excedente segue cedo ao egress Modal aquecido.
 - Os seis Spaces ZeroGPU estão ativos. Tokens permanecem no cofre por alias e são injetados apenas no processo de deploy/sincronização. Veja `docs/HUGGINGFACE_CONTEXT.md`.
 
@@ -537,7 +537,7 @@ Teste confirmado em 2026-07-06:
 - Geracao de sessao por PFX retornou `target_looks_logged_in=true`, status `200`, cookies `ASP.NET_SessionId`, `Emissor` e `ARRAffinity`.
 - Upload local pela API retornou `200`, apareceu em `/api/portal-nacional/state` e a exclusao retornou `200`.
 - `somente-index` de recebidas em 01/07/2026 a 06/07/2026 capturou `26/26` notas em 2 paginas.
-- O resolvedor anterior limitava downloads sob rate limit. Ele foi removido; o unico caminho ativo agora e Google Modo IA.
+- O resolvedor anterior limitava downloads sob rate limit e foi removido. Google Modo IA continua como caminho geral; Qwen3-VL e somente o especialista temporal validado.
 - Em 2026-07-16 o Modo IA v19 manteve o contrato visual unificado e adicionou recovery do widget com backoff. `ryangurgell20` e a rota normal; `fabriciofarofa5` fica reservada a quota/indisponibilidade; `127.0.0.1:8876` recebe falha visual especifica sem duplicar custo na conta Modal reserva.
 - Em 2026-08-03 o Modo IA v43 passou a renovar cedo estados sem grade/canvas/tarefas, preservar `solve_timeout`, permitir até oito etapas da abelha no mesmo cenário e usar 360 s no Modal e no fallback residencial. Uma conta sem sessão válida abre o circuito após três falhas consecutivas; o circuito Modal se rearma em 300 s.
 - A prova pós-deploy no ThinkPad usou o sitekey real observado nos artefatos: a v18 não abriu o widget e terminou com causa genérica; a v19 recarregou o widget, capturou quatro etapas visuais em cerca de 1,4 s cada e devolveu token. O health terminou em `0/4` navegadores ativos.
@@ -581,8 +581,8 @@ Build local opcional e push somente quando o registry estiver autenticado:
 
 ```powershell
 cd C:\Users\ryang\Desktop\projetosv2\projeto
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.107 .
-docker push ryang20/prumo-api:1.0.107
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.113 .
+docker push ryang20/prumo-api:1.0.113
 ```
 
 O caminho validado em 2026-07-15 foi construir diretamente no ThinkPad:
@@ -593,10 +593,10 @@ Atualizar servidor:
 ssh -o ProxyCommand="cloudflared access ssh --hostname ssh.prumosistemas.com.br" server@localhost
 cd /home/server/prumo-src
 git pull --ff-only
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.107 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.113 .
 cp deploy/docker-compose.yml /opt/prumo/app/deploy/docker-compose.yml
 cd /opt/prumo/app/deploy
-# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.107
+# conferir .env sem imprimir segredos; PRUMO_API_IMAGE=ryang20/prumo-api:1.0.113
 docker compose up -d --force-recreate --remove-orphans
 curl -fsS http://127.0.0.1:8000/
 ```

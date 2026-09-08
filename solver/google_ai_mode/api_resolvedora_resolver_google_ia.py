@@ -26,6 +26,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from hf_google_ai_provider import HuggingFaceGoogleAIPool
+from hf_qwen_provider import HuggingFaceQwenPool, temporal_target_prompt
 
 LEGACY_SOLVER_PATH = BASE_DIR / "api_resolvedora_resolver.py"
 DEFAULT_GOOGLE_AI_PROJECT = Path(
@@ -49,7 +50,7 @@ API_DIR = BASE_DIR / "api"
 PROVIDER_DIR = API_DIR / "google-ai-resolvedora"
 PROVIDER_DIR.mkdir(parents=True, exist_ok=True)
 
-SOLVER_API_VERSION = "2026-08-24-google-ai-mode-v52-global-circuit-telemetry"
+SOLVER_API_VERSION = "2026-09-08-google-ai-mode-v53-qwen-temporal"
 PROVIDER_MODEL = "google-ai-mode-multimodal"
 HF_PROVIDER_MODE = os.environ.get("PRUMO_HF_GOOGLE_AI_MODE", "off").strip().lower()
 if HF_PROVIDER_MODE not in {"off", "prefer", "fallback"}:
@@ -72,6 +73,20 @@ HF_PROVIDER = HuggingFaceGoogleAIPool(
     timeout_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS", "60")),
     cooldown_seconds=float(os.environ.get("PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS", "180")),
     max_attempts=int(os.environ.get("PRUMO_HF_GOOGLE_AI_MAX_ATTEMPTS", "2")),
+)
+HF_QWEN_MODE = os.environ.get("PRUMO_HF_QWEN_MODE", "off").strip().lower()
+if HF_QWEN_MODE not in {"off", "temporal_first", "temporal_fallback"}:
+    HF_QWEN_MODE = "off"
+HF_QWEN_PROVIDER = HuggingFaceQwenPool(
+    tokens=[
+        ("primary", os.environ.get("HF_TOKEN", "")),
+        ("secondary", os.environ.get("HF_SECONDARY_TOKEN", "")),
+    ],
+    model=os.environ.get(
+        "PRUMO_HF_QWEN_MODEL", "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    ),
+    timeout_seconds=float(os.environ.get("PRUMO_HF_QWEN_TIMEOUT_SECONDS", "35")),
+    cooldown_seconds=float(os.environ.get("PRUMO_HF_QWEN_COOLDOWN_SECONDS", "300")),
 )
 PROVIDER_LOCK = threading.Lock()
 PROVIDER_STATS_LOCK = threading.Lock()
@@ -1687,15 +1702,35 @@ def _parse_json_answer(text: str) -> dict[str, Any]:
     raise ValueError(f"Resposta sem JSON valido: {detail}")
 
 
-def _query_image(image_path: Path, prompt: str) -> Any:
+def _query_image(
+    image_path: Path,
+    prompt: str,
+    *,
+    qwen_prompt: str | None = None,
+) -> Any:
     _record_google_request_start()
     remote_enabled = HF_PROVIDER.configured and HF_PROVIDER_MODE != "off"
-    routes = (
+    legacy_routes = (
         ("huggingface", "modal_direct")
         if remote_enabled and HF_PROVIDER_MODE == "prefer"
         else ("modal_direct", "huggingface")
         if remote_enabled
         else ("modal_direct",)
+    )
+    # O circuito legado representa apenas os egressos do Google. Qwen usa a
+    # API oficial do HF e continua disponivel quando todos esses IPs recebem
+    # unusual traffic.
+    if not legacy.provider_request_allowed():
+        legacy_routes = ()
+    qwen_enabled = bool(
+        qwen_prompt and HF_QWEN_PROVIDER.configured and HF_QWEN_MODE != "off"
+    )
+    routes = (
+        (("qwen",) + legacy_routes)
+        if qwen_enabled and HF_QWEN_MODE == "temporal_first"
+        else (legacy_routes + ("qwen",))
+        if qwen_enabled
+        else legacy_routes
     )
     errors: list[Exception] = []
     # O cliente local persiste uma sessao anonima compartilhada; serializar
@@ -1705,7 +1740,9 @@ def _query_image(image_path: Path, prompt: str) -> Any:
             route_started = time.perf_counter()
             legacy.audit_event("provider_attempt", route=route)
             try:
-                if route == "huggingface":
+                if route == "qwen":
+                    result = HF_QWEN_PROVIDER.query(image_path, qwen_prompt or prompt)
+                elif route == "huggingface":
                     result = HF_PROVIDER.query(image_path, prompt)
                 else:
                     result = google_ai.query_google_ai(
@@ -1750,7 +1787,7 @@ def _query_image(image_path: Path, prompt: str) -> Any:
                     f"tentando fallback: {type(exc).__name__}",
                     flush=True,
                 )
-    final_error = errors[-1] if errors else RuntimeError("google_ai_no_route")
+    final_error = errors[-1] if errors else RuntimeError("visual_provider_no_route")
     _record_google_failure(final_error)
     raise final_error
 
@@ -2433,6 +2470,12 @@ def analyze_visual_with_google_ai(
     except Exception:
         capture_info = {}
     full_temporal_sequence = full_temporal_question and occupancy_path.is_file() and frame_count >= 6
+    lowered_question = str(captcha_question or "").casefold()
+    # Somente a semantica "nunca pousa" passou pela comparacao com tokens
+    # reais. Outros temporais continuam no provedor geral ate serem validados.
+    qwen_temporal_eligible = full_temporal_sequence and any(
+        term in lowered_question for term in ("never", "nunca")
+    )
     has_temporal_artifacts = sequence_path.is_file() or overlay_path.is_file() or occupancy_path.is_file()
     tracked_centers = _motion_centers(challenge_dir) if has_temporal_artifacts else []
     displacement = 0.0
@@ -2459,7 +2502,12 @@ def analyze_visual_with_google_ai(
         if moving_sequence
         else full_path
     )
-    if not legacy.provider_request_allowed():
+    qwen_temporal_available = bool(
+        qwen_temporal_eligible
+        and HF_QWEN_PROVIDER.configured
+        and HF_QWEN_MODE != "off"
+    )
+    if not legacy.provider_request_allowed() and not qwen_temporal_available:
         state = legacy.provider_circuit_state()
         legacy.set_solver_error(
             "provider_circuit_open",
@@ -2502,6 +2550,11 @@ def analyze_visual_with_google_ai(
                 ),
                 temporal_span_ms=temporal_span_ms,
                 point_only=True,
+            ),
+            qwen_prompt=(
+                temporal_target_prompt(captcha_question)
+                if qwen_temporal_eligible
+                else None
             ),
         )
         raw_answer = result.answer
@@ -3141,6 +3194,10 @@ def google_ai_health() -> dict[str, Any]:
         "serialized_provider_requests": True,
         "route_policy": HF_PROVIDER_MODE,
         "huggingface": HF_PROVIDER.health(),
+        "huggingface_qwen": {
+            "mode": HF_QWEN_MODE,
+            **HF_QWEN_PROVIDER.health(),
+        },
         "browser_recovery_last_state": recovery_state,
         "stats": _provider_stats_snapshot(),
     }

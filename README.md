@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.112 - fallback residencial com Chromium do Playwright**
+Versao: **1.0.113 - Qwen temporal e retomada mensal idempotente**
 
 ## Estado atual
 
@@ -11,7 +11,7 @@ Versao: **1.0.112 - fallback residencial com Chromium do Playwright**
 - D1 com replicacao global de leitura `auto` e Sessions API `first-primary`; leituras posteriores podem usar replicas sem perder consistencia da autenticacao.
 - API Python no servidor: `prumo-api`.
 - Navegadores ISS: Browserless nas três contas Modal, ponderado em 18/4/8 (principal/reserva/terceira). `404 workspace disabled`, limite e falhas transitórias abrem cooldown por endpoint; as contas disponíveis assumem e a principal é sondada novamente automaticamente.
-- Portal Nacional: Google Modo IA com seis Spaces privados Hugging Face, distribuídos em três contas, como primeira análise visual; os navegadores rodam nas três contas Modal em failover e o ThinkPad usa apenas uma vaga de último recurso. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
+- Portal Nacional: Google Modo IA com seis Spaces privados Hugging Face, distribuídos em três contas; os navegadores rodam nas três contas Modal em failover e o ThinkPad usa apenas uma vaga de último recurso. O Qwen3-VL 235B via Inference Providers atende somente desafios temporais completos e volta à cadeia existente ao falhar. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
 - Um Space HF ocupado é ignorado imediatamente pela requisição excedente, que tenta outro Space do pool ou o Modal. Cada desafio faz no máximo duas tentativas HF reais, evitando fila/custo repetido sem aumentar a carga do ThinkPad.
 - O circuito visual agora e compartilhado entre subprocessos e runs. Durante uma pane, somente uma nota sonda a cadeia; cooldowns sobrevivem a retomadas e, depois do primeiro token, a concorrencia reabre em 1→2→4. A segunda conta Modal so entra se a primeira ultrapassar 30 s; a primeira resposta valida vence e o ThinkPad continua fora da disputa. Falhas de transporte mantem teto de 60 s, enquanto bloqueio visual cresce ate 120 s para respeitar o cooldown real dos Spaces/Modal. O HTTP do solver possui deadline total real, que não pode ser renovado por bytes intermediários do gateway. Cada sucesso registra rota, latencia e uso do hedge no indice.
 - O solver nao habilita mais o relogio virtual sintetico do CDP. A proxima etapa do hCaptcha e reconhecida pela mudanca de assinatura visual/DOM e segue no mesmo iframe, sem voltar prematuramente ao checkbox.
@@ -20,7 +20,7 @@ Versao: **1.0.112 - fallback residencial com Chromium do Playwright**
 - Cada conta do espelho Modal possui timeout de sincronização e o manifesto conserva somente a janela atual, evitando thread presa e índice crescente indefinidamente.
 - Runs manuais do Portal permanecem vivas no checkpoint durante indisponibilidade, reduzem a concorrência para um probe e voltam automaticamente à velocidade normal após sucesso. Runs automáticas cedem a vaga após uma fatia limitada e retomam depois; capturas diárias ainda não iniciadas têm prioridade sobre retries deferidos. `Unusual traffic` é tratado como falha daquela tentativa, não como erro da nota: o probe cresce ate 120 s somente após bloqueios visuais repetidos, evitando reacender o provedor antes do fim do próprio cooldown. A run publica heartbeat e progresso a cada 10 s.
 - O indexador reconhece tanto `Total de 1 registro` quanto `Total de N registros`; uma janela com exatamente uma nota não é mais confundida com resposta inválida.
-- `Notas automático` consulta cada certificado uma vez por dia em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas por 123 dias. Os horários são igualmente distribuídos pelas 24 horas e um rebalanceamento nunca pula a tentativa do dia. O histórico fica separado por certificado/empresa, inclui ciclos com erro, mostra `+novas` e total deduplicado e permite ZIP por data de emissão e competência. `Capturar agora` é bloqueado somente enquanto aquele colaborador possui uma run do Portal ativa.
+- `Notas automático` consulta cada certificado uma vez por dia em XML+PDF, começa na data inicial escolhida, repete dois dias para segurança e conserva as capturas por 123 dias. Os horários são igualmente distribuídos pelas 24 horas e um rebalanceamento nunca pula a tentativa do dia. Durante um foco mensal, um checkpoint deferido é retomado antes de criar outra run para o mesmo certificado. O histórico fica separado por certificado/empresa, inclui ciclos com erro, mostra `+novas` e total deduplicado e permite ZIP por data de emissão e competência. `Capturar agora` é bloqueado somente enquanto aquele colaborador possui uma run do Portal ativa.
 - A lista principal de runs não percorre mais todos os XML/PDF a cada atualização. Os arquivos são enumerados somente ao abrir o detalhe, mantendo a tela rápida com histórico longo.
 - A exportação de escrituração do ISS é obtida pelo link gerado dentro do navegador autenticado. Arquivos vazios, HTML de erro e planilhas estruturalmente inválidas deixam de ser aceitos como sucesso; o log registra bytes e linhas físicas dos XMLs internos, contornando metadados de dimensão incorretos do portal.
 - Downloads gerais do ISS apresentam pastas como `Nome - CNPJ`, inclusive para runs antigas armazenadas internamente como `CNPJ - Nome`; checkpoints e dados persistidos não são renomeados.
@@ -43,7 +43,7 @@ Versao: **1.0.112 - fallback residencial com Chromium do Playwright**
 | `server/` | API FastAPI, filas e fluxos Playwright |
 | `server/iss_closure_scan.py` | Varredura HTTP de encerramento da escrituração ISS |
 | `deploy/modal_browserless.py` | Browserless no Modal |
-| `solver/google_ai_mode/` | Código versionado do único resolvedor do Portal |
+| `solver/google_ai_mode/` | Código versionado dos provedores visuais do Portal |
 | `deploy/huggingface/navegador-headless/` | Casca Gradio/Chrome versionada dos Spaces HF; o deploy injeta o resolvedor canônico |
 | `deploy/docker-compose.yml` | Compose de producao com `prumo-api` |
 | `docs/SERVER_CONTEXT.md` | Runbook do servidor |
@@ -56,10 +56,11 @@ Versao: **1.0.112 - fallback residencial com Chromium do Playwright**
 
 ## Solver do Portal Nacional
 
-O unico resolvedor visual ativo e o Google Modo IA do projeto organizado. O
-navegador do hCaptcha continua no Modal; somente a imagem efemera do desafio e
-o prompt podem seguir aos Spaces privados Hugging Face. Certificado, cookies do
-Portal e arquivos fiscais nunca saem do ThinkPad. O motor validado esta
+O Google Modo IA do projeto organizado continua sendo o resolvedor visual
+geral. Qwen3-VL 235B atua somente nos temporais completos que foram validados.
+O navegador do hCaptcha continua no Modal; somente a imagem efemera do desafio
+e o prompt podem seguir ao Hugging Face. Certificado, cookies do Portal e
+arquivos fiscais nunca saem do ThinkPad. O motor validado esta
 versionado em `solver/google_ai_mode/`; a casca dos Spaces fica em
 `deploy/huggingface/navegador-headless/` e recebe esse motor canonico durante o
 deploy, sem depender de uma copia em Downloads.
@@ -101,9 +102,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.112 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.113 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.112
+docker push ryang20/prumo-api:1.0.113
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no

@@ -1,5 +1,12 @@
 # Google Modo IA do Portal Nacional
 
+O Google Modo IA continua sendo o provedor visual geral. Desde a Prumo
+1.0.113, `hf_qwen_provider.py` tenta Qwen3-VL 235B somente para desafios
+temporais completos, usando os tokens HF primário/secundário já injetados. A
+rota compacta foi validada em 4/4 capturas reais e faz fallback automático ao
+fluxo abaixo em quota, timeout ou baixa confiança. Não use Qwen como rota geral
+para grids ou clique livre: os testes estáticos não tiveram acerto suficiente.
+
 Este diretório contém a cópia versionada e reproduzível do resolvedor validado
 no projeto organizado. O deploy oficial é `deploy/modal_portal_nacional_google_solver.py`.
 

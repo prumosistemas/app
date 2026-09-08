@@ -86,7 +86,7 @@
 ## Arquitetura ativa
 
 - A API Prumo executa `server/portal_nacional_automation.py` e persiste cada run em `/opt/prumo/data`.
-- O único resolvedor é o Google Modo IA versionado em `solver/google_ai_mode`; Florence e Cohere não participam do fluxo.
+- Google Modo IA é o resolvedor geral versionado em `solver/google_ai_mode`; Qwen3-VL 235B atende somente temporais completos validados. Florence e Cohere não participam do fluxo.
 - A sessão mTLS, a indexação e os downloads saem diretamente pelo ThinkPad. O login correto é `https://certificado.nfse.gov.br/EmissorNacional/Certificado`; o host `www` nesse endpoint responde 403.
 - Somente a imagem do hCaptcha segue primeiro para o endpoint Modal, com até quatro containers. Se a conta principal atingir quota ou ficar indisponivel, outra conta Modal recebe a proxima tentativa; o mesmo resolvedor Google Modo IA em `127.0.0.1:8876` e apenas o ultimo recurso.
 - O Portal Nacional não usa proxy. Um binding mTLS no Cloudflare foi testado, retornou 520 no login do certificado e foi removido; o acesso direto do ThinkPad retornou 200 em cerca de 3,5 segundos.

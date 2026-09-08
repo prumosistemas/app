@@ -573,6 +573,13 @@ def modal_command(
             "PRUMO_HF_GOOGLE_AI_TIMEOUT_SECONDS": "30",
             "PRUMO_HF_GOOGLE_AI_COOLDOWN_SECONDS": "180",
             "PRUMO_HF_GOOGLE_AI_MAX_ATTEMPTS": "2",
+            # Qwen usa Inference Providers, nao os Spaces. Ele entra apenas
+            # nos desafios temporais completos, onde passou nos testes reais;
+            # grids e clique livre continuam na cadeia consolidada.
+            "PRUMO_HF_QWEN_MODE": "temporal_first",
+            "PRUMO_HF_QWEN_MODEL": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+            "PRUMO_HF_QWEN_TIMEOUT_SECONDS": "35",
+            "PRUMO_HF_QWEN_COOLDOWN_SECONDS": "300",
         }
         temporary_path: Path | None = None
         try:

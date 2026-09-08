@@ -1471,6 +1471,27 @@ def _run_automatic_scheduler_cycle(now: datetime | None = None) -> Dict[str, Any
         return {"started": False, "reason": "nothing_due"}
 
     _next_run, _scope, _job_id, ctx, state, job = min(due, key=lambda item: item[:3])
+
+    # Durante um foco mensal, a proxima agenda diaria nao deve abrir outra
+    # captura para o mesmo certificado enquanto o checkpoint anterior ainda
+    # pode ser retomado. Alem de duplicar historico, isso fazia o trabalho
+    # recomecar em 01/08 depois de uma indisponibilidade temporaria do solver.
+    if str(job.get("focus_start_date") or "").strip() and str(
+        job.get("focus_end_date") or ""
+    ).strip():
+        stale_dirs = _stale_automatic_run_dirs(ctx, job)
+        if stale_dirs:
+            _start_jobs(ctx, stale_dirs, retry_only=True)
+            job["last_status"] = "rodando"
+            job["last_error"] = None
+            _save_automatic_state(ctx, state)
+            return {
+                "started": True,
+                "reason": "focus_checkpoint_resume",
+                "scope": _runtime_key(ctx),
+                "job_id": job.get("id"),
+                "run_ids": [path.name for path in stale_dirs],
+            }
     try:
         run_dirs = _start_automatic_job(ctx, job, reason="schedule")
         _record_automatic_started(ctx, state, job, run_dirs, current=current)

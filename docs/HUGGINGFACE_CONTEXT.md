@@ -1,7 +1,7 @@
 # Contexto Hugging Face da Prumo
 
-Atualizado em: **2026-09-07**
-Versao da Prumo: **1.0.112**
+Atualizado em: **2026-09-08**
+Versao da Prumo: **1.0.113**
 
 ## Segredos
 
@@ -101,6 +101,26 @@ proprietario do Space.
   evitando prender trabalhadores em Space ocupado ou em cold start.
 - O ThinkPad permanece no ultimo fallback.
 - PFX, senha, cookies e arquivos fiscais nunca seguem ao Hugging Face.
+
+## Qwen3-VL via Inference Providers
+
+O Qwen nao roda dentro dos seis Spaces. A versao 1.0.113 usa o endpoint oficial
+de Inference Providers com `Qwen/Qwen3-VL-235B-A22B-Instruct`, reutilizando os
+aliases primario e secundario. O token terciario nao tem permissao de inference
+e por isso nao entra nessa fila. A rota e exclusiva para desafios temporais
+completos; grids e desafios estaticos continuam no Google Modo IA.
+
+Em quatro mapas temporais reais que ja tinham token confirmado, o Qwen acertou
+4/4 alvos. Tres amostras repetidas pelo adaptador final levaram 3,34 s, 3,43 s
+e 9,89 s; os cliques ficaram a no maximo 50 pontos normalizados dos cliques
+aceitos. O custo superior estimado das tres foi US$ 0,001007. Nos estaticos,
+ele errou um grid e uma forma diferente, motivo pelo qual nao e rota geral.
+
+`PRUMO_HF_QWEN_MODE=temporal_first` faz uma unica consulta compacta antes dos
+egressos Google. HTTP 402/403 aplica uma hora de cooldown naquela conta; falha,
+baixa confianca, timeout ou limite mensal seguem automaticamente para a cadeia
+HF Spaces -> Modal -> ThinkPad. O `/health` publica chamadas, tokens e estimativa
+superior de custo, nunca o token.
 
 Em 21/08/2026, os dois Spaces voltaram a falhar com `can't start new thread`:
 filhos do Chrome sob demanda ainda podiam permanecer órfãos no runtime sem

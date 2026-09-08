@@ -405,6 +405,78 @@ def test_scheduler_starts_fresh_due_job_before_deferred_retry(
     assert started["reason"] == "schedule"
 
 
+def test_scheduler_resumes_due_monthly_focus_instead_of_duplicating_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _configure_storage(monkeypatch, tmp_path)
+    ctx = _ctx("empresa", "usuario")
+    run_dir = portal_nacional._runs_root(ctx) / "run-agosto"
+    run_dir.mkdir(parents=True)
+    portal_nacional._save_json(
+        run_dir / "run.json",
+        {
+            "run_id": run_dir.name,
+            "status": "aguardando_solver",
+            "solver_retry_at": "2026-08-11T17:45:00-03:00",
+            "config": {"automatic": True},
+        },
+    )
+    job = {
+        "id": "cert-1",
+        "cert_id": "cert-1",
+        "enabled": True,
+        "focus_start_date": "2026-08-01",
+        "focus_end_date": "2026-08-31",
+        "last_run_ids": [run_dir.name],
+        "next_run_at": "2026-08-11T17:40:00-03:00",
+    }
+    state = {"jobs": [job]}
+    started = {}
+    monkeypatch.setattr(portal_nacional, "_automatic_records", lambda: [(ctx, state, job)])
+    monkeypatch.setattr(portal_nacional, "_rebalance_automatic_schedules", lambda now=None: None)
+    monkeypatch.setattr(portal_nacional, "_reconcile_automatic_state", lambda *_args: False)
+    monkeypatch.setattr(portal_nacional, "_cleanup_automatic_runs", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(portal_nacional, "_any_portal_runtime_active", lambda: False)
+    monkeypatch.setattr(
+        portal_nacional,
+        "_start_jobs",
+        lambda _ctx, dirs, retry_only=False: started.update(
+            {"dirs": dirs, "retry_only": retry_only}
+        ),
+    )
+    monkeypatch.setattr(
+        portal_nacional,
+        "_start_automatic_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("nao deve criar uma segunda run para o foco mensal")
+        ),
+    )
+    monkeypatch.setattr(
+        portal_nacional,
+        "datetime",
+        type(
+            "FrozenDateTime",
+            (datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: datetime(
+                        2026, 8, 11, 18, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE
+                    )
+                )
+            },
+        ),
+    )
+
+    result = portal_nacional._run_automatic_scheduler_cycle(
+        datetime(2026, 8, 11, 18, 0, tzinfo=portal_nacional.PORTAL_TIMEZONE)
+    )
+
+    assert result["reason"] == "focus_checkpoint_resume"
+    assert [path.name for path in started["dirs"]] == [run_dir.name]
+    assert started["retry_only"] is True
+
+
 def test_scheduler_skips_deferred_solver_run_until_retry_time(
     monkeypatch,
     tmp_path: Path,

@@ -1,6 +1,6 @@
 # Contexto para operador de IA - Prumo
 
-Versao do app: **1.0.112**
+Versao do app: **1.0.113**
 Atualizado em: **2026-09-07**
 
 Este e o ponto de entrada para uma IA operar a Prumo sem receber, ler ou
@@ -70,7 +70,7 @@ e valida `X-Internal-Secret`; o servico no host esta ligado a `127.0.0.1:8000`.
 O ISS usa um pool Browserless direto nas três contas Modal, ponderado 18/4/8.
 Falha de quota/workspace abre cooldown e desvia para as contas saudáveis. O
 servidor volta a sondar a principal automaticamente. No Portal, o hCaptcha roda nas três contas
-Modal; a análise Google Modo IA tenta os dois Spaces privados HF, depois o
+Modal; a análise Google Modo IA tenta os seis Spaces privados HF, depois o
 egress da conta Modal que hospeda o navegador. O ThinkPad permanece como
 último fallback residencial. A API espelha no ThinkPad imagens-resumo, MP4 e
 eventos de auditoria dos Volumes Modal, com retenção de sete dias.
@@ -177,6 +177,13 @@ preserva uma janela real para o ThinkPad, sem colocá-lo na linha de frente.
 Capturas com `focus_start_date` e `focus_end_date` fecham uma competencia fixa,
 param de avancar para o mes seguinte depois da confirmacao integral e deixam de
 exibir um proximo horario residual no rebalanceamento.
+
+Na 1.0.113, Qwen3-VL 235B via HF Inference Providers entra primeiro apenas em
+desafios temporais completos. Quatro evidencias com token confirmado foram
+resolvidas corretamente; grids e clique livre continuam no Google Modo IA.
+Quota, timeout ou baixa confianca fazem fallback automatico, sem expor token.
+Durante foco mensal, o agendador retoma o checkpoint deferido do certificado
+antes de criar uma segunda run para o mesmo intervalo.
 
 Na 1.0.96, o Compose usa `init: true`, o Chrome nasce em grupo de processos e
 breakpad/crash reporter ficam desativados. Isso corrige o incidente de
