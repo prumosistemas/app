@@ -56,3 +56,14 @@ def test_grid_solver_does_not_reference_temporal_state(monkeypatch, tmp_path: Pa
 
     assert solver.solve_with_google_ai(image, "Tap buses") is None
     assert errors[0][0] == "provider_circuit_open"
+
+
+def test_modal_bundle_mounts_qwen_provider() -> None:
+    deploy = (
+        Path(__file__).resolve().parents[1]
+        / "deploy"
+        / "modal_portal_nacional_google_solver.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'HF_QWEN_PROVIDER = SOURCE_ROOT / "hf_qwen_provider.py"' in deploy
+    assert '.add_local_file(HF_QWEN_PROVIDER, "/app/hf_qwen_provider.py")' in deploy

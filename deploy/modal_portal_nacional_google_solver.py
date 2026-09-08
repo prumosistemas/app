@@ -41,10 +41,11 @@ DETECTOR = DETECTOR_ROOT / "detector_visual.py"
 ARTIFACT_RETENTION = SOURCE_ROOT / "artifact_retention.py"
 GOOGLE_CLIENT = SOURCE_ROOT / "google_ia_requests.py"
 HF_GOOGLE_PROVIDER = SOURCE_ROOT / "hf_google_ai_provider.py"
+HF_QWEN_PROVIDER = SOURCE_ROOT / "hf_qwen_provider.py"
 CHROME_WRAPPER = Path(__file__).with_name("chrome_modal_no_sandbox.sh")
 
 if modal.is_local():
-    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, HF_GOOGLE_PROVIDER, DETECTOR, ARTIFACT_RETENTION, CHROME_WRAPPER):
+    for required in (LEGACY_SOLVER, GOOGLE_SOLVER, GOOGLE_CLIENT, HF_GOOGLE_PROVIDER, HF_QWEN_PROVIDER, DETECTOR, ARTIFACT_RETENTION, CHROME_WRAPPER):
         if not required.is_file():
             raise RuntimeError(f"Arquivo obrigatorio ausente: {required}")
 
@@ -115,6 +116,7 @@ image = (
     .add_local_file(GOOGLE_SOLVER, "/app/api_resolvedora_resolver_google_ia.py")
     .add_local_file(GOOGLE_CLIENT, "/app/google-ai-client/google_ia_requests.py")
     .add_local_file(HF_GOOGLE_PROVIDER, "/app/hf_google_ai_provider.py")
+    .add_local_file(HF_QWEN_PROVIDER, "/app/hf_qwen_provider.py")
     .add_local_file(DETECTOR, "/app/detector/detector_visual.py")
     .add_local_file(ARTIFACT_RETENTION, "/app/artifact_retention.py")
 )
