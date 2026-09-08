@@ -68,6 +68,19 @@ def test_google_ai_recovery_uses_official_ai_entrypoint() -> None:
     assert "aep=11" in url
 
 
+def test_chrome_discovery_accepts_playwright_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "browsers"
+    chrome = root / "chromium-1234" / "chrome-linux64" / "chrome"
+    chrome.parent.mkdir(parents=True)
+    chrome.write_bytes(b"chrome")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(root))
+    monkeypatch.delenv("GOOGLE_CHROME_BIN", raising=False)
+
+    assert SOLVER.google_ai._find_chrome_executable() == chrome
+
+
 def test_unusual_traffic_detection_stops_same_egress_recovery() -> None:
     assert SOLVER.google_ai._is_unusual_traffic_error(
         SOLVER.google_ai.GoogleAIModeError(

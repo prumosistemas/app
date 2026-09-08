@@ -505,11 +505,28 @@ def _find_firefox_executable() -> Path:
 
 
 def _find_chrome_executable() -> Path:
+    playwright_roots: list[Path] = []
+    configured_playwright_root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured_playwright_root:
+        playwright_roots.append(Path(configured_playwright_root))
+    playwright_roots.extend(
+        [Path.home() / ".cache" / "ms-playwright", Path("/ms-playwright")]
+    )
+    playwright_candidates: list[str] = []
+    for root in playwright_roots:
+        for pattern in (
+            "chromium-*/chrome-linux*/chrome",
+            "chromium-*/chrome-linux/chrome",
+        ):
+            playwright_candidates.extend(
+                str(path) for path in sorted(root.glob(pattern), reverse=True)
+            )
     candidates = [
         os.environ.get("GOOGLE_CHROME_BIN"),
         shutil.which("google-chrome"),
         shutil.which("google-chrome-stable"),
         shutil.which("chromium"),
+        *playwright_candidates,
         shutil.which("chrome.exe"),
         str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe"),
         str(Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe"),
