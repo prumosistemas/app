@@ -360,14 +360,21 @@ def _automatic_capture_range(job: Dict[str, Any], today: date | None = None) -> 
 
 
 def _automatic_focus_complete(job: Dict[str, Any]) -> bool:
+    focus_start = str(job.get("focus_start_date") or "").strip()
     focus_end = str(job.get("focus_end_date") or "").strip()
+    capture_start = str(job.get("last_capture_start") or "").strip()
+    capture_end = str(job.get("last_capture_end") or "").strip()
     last_success = str(job.get("last_success_date") or "").strip()
-    if not focus_end or not last_success:
+    if not all((focus_start, focus_end, capture_start, capture_end, last_success)):
         return False
     try:
-        return datetime.strptime(last_success, "%Y-%m-%d").date() >= datetime.strptime(
-            focus_end, "%Y-%m-%d"
-        ).date()
+        focus_start_date = datetime.strptime(focus_start, "%Y-%m-%d").date()
+        focus_end_date = datetime.strptime(focus_end, "%Y-%m-%d").date()
+        return (
+            datetime.strptime(capture_start, "%Y-%m-%d").date() <= focus_start_date
+            and datetime.strptime(capture_end, "%Y-%m-%d").date() >= focus_end_date
+            and datetime.strptime(last_success, "%Y-%m-%d").date() >= focus_end_date
+        )
     except ValueError:
         return False
 

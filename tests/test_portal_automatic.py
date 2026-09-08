@@ -121,10 +121,28 @@ def test_automatic_focus_range_closes_a_fixed_month_without_advancing() -> None:
         "31/08/2026",
     )
     assert portal_nacional._automatic_focus_complete(
-        {**job, "last_success_date": "2026-08-31"}
+        {
+            **job,
+            "last_capture_start": "2026-08-01",
+            "last_capture_end": "2026-08-31",
+            "last_success_date": "2026-08-31",
+        }
     )
     assert not portal_nacional._automatic_focus_complete(
-        {**job, "last_success_date": "2026-08-30"}
+        {
+            **job,
+            "last_capture_start": "2026-08-01",
+            "last_capture_end": "2026-08-30",
+            "last_success_date": "2026-08-30",
+        }
+    )
+    assert not portal_nacional._automatic_focus_complete(
+        {
+            **job,
+            "last_capture_start": "2026-09-03",
+            "last_capture_end": "2026-09-06",
+            "last_success_date": "2026-09-06",
+        }
     )
 
 
@@ -135,7 +153,10 @@ def test_rebalance_keeps_completed_focus_without_next_schedule(monkeypatch, tmp_
         "jobs": [{
             "id": "cert-1",
             "enabled": True,
+            "focus_start_date": "2026-08-01",
             "focus_end_date": "2026-08-31",
+            "last_capture_start": "2026-08-01",
+            "last_capture_end": "2026-08-31",
             "last_success_date": "2026-08-31",
             "next_run_at": "2026-09-08T10:00:00-03:00",
         }]

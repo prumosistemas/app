@@ -1,6 +1,6 @@
 # Contexto do Servidor Prumo
 
-Versao: 1.0.110
+Versao: 1.0.111
 Data: 2026-09-07
 Modo atual: producao unica, sem homologacao ativa
 
@@ -87,7 +87,7 @@ O esperado:
 
 ```json
 {
-  "version": "1.0.110",
+  "version": "1.0.111",
   "max_browsers": 30,
   "base_browsers": 0,
   "browser_turbo_extra": 30,
@@ -192,9 +192,9 @@ O Portal Nacional usa um segundo app Modal, separado do Browserless do ISS:
 - Casca dos Spaces HF versionada: `deploy/huggingface/navegador-headless/`; `ops.prumo_ops` injeta o `google_ia_requests.py` canônico no bundle temporário de deploy.
 - Projeto externo original: apenas referência histórica; o deploy não depende mais dele nem de uma cópia em Downloads.
 - Volume privado: `prumo-portal-google-ai-state`.
-- Rota de navegador: direta, sem proxy. Na análise visual, ambas as contas tentam o pool privado `ryanzinprot/navegador-headless` e `ryanzinprot/navegador-headless-2`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
-- O timeout HF e 30 s: com quatro workers e dois Spaces serializados, fila excedente usa cedo o egress Modal aquecido.
-- A conta HF secundaria `jorjoinho` esta no cofre, mas a API recusou novos Spaces ZeroGPU com HTTP 402 em 2026-08-07. Veja `docs/HUGGINGFACE_CONTEXT.md`.
+- Rota de navegador: direta, sem proxy. Na análise visual, as três contas Modal tentam primeiro os seis Spaces privados das contas HF `ryanzinprot`, `jorjoinho` e `prumo`, com circuitos independentes, antes do próprio egress Modal. Os Spaces recebem somente imagem efêmera do captcha e prompt.
+- O timeout HF é limitado: cada desafio usa no máximo duas tentativas HF reais; Space ocupado/cooldown não consome tentativa e a fila excedente segue cedo ao egress Modal aquecido.
+- Os seis Spaces ZeroGPU estão ativos. Tokens permanecem no cofre por alias e são injetados apenas no processo de deploy/sincronização. Veja `docs/HUGGINGFACE_CONTEXT.md`.
 
 Deploy seguro das três contas, sem trocar perfil global:
 

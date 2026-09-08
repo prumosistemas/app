@@ -1,6 +1,6 @@
 # Prumo Sistemas App
 
-Versao: **1.0.110 - fechamento mensal sem reagendamento residual**
+Versao: **1.0.111 - fechamento mensal validado pela faixa capturada**
 
 ## Estado atual
 
@@ -11,8 +11,8 @@ Versao: **1.0.110 - fechamento mensal sem reagendamento residual**
 - D1 com replicacao global de leitura `auto` e Sessions API `first-primary`; leituras posteriores podem usar replicas sem perder consistencia da autenticacao.
 - API Python no servidor: `prumo-api`.
 - Navegadores ISS: Browserless nas três contas Modal, ponderado em 18/4/8 (principal/reserva/terceira). `404 workspace disabled`, limite e falhas transitórias abrem cooldown por endpoint; as contas disponíveis assumem e a principal é sondada novamente automaticamente.
-- Portal Nacional: Google Modo IA com dois Spaces privados Hugging Face como primeira análise visual; os navegadores rodam nas três contas Modal em failover e o ThinkPad usa apenas uma vaga de último recurso. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
-- Um Space HF ocupado e ignorado imediatamente pela requisicao excedente, que tenta o outro Space ou o Modal. Isso evita acumular 30 s de espera por Space sem aumentar carga do ThinkPad.
+- Portal Nacional: Google Modo IA com seis Spaces privados Hugging Face, distribuídos em três contas, como primeira análise visual; os navegadores rodam nas três contas Modal em failover e o ThinkPad usa apenas uma vaga de último recurso. Sem Florence/Cohere. A captura temporal usa 30 quadros/8,7 s e gera montagem/MP4 fora do caminho crítico.
+- Um Space HF ocupado é ignorado imediatamente pela requisição excedente, que tenta outro Space do pool ou o Modal. Cada desafio faz no máximo duas tentativas HF reais, evitando fila/custo repetido sem aumentar a carga do ThinkPad.
 - O circuito visual agora e compartilhado entre subprocessos e runs. Durante uma pane, somente uma nota sonda a cadeia; cooldowns sobrevivem a retomadas e, depois do primeiro token, a concorrencia reabre em 1→2→4. A segunda conta Modal so entra se a primeira ultrapassar 30 s; a primeira resposta valida vence e o ThinkPad continua fora da disputa. Falhas de transporte mantem teto de 60 s, enquanto bloqueio visual cresce ate 120 s para respeitar o cooldown real dos Spaces/Modal. O HTTP do solver possui deadline total real, que não pode ser renovado por bytes intermediários do gateway. Cada sucesso registra rota, latencia e uso do hedge no indice.
 - O solver nao habilita mais o relogio virtual sintetico do CDP. A proxima etapa do hCaptcha e reconhecida pela mudanca de assinatura visual/DOM e segue no mesmo iframe, sem voltar prematuramente ao checkbox.
 - Um Modal sem crédito/`workspace disabled` fica em quarentena compartilhada por 30 minutos. A próxima atividade após o prazo sonda novamente o principal; sucesso o recoloca automaticamente na frente, sem regra de calendário ou intervenção manual.
@@ -101,9 +101,9 @@ python -m ops.prumo_ops modal deploy --account fallback --target portal
 API:
 
 ```powershell
-docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.110 .
+docker build -f server/Dockerfile -t ryang20/prumo-api:1.0.111 .
 # Opcional, somente quando a autenticacao do registry estiver valida:
-docker push ryang20/prumo-api:1.0.110
+docker push ryang20/prumo-api:1.0.111
 ```
 
 O caminho validado em 2026-07-15 foi construir a imagem diretamente no
