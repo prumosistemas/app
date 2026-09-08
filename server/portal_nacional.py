@@ -1140,6 +1140,16 @@ def _run_process(scope: str, run_dir: Path, cfg: Dict[str, Any], retry_only: boo
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("PORTAL_NACIONAL_SOLVER_URL", DEFAULT_SOLVER_URL)
+    # Quando um resolvedor residencial remoto e usado, o token hCaptcha e sua
+    # submissao precisam compartilhar o mesmo egress. Restrinja o proxy a este
+    # subprocesso do Portal: API, ISS Fortaleza e Browserless nao o herdam.
+    portal_proxy = str(os.getenv("PORTAL_NACIONAL_HTTP_PROXY", "") or "").strip()
+    if portal_proxy:
+        env["HTTP_PROXY"] = portal_proxy
+        env["HTTPS_PROXY"] = portal_proxy
+        env["NO_PROXY"] = str(
+            os.getenv("PORTAL_NACIONAL_PROXY_NO_PROXY", "127.0.0.1,localhost,::1")
+        )
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
         proc = subprocess.Popen(
             cmd,
